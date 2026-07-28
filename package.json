@@ -1,0 +1,19 @@
+{
+  "name": "e88-finsys",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:init:local": "wrangler d1 execute e88 --local --file=./schema.sql",
+    "db:seed:local": "wrangler d1 execute e88 --local --file=./seed.sql",
+    "db:init:remote": "wrangler d1 execute e88 --remote --file=./schema.sql"
+  },
+  "dependencies": {
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}
