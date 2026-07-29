@@ -23,7 +23,7 @@ const REG = {
   serials: { label: 'Inventory', group: 'Inventory & Procurement', table: 'inventory_serials', date: 'created_at', readonly: true,
     search: ['serial_no', 'item_desc', 'motor_no'], cols: [T('serial_no', 'Serial No', 'ro'), T('item_desc', 'Item', 'ro'), T('category', 'Class', 'ro'), T('status', 'Status', 'ro'), T('location_name', 'Location', 'ro')] },
   movements: { label: 'Stock Movement', group: 'Inventory & Procurement', table: 'stock_movements', date: 'mv_date', seq: { prefix: 'MV', field: 'mv_no' },
-    search: ['mv_no', 'serial_no'], cols: [T('mv_no', 'MV No', 'ro'), T('serial_no', 'Serial', 'select', { lookup: 'serials', lv: 'serial_no', ll: 'serial_no' }), T('from_loc', 'From', 'text'), T('to_loc', 'To', 'text'), T('mv_type', 'Type', 'select', { opts: ['TRANSFER', 'DEPLOY', 'RETURN', 'ADJUST'] }), T('mv_date', 'Date', 'date')] },
+    search: ['mv_no', 'serial_no'], cols: [T('mv_no', 'MV No', 'ro'), T('serial_no', 'Serial', 'select', { lookup: 'serials', lv: 'serial_no', ll: 'serial_no' }), T('from_loc', 'From', 'select', { lookup: 'locations', lv: 'name', ll: 'name' }), T('to_loc', 'To', 'select', { lookup: 'locations', lv: 'name', ll: 'name' }), T('mv_type', 'Type', 'select', { opts: ['TRANSFER', 'DEPLOY', 'RETURN', 'ADJUST'] }), T('mv_date', 'Date', 'date')] },
   deliveries: { label: 'Delivery', group: 'Inventory & Procurement', table: 'deliveries', date: 'requested_date', seq: { prefix: 'DR', field: 'dr_no' },
     search: ['dr_no', 'serial_no', 'destination'], cols: [T('dr_no', 'DR No', 'ro'), T('sale_id', 'Sale', 'select', { lookup: 'sales', lv: 'id', ll: 'si_no' }), T('serial_no', 'Serial', 'text'), T('destination', 'Destination', 'text'), T('requested_date', 'Requested', 'date'), T('status', 'Status', 'ro')],
     actions: [{ id: 'delivery-release', label: 'Release', when: 'FOR_DELIVERY' }, { id: 'delivery-receive', label: 'Receive', when: 'RELEASED' }] },
@@ -69,7 +69,7 @@ const REG = {
   accounts: { label: 'Chart of Accounts', group: 'Finance & Accounting', table: 'accounts', seq: null,
     search: ['code', 'name'], cols: [T('code', 'Code', 'text'), T('name', 'Name', 'text'), T('type', 'Type', 'select', { opts: ['Asset', 'Liability', 'Equity', 'Income', 'Expense'] }), T('normal_side', 'Normal', 'select', { opts: ['DEBIT', 'CREDIT'] })] },
   locations: { label: 'Locations', group: 'Inventory & Procurement', table: 'locations', seq: null, search: ['name'], cols: [T('name', 'Name', 'text')] },
-  users: { label: 'Users & Access', group: 'HCM', table: 'users', seq: null, search: ['email', 'name'], cols: [T('email', 'Email', 'text'), T('name', 'Name', 'text'), T('role', 'Role', 'select', { opts: ['Admin', 'Manager', 'Staff', 'Viewer'] }), T('active', 'Active', 'select', { opts: ['1', '0'] })] },
+  users: { label: 'Users & Access', group: 'HCM', table: 'users', seq: null, search: ['email', 'name'], cols: [T('email', 'Email', 'text'), T('name', 'Name', 'text'), T('role', 'Role', 'select', { opts: ['Admin', 'Manager', 'Staff', 'Viewer'] }), T('active', 'Active', 'select', { opts: ['1', '0'] }), T('permissions', 'Module Access', 'perms')] },
 
   // ---- Fixed Assets ----
   fa_register: { label: 'Asset Register', group: 'Fixed Assets', table: 'fixed_assets', date: 'acquisition_date', seq: { prefix: 'FA', field: 'fa_no' },
@@ -133,6 +133,12 @@ app.get('/api/lookup/:key', async (c) => {
   const rows = await c.env.DB.prepare(`SELECT * FROM ${m.table} ORDER BY id DESC LIMIT 500`).all();
   return ok(c, { rows: rows.results || [] });
 });
+app.get('/api/distinct/:key/:col', async (c) => {
+  const m = REG[c.req.param('key')]; const col = c.req.param('col');
+  if (!m || !m.table || !(m.cols || []).some(x => x.name === col)) return ok(c, { vals: [] });
+  const rows = await c.env.DB.prepare(`SELECT DISTINCT ${col} v FROM ${m.table} WHERE ${col} IS NOT NULL AND ${col}!='' ORDER BY v LIMIT 200`).all();
+  return ok(c, { vals: (rows.results || []).map(r => r.v) });
+});
 
 /* ============ generic list / create / get / update ============ */
 app.get('/api/m/:key', async (c) => {
@@ -146,6 +152,8 @@ app.get('/api/m/:key', async (c) => {
   if (m.date && to) { where.push(`${m.date} <= ?`); args.push(to + ' 23:59:59'); }
   const st = (c.req.query('status') || '').trim();
   if (st && (m.cols || []).some(x => x.name === 'status')) { where.push('status=?'); args.push(st); }
+  const cat = (c.req.query('category') || '').trim();
+  if (cat && (m.cols || []).some(x => x.name === 'category')) { where.push('category=?'); args.push(cat); }
   const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const tot = await db.prepare(`SELECT COUNT(*) n FROM ${m.table} ${w}`).bind(...args).first();
   const rows = await db.prepare(`SELECT * FROM ${m.table} ${w} ORDER BY id DESC LIMIT ? OFFSET ?`).bind(...args, size, (page - 1) * size).all();
