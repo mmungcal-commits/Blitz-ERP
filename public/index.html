@@ -126,6 +126,7 @@ async function route(){
     if(CUR==='dashboard')return viewDashboard(m);
     if(CUR.startsWith('report:'))return viewReport(m,CUR.slice(7));
     const mod=REG[CUR];
+    if(mod&&mod.custom==='po')return viewPO(m);
     if(mod&&mod.custom==='receiving')return viewReceiving(m);
     if(mod&&mod.custom==='journal')return viewJournal(m);
     return viewModule(m,CUR);
@@ -257,19 +258,75 @@ function openDetail(key,row){
   document.querySelectorAll('[data-da]').forEach(b=>b.onclick=async()=>{await POST(`/act/${b.dataset.da}/${row.id}`);closeModal();route();});
 }
 
+async function viewPO(m){
+  const r=await A('/m/pos?size=200');
+  m.innerHTML=`<h1>Purchase Orders</h1><p class="sub">Inventory & Procurement · line-by-line</p>
+    <div class="toolbar"><span class="right"></span><button class="primary" id="new">+ New Purchase Order</button></div>
+    <table><thead><tr><th>PO No</th><th>Vendor</th><th>Date</th><th class="rt">Total</th><th>Status</th><th></th></tr></thead><tbody>
+    ${(r.rows||[]).length?r.rows.map(x=>`<tr class="clk" data-id="${x.id}"><td><b>${esc(x.po_no)}</b></td><td>${esc(x.vendor||'')}</td><td>${esc(x.order_date||'')}</td><td class="rt">${money(x.total)}</td><td><span class="chip ${chipCls(x.status)}">${esc(x.status)}</span></td><td class="rt">${x.status==='DRAFT'?`<button class="ghost sm" data-appr="${x.id}">Approve</button>`:''}</td></tr>`).join(''):'<tr><td colspan="6" class="muted">No purchase orders yet.</td></tr>'}
+    </tbody></table>`;
+  document.getElementById('new').onclick=openPO;
+  document.querySelectorAll('[data-appr]').forEach(b=>b.onclick=async(e)=>{e.stopPropagation();await POST('/act/po-approve/'+b.dataset.appr);route();});
+  document.querySelectorAll('tr[data-id]').forEach(tr=>tr.onclick=(e)=>{if(e.target.closest('button'))return;openPODetail(tr.dataset.id);});
+}
+async function openPO(){
+  const [vends,items]=await Promise.all([lookup('vendors'),lookup('items')]);
+  const vopt='<option value=""></option>'+vends.map(v=>`<option>${esc(v.name)}</option>`).join('');
+  const iopt='<option value=""></option>'+items.map(i=>`<option value="${i.id}" data-d="${esc(i.description||'')}" data-c="${i.unit_cost||0}">${esc(i.sku?i.sku+' — ':'')}${esc(i.description||'')}</option>`).join('');
+  const row=()=>`<div class="po-row" style="display:grid;grid-template-columns:2fr 1fr 1fr 26px;gap:6px;margin-bottom:6px"><select class="po-item">${iopt}</select><input class="po-qty" type="number" min="1" placeholder="Qty"><input class="po-cost" type="number" step="any" placeholder="Unit cost"><button class="ghost sm po-x">×</button></div>`;
+  modal(`<h2>New Purchase Order</h2>
+    <div class="grid2"><div class="field"><label>Vendor</label><select id="po_vendor">${vopt}</select></div><div class="field"><label>Order date</label><input id="po_date" type="date"></div></div>
+    <label style="font-size:12px;color:var(--mut);font-weight:600">Line items</label><div id="po_lines">${row()}${row()}</div>
+    <button class="ghost sm" id="po_add">+ Add line</button>
+    <div style="margin-top:12px;text-align:right"><span id="po_tot" class="muted"></span><br><button class="ghost" onclick="closeModal()">Cancel</button> <button class="primary" id="po_save">Create PO</button> <span id="po_err" class="err"></span></div>`);
+  const wrap=document.getElementById('po_lines');
+  const recalc=()=>{let t=0;wrap.querySelectorAll('.po-row').forEach(r=>{t+=(Number(r.querySelector('.po-qty').value)||0)*(Number(r.querySelector('.po-cost').value)||0);});document.getElementById('po_tot').textContent='Total: '+money(t);};
+  wrap.addEventListener('input',recalc);
+  wrap.addEventListener('change',e=>{if(e.target.classList.contains('po-item')){const o=e.target.selectedOptions[0];const r=e.target.closest('.po-row');if(o&&o.dataset.c&&!r.querySelector('.po-cost').value)r.querySelector('.po-cost').value=o.dataset.c;recalc();}});
+  wrap.addEventListener('click',e=>{if(e.target.classList.contains('po-x')){e.target.closest('.po-row').remove();recalc();}});
+  document.getElementById('po_add').onclick=()=>wrap.insertAdjacentHTML('beforeend',row());
+  document.getElementById('po_save').onclick=async()=>{
+    const lines=[...wrap.querySelectorAll('.po-row')].map(r=>{const o=r.querySelector('.po-item').selectedOptions[0];return {item_id:r.querySelector('.po-item').value||null,description:o?o.dataset.d:'',qty:r.querySelector('.po-qty').value,unit_cost:r.querySelector('.po-cost').value};}).filter(l=>Number(l.qty)>0);
+    const res=await POST('/po',{vendor:val('po_vendor'),order_date:val('po_date'),lines});
+    if(res.ok){closeModal();route();}else document.getElementById('po_err').textContent=res.error||'Error';
+  };
+}
+async function openPODetail(id){
+  const r=await A('/po/'+id);const h=r.header||{};
+  modal(`<h2>${esc(h.po_no)} &nbsp;<span class="chip ${chipCls(h.status)}">${esc(h.status)}</span></h2>
+    <p class="sub">${esc(h.vendor||'')} · ${esc(h.order_date||'')} · Total ${money(h.total)}</p>
+    <table><thead><tr><th>Item</th><th class="rt">Ordered</th><th class="rt">Received</th><th class="rt">Remaining</th></tr></thead><tbody>
+    ${(r.lines||[]).map(l=>`<tr><td>${esc(l.description||'')}</td><td class="rt">${l.qty}</td><td class="rt">${l.received_qty||0}</td><td class="rt">${(l.qty||0)-(l.received_qty||0)}</td></tr>`).join('')}
+    </tbody></table>
+    <div style="text-align:right;margin-top:12px">${['APPROVED','PARTIAL'].includes(h.status)?`<button class="primary" onclick="closeModal();PENDING={po:'${id}'};go('receiving')">Receive against this PO ↗</button> `:''}<button class="ghost" onclick="closeModal()">Close</button></div>`);
+}
 async function viewReceiving(m){
   const pos=(await A('/m/pos?size=200')).rows.filter(p=>['APPROVED','PARTIAL'].includes(p.status));
-  m.innerHTML=`<h1>Receiving</h1><p class="sub">Receive units into inventory · duplicates auto-detected</p>
-    <div class="panel" style="max-width:640px">
-      <div class="field"><label>Against PO (optional)</label><select id="po"><option value="">— none —</option>${pos.map(p=>`<option value="${p.id}">${esc(p.po_no)} — ${esc(p.vendor||'')}</option>`).join('')}</select></div>
-      <div class="grid2"><div class="field"><label>Item description</label><input id="idesc"></div><div class="field"><label>Location</label><input id="loc" value="Main"></div></div>
+  const prePo=(PENDING&&PENDING.po)||''; PENDING=null;
+  const locs=await lookup('locations');
+  const lopt=locs.map(l=>`<option>${esc(l.name)}</option>`).join('');
+  m.innerHTML=`<h1>Receiving</h1><p class="sub">Receive units against an approved PO · duplicates auto-detected</p>
+    <div class="panel" style="max-width:700px">
+      <div class="field"><label>Purchase Order (required)</label><select id="po"><option value="">— select approved PO —</option>${pos.map(p=>`<option value="${p.id}" ${String(p.id)===String(prePo)?'selected':''}>${esc(p.po_no)} — ${esc(p.vendor||'')} (${esc(p.status)})</option>`).join('')}</select></div>
+      <div id="polines" class="muted" style="font-size:12px;margin-bottom:10px"></div>
+      <div class="grid2"><div class="field"><label>PO line</label><select id="line"><option value="">— select line —</option></select></div><div class="field"><label>Location</label><select id="loc">${lopt}</select></div></div>
       <div class="field"><label>Serial numbers (one per line)</label><textarea id="serials" rows="8"></textarea></div>
       <button class="primary" id="recv">Receive into inventory</button><div id="res" style="margin-top:12px"></div>
     </div>`;
+  async function loadLines(){
+    const pid=val('po');const box=document.getElementById('polines');const lsel=document.getElementById('line');
+    if(!pid){box.textContent='';lsel.innerHTML='<option value="">— select line —</option>';return;}
+    const r=await A('/po/'+pid);const lines=r.lines||[];
+    box.innerHTML='Ordered vs received: '+lines.map(l=>`${esc(l.description||'item')} <b>${l.received_qty||0}/${l.qty}</b>`).join(' · ');
+    lsel.innerHTML='<option value="">— select line —</option>'+lines.map(l=>`<option value="${l.id}" data-d="${esc(l.description||'')}">${esc(l.description||'item')} (remaining ${(l.qty||0)-(l.received_qty||0)})</option>`).join('');
+  }
+  document.getElementById('po').onchange=loadLines; if(prePo)loadLines();
   document.getElementById('recv').onclick=async()=>{
     const serials=val('serials').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-    const r=await POST('/receive',{po_id:val('po')||null,item_desc:val('idesc'),location:val('loc'),serials});
-    document.getElementById('res').innerHTML=r.ok?`<p class="ok">Received ${r.received} serial(s).${r.dupeCount?` <span class="err">${r.dupeCount} duplicate(s) skipped: ${esc(r.duplicatesSkipped.join(', '))}</span>`:''}</p>`:`<p class="err">${esc(r.error)}</p>`;
+    const o=document.getElementById('line').selectedOptions[0];
+    const r=await POST('/receive',{po_id:val('po'),po_line_id:val('line')||null,item_desc:o?o.dataset.d:'',location:val('loc'),serials});
+    document.getElementById('res').innerHTML=r.ok?`<p class="ok">Received ${r.received} serial(s).${r.dupeCount?` <span class="err">${r.dupeCount} duplicate(s) skipped.</span>`:''}</p>`:`<p class="err">${esc(r.error)}</p>`;
+    if(r.ok)loadLines();
   };
 }
 
