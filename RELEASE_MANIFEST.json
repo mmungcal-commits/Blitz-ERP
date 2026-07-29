@@ -1,0 +1,498 @@
+{
+  "release": "E88 FinSys v7.1.0 Connected ERP",
+  "generated_at": "2026-07-30T00:21:00+08:00",
+  "file_count": 98,
+  "total_bytes": 47704542,
+  "files": [
+    {
+      "path": ".dev.vars.example",
+      "bytes": 213,
+      "sha256": "acf46067d97160601eb3aaf058b07c32cf9bc050f14a0b671e9d908cb833e8eb"
+    },
+    {
+      "path": ".github/workflows/bootstrap-and-deploy.yml",
+      "bytes": 1270,
+      "sha256": "92157c39c8c5191fef390a5edea9452ad2d5cf3717ae53753d97dcd2282b0f37"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "bytes": 782,
+      "sha256": "d0b91e6ac9a5616e8d53cf6b0f814a585564f77d4aa9a1ead90a91827c62102a"
+    },
+    {
+      "path": ".github/workflows/deploy.yml",
+      "bytes": 789,
+      "sha256": "b243bee8398b2f4c7ce10ed773e41e192e11ed00426f8f50d6bac3abe6358f00"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 91,
+      "sha256": "6a191fd4b8f95e26f2e2ef02be8bf4f0e7f98eeec89cf252721953d45c0cc93e"
+    },
+    {
+      "path": "ARCHITECTURE.md",
+      "bytes": 3765,
+      "sha256": "721344015656e48a03ca742f8f1a0f1ae0ccec15366cf3aec47099e77fa20dd0"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "bytes": 1188,
+      "sha256": "18974ff66bdb630df5c608eeb07f71e5f7d3553caa76f3c5196360f990b3a4cc"
+    },
+    {
+      "path": "COPYRIGHT_NOTICE.md",
+      "bytes": 688,
+      "sha256": "b440ee30006cd1c0d40b7c6b318a03df7aa4b06f16a5003531facf3aced3d881"
+    },
+    {
+      "path": "DEPLOYMENT.md",
+      "bytes": 3452,
+      "sha256": "cc0b81a58e6eefd8d183d6574b156950c26114be3ee0664ffa539f84918bfc68"
+    },
+    {
+      "path": "GITHUB_BROWSER_DEPLOYMENT.md",
+      "bytes": 2130,
+      "sha256": "df50f30e3b42f5e3a1f1bfd4ab29e65d7af8a3ba58aa94db1ff3ff1f14536452"
+    },
+    {
+      "path": "GO_LIVE_CHECKLIST.md",
+      "bytes": 2275,
+      "sha256": "6f9788815c96da62c87fd2ea36c24825e8ecbd65eef19722810d1145d9dde29c"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3409,
+      "sha256": "0c28bef99ada283eca875bb88793b4dcbdd992c5b5fafd704829ba1ff4e8db59"
+    },
+    {
+      "path": "alter_users.sql",
+      "bytes": 58,
+      "sha256": "21d00f606fa609298e4a3ee935d1ac6a253afebc979829db027435c02c05c358"
+    },
+    {
+      "path": "data.sql",
+      "bytes": 827996,
+      "sha256": "f6904f93225f05dcea3d4e7c01e9d1f0eeb066322bca4582adbab9e32d4a78fc"
+    },
+    {
+      "path": "loc_backfill.sql",
+      "bytes": 34978,
+      "sha256": "5db5d44c873cd5810cbc319c812f806db00da91e0d8f9a849043c25d74478bf5"
+    },
+    {
+      "path": "migrations/0008_connected_erp.sql",
+      "bytes": 20267,
+      "sha256": "096bc12a489b1cc07241721bf16b0dac876c22294df84245007d0ea01fdeebe4"
+    },
+    {
+      "path": "migrations/0010_procurement_sales_controls.sql",
+      "bytes": 5306,
+      "sha256": "3e4f5628e07bb9b0f68cf8f75199ee926e62ed3a2cb61bda42fa073d2fe4f429"
+    },
+    {
+      "path": "migrations/0011_finance_planning_registers.sql",
+      "bytes": 5508,
+      "sha256": "f4443aa951f64c0ad64f51157cdd1d436ba38ce4036a42dbbd837b11e9c426e2"
+    },
+    {
+      "path": "migrations/opening/0001_opening_data.sql",
+      "bytes": 2104922,
+      "sha256": "a41cb33f8f5ced1533df10a72fdd075ff83281be91fa9e225474510f02d5898f"
+    },
+    {
+      "path": "migrations/opening/0002_opening_data.sql",
+      "bytes": 2367759,
+      "sha256": "078455b45e0d4bb13996c6f60487f9868ffaa1f5efd09d183646a2c48dda1164"
+    },
+    {
+      "path": "migrations/opening/0003_opening_data.sql",
+      "bytes": 2757178,
+      "sha256": "9b2eebd5a9ddc2e9656c2d432d6b9d312d69f03e60ff2ea812d86de534b60216"
+    },
+    {
+      "path": "migrations/opening/0004_opening_data.sql",
+      "bytes": 3037202,
+      "sha256": "27fa7c7c9c1ed85f886ea26d09d407887bb8e0b1c29383d5bc182a09bb586304"
+    },
+    {
+      "path": "migrations/opening/0005_opening_data.sql",
+      "bytes": 3100006,
+      "sha256": "3d16d7231f3dd5624e2202f7e795c2c55f1ac24cc1fb6f1a3395951a8b2ea574"
+    },
+    {
+      "path": "migrations/opening/0006_opening_data.sql",
+      "bytes": 1792894,
+      "sha256": "08591b73eeaf8dc759c1443ede67242f9821774f8c643f4e07617ab294692bce"
+    },
+    {
+      "path": "migrations/opening/0007_opening_data.sql",
+      "bytes": 3350897,
+      "sha256": "248a1b002eb9cc963278c099d8311ddd98bc8e074e62a44b04c0598d9c2e8a6d"
+    },
+    {
+      "path": "migrations/opening/0008_opening_data.sql",
+      "bytes": 3360206,
+      "sha256": "7149470db368c35173d03e9ddeb13d7eae2b0ccd79a7dfa2c3679cd5432cdb3d"
+    },
+    {
+      "path": "migrations/opening/0009_opening_data.sql",
+      "bytes": 3125251,
+      "sha256": "80d3301f9c3f9da632c236b6e215da0aba18b16f6ba34dab22e75179e2aed36f"
+    },
+    {
+      "path": "migrations/opening/0010_opening_data.sql",
+      "bytes": 1424511,
+      "sha256": "eb40a0ca983f3fc9fae1c0e80995b71d1dfd1e461afaaa6ecfe653476c6cd8be"
+    },
+    {
+      "path": "migrations/opening/0011_opening_data.sql",
+      "bytes": 4484698,
+      "sha256": "fc811e97c5bb1afa3d824772779141d110789bf4090f73b6b19bc7a0da7ba3c4"
+    },
+    {
+      "path": "migrations/opening/0012_opening_data.sql",
+      "bytes": 4469122,
+      "sha256": "495b40da6661c529f45467684b4b376fc196a57c5530093fc8263bd871afeec5"
+    },
+    {
+      "path": "migrations/opening/0013_opening_data.sql",
+      "bytes": 1462470,
+      "sha256": "7b8b9d25387fe7140bb132264bcc309484c194c68cb5ec79e0d9753d3560c73b"
+    },
+    {
+      "path": "migrations/opening/manifest.json",
+      "bytes": 419,
+      "sha256": "1a2b60c7d7e79541235d3628f4eb2deefca28cfec9df15563488686a364ee093"
+    },
+    {
+      "path": "package.json",
+      "bytes": 1019,
+      "sha256": "cd4626443074608dd7db03d4a42f208024e97a54ed256ca3c30f9a2b434402de"
+    },
+    {
+      "path": "public/app.css",
+      "bytes": 10304,
+      "sha256": "8e237abf362f321784a077d7dfd84b92cb47774fd78daca77da5793263a01418"
+    },
+    {
+      "path": "public/app.js",
+      "bytes": 46284,
+      "sha256": "21d97c23e99a305f8c28f97749e6e4a1b06f2cc24cf7029c06b7e56a8cb69efb"
+    },
+    {
+      "path": "public/index.html",
+      "bytes": 2318,
+      "sha256": "34c245be8e895ddf58731ee7537e3eb44f146d378765f558117c9225b86774e9"
+    },
+    {
+      "path": "public/logo.png",
+      "bytes": 7683,
+      "sha256": "31493c1b8bcd958deb0d3d95b16fd0d7bec8fd37ed29a6cdbd95a6a0796b8807"
+    },
+    {
+      "path": "reports/BUILD_VALIDATION.md",
+      "bytes": 1121,
+      "sha256": "e797fd74ff37ab12c092296c22f503b47a467e012a7676db81607ea432565831"
+    },
+    {
+      "path": "reports/DATA_LOAD_REPORT.json",
+      "bytes": 2475,
+      "sha256": "2b42e150d54d83c3d1adf44d6daaf01949bb8af5f1f1bffffcf723db850ac3b0"
+    },
+    {
+      "path": "reports/DATA_LOAD_REPORT.md",
+      "bytes": 1488,
+      "sha256": "f853de925cfc741df18e44c651f6498bc8bb5c28de574d31e82afbbd995b7e22"
+    },
+    {
+      "path": "reports/DATA_SELF_TEST.log",
+      "bytes": 936,
+      "sha256": "3bcc5217289f5cb39e4e79804274c5667da412731b6a90413ae231844f262f11"
+    },
+    {
+      "path": "reports/GIT_CHANGE_SUMMARY.txt",
+      "bytes": 456,
+      "sha256": "6dd7590f4eab677c92f6c47a1f7fb5c1faf819996ea50de006f4acb690c33407"
+    },
+    {
+      "path": "reports/SELF_TEST_REPORT.json",
+      "bytes": 5928,
+      "sha256": "0f1f92d412f863bfab05082c70628ec820caf2438f54e2e4e16f51240dbb542e"
+    },
+    {
+      "path": "reports/SELF_TEST_REPORT.md",
+      "bytes": 4763,
+      "sha256": "0faecfbbc4ded77369cd4ff838c68c3b9ae294b52353fd7fa71bf2da63370022"
+    },
+    {
+      "path": "reports/SOURCE_SECURITY_REPORT.md",
+      "bytes": 751,
+      "sha256": "8d68e6c2f05ec2ba22382c37c5ddbed3b5ef8502f1c55b91d9cf854c829b48d3"
+    },
+    {
+      "path": "reports/STRUCTURE_CHECK.log",
+      "bytes": 10639,
+      "sha256": "af256b450ecff489d078c6e9bafbbe057f8f9c2c7fd94fa1fffabb4b772e4b58"
+    },
+    {
+      "path": "reports/UNIT_TEST.log",
+      "bytes": 638,
+      "sha256": "46eec4e623929173ce6cc1f082b380b229a3208473612b0a8bfd02355f208397"
+    },
+    {
+      "path": "schema.sql",
+      "bytes": 5570,
+      "sha256": "4acc7ff967c8d8923d3f4fec84f1d4a021a30d94ad88dff747826b3a2171ca24"
+    },
+    {
+      "path": "schema2.sql",
+      "bytes": 5095,
+      "sha256": "07d1de5d76391f7ee3f245580e9e0de4b2665f7ddec9656032a7843f7c68741b"
+    },
+    {
+      "path": "schema4.sql",
+      "bytes": 3637,
+      "sha256": "d58dadf05a75d18318b9093f4ac99b285e67173dbd062612d4aa5ad919ccda4e"
+    },
+    {
+      "path": "schema7.sql",
+      "bytes": 341,
+      "sha256": "1b7d8b17bf9540af1004d064b804e93d1b8786a502036917944c247bf4ce4253"
+    },
+    {
+      "path": "scripts/apply-database.mjs",
+      "bytes": 2588,
+      "sha256": "a42a70822cfd0ac38db31fa7f307105b447405374a9d206948a62d5e02bc5e05"
+    },
+    {
+      "path": "scripts/check-structure.mjs",
+      "bytes": 4398,
+      "sha256": "ef1aaabd76845d60930a1b2a7295bd32cd860e6fa14ec1153a1dcbb7956b38da"
+    },
+    {
+      "path": "scripts/generate_opening_data.py",
+      "bytes": 72075,
+      "sha256": "6031315672891bbad4c08cb49997710f71a78911556f9b4df2648ca363229327"
+    },
+    {
+      "path": "scripts/predeploy-guard.mjs",
+      "bytes": 1115,
+      "sha256": "d3dbefc9d710c180a7d8bd1b0af00dfe8f9ec08340dfe99188042256184bfd88"
+    },
+    {
+      "path": "scripts/self_test.py",
+      "bytes": 11315,
+      "sha256": "2d5d27a9b63af1217492668e1f4faa7a0c0fb858793583cbca3cd9c150db5c57"
+    },
+    {
+      "path": "scripts/smoke-test.mjs",
+      "bytes": 1512,
+      "sha256": "3fed8f78eeb372fb513c9f446ba66c790e2893e04e4690046e234402e172b891"
+    },
+    {
+      "path": "source_data/2026 SCM Warehouse Documents.xlsx",
+      "bytes": 2458348,
+      "sha256": "f106731e56053057a6cdd372ab069a433bd29a8a9333d2a2591b9e74c1e382de"
+    },
+    {
+      "path": "source_data/ATLAS - Asset Manifest (1).xlsx",
+      "bytes": 234698,
+      "sha256": "fae086fdc52b0e70a5cbcbe520b11230913c52f5640f08cde13e75921fc8551a"
+    },
+    {
+      "path": "source_data/Detailed_Receipts_2026.xlsx",
+      "bytes": 66257,
+      "sha256": "1e8573e5d50068ac1479aee082fbcf673e94459a446617df64379e55866f9eea"
+    },
+    {
+      "path": "source_data/E88_AM_FINAL_v5A.xlsx",
+      "bytes": 817942,
+      "sha256": "639f42b10985478b69d4299861b8994105128dd541a280f17d6ebc0c20de7532"
+    },
+    {
+      "path": "source_data/E88_ApprovedBudget2026 (4)(1).xlsx",
+      "bytes": 254256,
+      "sha256": "22ac899849ed28955ea5924c609a4dd106285796a406960ffb31f8a453fb0c1a"
+    },
+    {
+      "path": "source_data/E88_ProcurementMonitoring_2026.xlsx",
+      "bytes": 781847,
+      "sha256": "492e2e42fa82200d08dc585a5c7f938ef1e447379c6d04fc594ffa4e0314a66c"
+    },
+    {
+      "path": "source_data/E88_SalesMonitoring_2026.xlsx",
+      "bytes": 136132,
+      "sha256": "31bbb24140ae186f05c47efe070534cbdae1e1bdfa1a03d0ceb39717d68dec95"
+    },
+    {
+      "path": "source_data/Pre-release Unit Checklist.xlsx",
+      "bytes": 176641,
+      "sha256": "619d3df32816264f2cb53f1a13650ea7e9ad232cfa9a5db923848c69329996f5"
+    },
+    {
+      "path": "source_data/SATURN _ DELIVERY MONITORING _ LAST MILE (3).xlsx",
+      "bytes": 830159,
+      "sha256": "f5a0734ef12faaeced254fb95b7df7b0442cc38ac56b33493659cbcb18244e38"
+    },
+    {
+      "path": "source_data/SCM Live Dashboard (3).xlsx",
+      "bytes": 482927,
+      "sha256": "870bb5bff79cc5ffaf4ef8f62bea9406ebde20bd187a420314738ca35f352912"
+    },
+    {
+      "path": "source_data/SCM Requisition Slip 1226.xlsx",
+      "bytes": 174555,
+      "sha256": "29d29a7e7aba69e90d67d6af28634985d362436c385faa456aa8c78992cc3d52"
+    },
+    {
+      "path": "source_data/STAKU - SALES_LEASE B2B (4).xlsx",
+      "bytes": 459490,
+      "sha256": "532b252c8ec950ae2d8667b17b232afeb7ada57e67e13bcd047891e1cdb3d95a"
+    },
+    {
+      "path": "source_data/STAR _ E88 SCM Inventory2026 (4).xlsx",
+      "bytes": 2570985,
+      "sha256": "eb1c9886906857c79198583b11405a8b35459c18bd0abbdcb5a7036a1324ab5f"
+    },
+    {
+      "path": "source_data/STELLAR _ Shipment.xlsx",
+      "bytes": 185293,
+      "sha256": "80128523048563985df5791c2478312df8a2b27cebe29522410f1352e785321e"
+    },
+    {
+      "path": "src/.gitkeep",
+      "bytes": 12,
+      "sha256": "2f73349cfc4630255319c6c8dfc1b46a8996ace9d14d8e07563b165915918ec2"
+    },
+    {
+      "path": "src/index.js",
+      "bytes": 2645,
+      "sha256": "6b9cf4fadb08f5c4f7f73054600571a5eab7ac962e69e191f2df9f1d0545daad"
+    },
+    {
+      "path": "src/lib/atlas.js",
+      "bytes": 7533,
+      "sha256": "1373cd47b7722aa452fc5312205a7119623728fa3b4b320cfaf06799c14355e7"
+    },
+    {
+      "path": "src/lib/audit.js",
+      "bytes": 715,
+      "sha256": "d1715b19664d655a052a9f3afdc30ac51b9e6cab0388b2171be4fea29db0e308"
+    },
+    {
+      "path": "src/lib/auth.js",
+      "bytes": 3178,
+      "sha256": "8692635d78c2e28459365b519596c1f0674cee40c8a10d87fc2c406af5f0fd7b"
+    },
+    {
+      "path": "src/lib/codes.js",
+      "bytes": 4536,
+      "sha256": "834cd5121cc7631d6b146eed40ef598b027f2d940a7ede50ca1c6de61a191554"
+    },
+    {
+      "path": "src/lib/db.js",
+      "bytes": 999,
+      "sha256": "cc5d816d0c1f3abd1281b3e9c96665ba6848ad427532b034d1e05d295ddcbe1a"
+    },
+    {
+      "path": "src/lib/http.js",
+      "bytes": 1082,
+      "sha256": "74d2a07d8e67c6daca791618330d005adc758ae4c6741db0dd194fff5f367ae5"
+    },
+    {
+      "path": "src/lib/inventory.js",
+      "bytes": 4471,
+      "sha256": "7c3c0c8f96bcc481aa344fb374cd4694dda7bf0979d2ef342c7c68fe7c6e0a2a"
+    },
+    {
+      "path": "src/routes/admin.js",
+      "bytes": 5533,
+      "sha256": "5527ee789ab4f2ba8cbae33796d3c0b965d0abee8b95e21db02af39546215955"
+    },
+    {
+      "path": "src/routes/atlas.js",
+      "bytes": 8750,
+      "sha256": "b41637e32b481e5784c4a414d042b140217fc7fa02b1a5ccdcde1c4ddba3416c"
+    },
+    {
+      "path": "src/routes/checklists.js",
+      "bytes": 1849,
+      "sha256": "8967c0ec02930f129eb9c097b91b2bd8126359f834e6628b408add799198af38"
+    },
+    {
+      "path": "src/routes/dashboard.js",
+      "bytes": 4187,
+      "sha256": "11ee8dd97f5043025c6a32fcbb3b49c33894afab81e72c8172c3e2158aa5ce9a"
+    },
+    {
+      "path": "src/routes/deliveries.js",
+      "bytes": 8134,
+      "sha256": "b430a7131b473e389697e20b6f34ee1ef6ae7a3f92948435c39c3f7b3ad36c72"
+    },
+    {
+      "path": "src/routes/inventory.js",
+      "bytes": 5649,
+      "sha256": "33a2c5d30f48ee28cf82d24fdb4a8f7d6d16e43db1861138a69e3c20673c7d86"
+    },
+    {
+      "path": "src/routes/masters.js",
+      "bytes": 4835,
+      "sha256": "fffd1142b0826481be7380cb038811764aec9fc4ea157f4e3e3deca101257a5a"
+    },
+    {
+      "path": "src/routes/planning.js",
+      "bytes": 2038,
+      "sha256": "f27e5cf6d0ed100a2fde4ff0d4d523031dcbe67467279e7dd1cdaee47a8f2039"
+    },
+    {
+      "path": "src/routes/procurement.js",
+      "bytes": 8963,
+      "sha256": "9955f0173871fbae3a9bae7f463cfd51cb1f4728d98944255bf4ee3b2f0a6bda"
+    },
+    {
+      "path": "src/routes/receiving.js",
+      "bytes": 7825,
+      "sha256": "33e0ece5715b070a7b4e6fd1e53da79e876b2f114e6562599623476c90a75246"
+    },
+    {
+      "path": "src/routes/requisitions.js",
+      "bytes": 5587,
+      "sha256": "0bd4ccc5d793ae24e3f25849fcc585f9f43c1ed6a7305fbe175b0c29255cb3a4"
+    },
+    {
+      "path": "src/routes/returns.js",
+      "bytes": 7564,
+      "sha256": "9fead54bb3978738df1265f3c8ce449a455e9f12ed512ed6b89466e0f7bd2eb7"
+    },
+    {
+      "path": "src/routes/sales.js",
+      "bytes": 8955,
+      "sha256": "59d4559df6d1dc8a7bd1fb98cd5dbb0dc25523fb36a446efbd581bd7f0c2d9d7"
+    },
+    {
+      "path": "src/routes/session.js",
+      "bytes": 1116,
+      "sha256": "d67c2b8b0bcdb124fee2d4310c7516be610440702b2845343c28012c79fa35f9"
+    },
+    {
+      "path": "src/routes/shipments.js",
+      "bytes": 4536,
+      "sha256": "320a116803b563370bd02c6a1854fd724172362222260eafd381cd3175276c43"
+    },
+    {
+      "path": "src/routes/stations.js",
+      "bytes": 6415,
+      "sha256": "05c3b3b32517330977f3ae0509d0a0644f671138f09cda66a4e69fb1dd859570"
+    },
+    {
+      "path": "test/codes.test.mjs",
+      "bytes": 1037,
+      "sha256": "cb3c47e6177eddc41b9e1120a58e020180533c7a5cf34ffed0b505ce3587b3f4"
+    },
+    {
+      "path": "wrangler.toml",
+      "bytes": 719,
+      "sha256": "d0c0709720644b1d65a3a8cafb2f3cfe2193614c5aeb84f35449a783a447166e"
+    }
+  ]
+}

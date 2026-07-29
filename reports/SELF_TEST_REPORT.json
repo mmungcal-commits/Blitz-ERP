@@ -1,0 +1,238 @@
+{
+  "passed": 29,
+  "total": 29,
+  "tests": [
+    {
+      "name": "All opening SQL chunks execute",
+      "passed": true,
+      "detail": "13 chunks"
+    },
+    {
+      "name": "No foreign-key violations",
+      "passed": true,
+      "detail": "0 violations"
+    },
+    {
+      "name": "Actual source workbooks embedded",
+      "passed": true,
+      "detail": "14"
+    },
+    {
+      "name": "Source rows archived",
+      "passed": true,
+      "detail": "24118"
+    },
+    {
+      "name": "Canonical assets loaded",
+      "passed": true,
+      "detail": "8650"
+    },
+    {
+      "name": "No duplicate canonical asset serials",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Duplicate serial evidence preserved",
+      "passed": true,
+      "detail": "6697"
+    },
+    {
+      "name": "Shipments created from STELLAR/ATLAS",
+      "passed": true,
+      "detail": "28"
+    },
+    {
+      "name": "ATLAS expected serials created",
+      "passed": true,
+      "detail": "2015"
+    },
+    {
+      "name": "Historical receiving linked to shipments",
+      "passed": true,
+      "detail": "2015"
+    },
+    {
+      "name": "Stock movements loaded",
+      "passed": true,
+      "detail": "5807"
+    },
+    {
+      "name": "Sales and lease assignments loaded",
+      "passed": true,
+      "detail": "264"
+    },
+    {
+      "name": "Delivery asset history loaded",
+      "passed": true,
+      "detail": "1115"
+    },
+    {
+      "name": "Historical returns loaded",
+      "passed": true,
+      "detail": "46"
+    },
+    {
+      "name": "Battery swaps remain unreconciled",
+      "passed": true,
+      "detail": "323"
+    },
+    {
+      "name": "Requisitions loaded",
+      "passed": true,
+      "detail": "207"
+    },
+    {
+      "name": "Pre-release checks loaded",
+      "passed": true,
+      "detail": "289"
+    },
+    {
+      "name": "Approved purchase orders loaded",
+      "passed": true,
+      "detail": "20"
+    },
+    {
+      "name": "Procurement register loaded",
+      "passed": true,
+      "detail": "1261"
+    },
+    {
+      "name": "Sales receipts loaded",
+      "passed": true,
+      "detail": "140"
+    },
+    {
+      "name": "Budget loaded",
+      "passed": true,
+      "detail": "133"
+    },
+    {
+      "name": "Planning drivers loaded",
+      "passed": true,
+      "detail": "4096"
+    },
+    {
+      "name": "Station projects linked to assets",
+      "passed": true,
+      "detail": "389"
+    },
+    {
+      "name": "Admin live access loaded",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Sales serials resolve to assets",
+      "passed": true,
+      "detail": "0"
+    },
+    {
+      "name": "Delivery serials resolve to assets",
+      "passed": true,
+      "detail": "0"
+    },
+    {
+      "name": "New item codes cannot collide with opening codes",
+      "passed": true,
+      "detail": "MC:max=71,next=72; BAT:max=40,next=41; BSS:max=57,next=58; SP:max=21,next=22; CHG:max=4,next=5; OTH:max=156,next=157"
+    },
+    {
+      "name": "Legacy plaintext passwords redacted from database archive",
+      "passed": true,
+      "detail": "0"
+    },
+    {
+      "name": "Bundled source workbooks contain no readable passwords",
+      "passed": true,
+      "detail": "0"
+    }
+  ],
+  "counts": {
+    "erp_items": 761,
+    "erp_assets": 8650,
+    "erp_serial_exceptions": 6697,
+    "erp_shipments": 28,
+    "erp_expected_assets": 2015,
+    "erp_receipts": 15,
+    "erp_receipt_lines": 2015,
+    "erp_stock_ledger": 5807,
+    "erp_sales_orders": 264,
+    "erp_sales_lines": 1053,
+    "erp_deliveries": 143,
+    "erp_delivery_assets": 1115,
+    "erp_return_orders": 46,
+    "erp_return_lines": 324,
+    "erp_reconciliation_cases": 323,
+    "erp_requisitions": 207,
+    "erp_requisition_lines": 624,
+    "erp_pre_release_checks": 289,
+    "erp_purchase_orders": 20,
+    "erp_landed_cost_headers": 8,
+    "erp_station_projects": 44,
+    "erp_station_project_assets": 389,
+    "erp_sales_receipts": 140,
+    "erp_procurement_register": 1261,
+    "erp_payment_register": 1261,
+    "erp_budget_plan": 133,
+    "erp_planning_drivers": 4096,
+    "erp_import_rows": 24118
+  },
+  "categories": {
+    "MC": 3177,
+    "BAT": 3083,
+    "OTH": 1469,
+    "SP": 345,
+    "BSS": 336,
+    "CHG": 240
+  },
+  "statuses": {
+    "AVAILABLE": 5922,
+    "LEASED": 747,
+    "SOLD": 502,
+    "TRANSFER_OUT": 421,
+    "PILOT_TEST": 377,
+    "ASSIGNED": 257,
+    "INVENTORY_TRANSFER": 75,
+    "DONE": 59,
+    "DONATION": 50,
+    "SALE_TO_CLIENT": 40,
+    "INVENTORY_TRANSFER_FOR_RIDEBOX_SERVICE_CENTER": 26,
+    "MYTHOS": 26,
+    "INVENTORY_TRANSFER_TO_STA_ROSA": 21,
+    "STOCK_TRANSFER_|_STOCK_TRANSFER": 19,
+    "UNDER_REPAIR": 11,
+    "REPLACEMENT_OF_OFFLINE_BATTERY_IN_JAMO_CORP": 10,
+    "QUARANTINE": 9,
+    "REPLACED_PARTS": 9,
+    "LOANER_UNIT": 8,
+    "OKLA_CHINA": 7,
+    "EMPLOYEE_UNIT": 6,
+    "CORINTHIAN_HILLS": 5,
+    "MOBILE_BSS": 5,
+    "FOR_CORNER_STONE": 4,
+    "ASSIGMENT_TO_EMPLOYEE": 3,
+    "OTHERS": 3,
+    "BACK_UP_BATTERY_FOR_FOREST_HILLS_EVENT": 2,
+    "ENAN/ARBY": 2,
+    "INVENTORY_TRANSFER_TO_TCI": 2,
+    "PARTS_REPLACEMENT": 2,
+    "REPLACEMENT_FOR_D400_BLACK_WITH_DEFFECTIVE_PARTS": 2,
+    "REPLACEMENT_FOR_OFFLINE_BATTERIES": 2,
+    "REPLACEMENT_OF_2_OFFLINE_BATTERIES": 2,
+    "INSTALL_TO_SAMPLE_UNIT_IN_TCI": 1,
+    "PQM/CRIS_MENDOZA": 1,
+    "PULL_OUT_DEFECTIVE_BATTERIES_FROM_STA_ROSA_&_BF_HOMES_PARANAQUE": 1,
+    "REPLACED_DEFFECTIVE_PARTS_|_REPLACEMET_PARTS_FOR_DEFFECTIVE_ODOMETER_FOR_DASMA_MAKATI": 1,
+    "REPLACEMENT_OF_CONTROLLER_OF_CLIENT_UNDER_WARRANTY": 1,
+    "REPLACEMENT_OF_OFFLINE_BATTERY_IN_POWERFILL_SANDOVAL_PASIG": 1,
+    "REPLACEMENT_PARTS_FOR_D400_DASHBOARD": 1,
+    "REPLACE_DEFFECTIVE_PART_FOR_EMPLOYEE_SERVICE_UNIT_(PMS)": 1,
+    "RIDEBOX_SERVICE_CENTER_ASGARD": 1,
+    "SALE_TO_CLIENT_|_SALE_TO_CLIENT": 1,
+    "SERVICE_UNIT": 1,
+    "SOURCING_OF_POSSIBLE_LOCKERS_LOCATION": 1,
+    "STOCK_TRANSFER": 1,
+    "SWAPPING_OF_PARTS_(SEAT)": 1
+  }
+}

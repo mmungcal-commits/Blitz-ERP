@@ -1,0 +1,28 @@
+name: Deploy E88 FinSys Worker
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: npm install
+      - run: python -m pip install openpyxl
+      - run: npm run build
+      - name: Deploy Worker only
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+# Database bootstrap is deliberately not automated here.
+# Run it only once against a NEW/EMPTY D1 database after backing up production.

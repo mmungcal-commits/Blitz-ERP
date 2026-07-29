@@ -14,3 +14,14 @@ run_worker_first = true
 binding = "DB"
 database_name = "e88"
 database_id = "ed5e7a18-4f30-4ec2-9b2f-4b94d05f3a6e"
+
+[vars]
+ENVIRONMENT = "production"
+ALLOWED_DOMAIN = "nrdev.ph"
+APP_ADMIN_EMAIL = "mmungcal@nrdev.ph"
+APP_TIMEZONE = "Asia/Manila"
+
+# Optional: bind an R2 bucket as DOCS for uploaded ATLAS, QR, PO, receiving, and delivery files.
+# [[r2_buckets]]
+# binding = "DOCS"
+# bucket_name = "e88-finsys-documents"

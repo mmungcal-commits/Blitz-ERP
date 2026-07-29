@@ -1,19 +1,31 @@
 {
   "name": "e88-finsys",
-  "version": "1.0.0",
+  "version": "7.1.0",
   "private": true,
   "type": "module",
+  "description": "E88 FinSys connected Supply Chain and Sales ERP for Cloudflare Workers and D1.",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "db:init:local": "wrangler d1 execute e88 --local --file=./schema.sql",
-    "db:seed:local": "wrangler d1 execute e88 --local --file=./seed.sql",
-    "db:init:remote": "wrangler d1 execute e88 --remote --file=./schema.sql"
+    "deploy": "npm run predeploy && wrangler deploy",
+    "check": "node scripts/check-structure.mjs",
+    "test:unit": "node --test test/*.test.mjs",
+    "test:data": "python scripts/self_test.py",
+    "test": "npm run test:unit && npm run test:data",
+    "build": "npm run check && npm test",
+    "generate:data": "python scripts/generate_opening_data.py",
+    "db:bootstrap:local": "node scripts/apply-database.mjs --local",
+    "db:bootstrap:remote": "node scripts/apply-database.mjs --remote --confirm=E88_NEW_DATABASE",
+    "smoke": "node scripts/smoke-test.mjs",
+    "predeploy": "node scripts/predeploy-guard.mjs"
   },
   "dependencies": {
-    "hono": "^4.6.14"
+    "hono": "^4.6.14",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "wrangler": "^3.90.0"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

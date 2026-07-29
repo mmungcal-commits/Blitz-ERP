@@ -1,0 +1,6 @@
+# Local-only development fallback. Do not commit actual secrets.
+ALLOW_DEV_AUTH=true
+APP_ADMIN_EMAIL=mmungcal@nrdev.ph
+ALLOWED_DOMAIN=nrdev.ph
+# Optional local Basic Auth fallback:
+# APP_PASS=replace-locally-only
