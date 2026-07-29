@@ -104,19 +104,40 @@ CREATE TABLE IF NOT EXISTS documents (
   created_by TEXT, created_at TEXT DEFAULT (datetime('now'))
 );
 
--- Seed a minimal chart of accounts if empty
-INSERT INTO accounts (code, name, type, normal_side)
-SELECT * FROM (
-  SELECT '1000','Cash on Hand','Asset','DEBIT' UNION ALL
-  SELECT '1010','Cash in Bank','Asset','DEBIT' UNION ALL
-  SELECT '1200','Accounts Receivable','Asset','DEBIT' UNION ALL
-  SELECT '1300','Inventory','Asset','DEBIT' UNION ALL
-  SELECT '2000','Accounts Payable','Liability','CREDIT' UNION ALL
-  SELECT '2100','VAT Payable','Liability','CREDIT' UNION ALL
-  SELECT '2110','EWT Payable','Liability','CREDIT' UNION ALL
-  SELECT '3000','Owner Equity','Equity','CREDIT' UNION ALL
-  SELECT '4000','Sales Revenue','Income','CREDIT' UNION ALL
-  SELECT '4100','Lease Revenue','Income','CREDIT' UNION ALL
-  SELECT '5000','Cost of Goods Sold','Expense','DEBIT' UNION ALL
-  SELECT '6000','Operating Expense','Expense','DEBIT'
-) WHERE NOT EXISTS (SELECT 1 FROM accounts);
+-- Seed the chart of accounts using separate idempotent statements.
+-- Separate inserts avoid Cloudflare D1 / SQLite compound SELECT limits.
+INSERT OR IGNORE INTO accounts (code, name, type, normal_side)
+VALUES ('1000', 'Cash on Hand', 'Asset', 'DEBIT');
+
+INSERT OR IGNORE INTO accounts (code, name, type, normal_side)
+VALUES ('1010', 'Cash in Bank', 'Asset', 'DEBIT');
+
+INSERT OR IGNORE INTO accounts (code, name, type, normal_side)
+VALUES ('1200', 'Accounts Receivable', 'Asset', 'DEBIT');
+
+INSERT OR IGNORE INTO accounts (code, name, type, normal_side)
+VALUES ('1300', 'Inventory', 'Asset', 'DEBIT');
+
+INSERT OR IGNORE INTO accounts (code, name, type, normal_side)
+VALUES ('2000', 'Accounts Payable', 'Liability', 'CREDIT');
+
+INSERT OR IGNORE INTO accounts (code, name, type, normal_side)
+VALUES ('2100', 'VAT Payable', 'Liability', 'CREDIT');
+
+INSERT OR IGNORE INTO accounts (code, name, type, normal_side)
+VALUES ('2110', 'EWT Payable', 'Liability', 'CREDIT');
+
+INSERT OR IGNORE INTO accounts (code, name, type, normal_side)
+VALUES ('3000', 'Owner Equity', 'Equity', 'CREDIT');
+
+INSERT OR IGNORE INTO accounts (code, name, type, normal_side)
+VALUES ('4000', 'Sales Revenue', 'Income', 'CREDIT');
+
+INSERT OR IGNORE INTO accounts (code, name, type, normal_side)
+VALUES ('4100', 'Lease Revenue', 'Income', 'CREDIT');
+
+INSERT OR IGNORE INTO accounts (code, name, type, normal_side)
+VALUES ('5000', 'Cost of Goods Sold', 'Expense', 'DEBIT');
+
+INSERT OR IGNORE INTO accounts (code, name, type, normal_side)
+VALUES ('6000', 'Operating Expense', 'Expense', 'DEBIT');
