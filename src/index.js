@@ -14,7 +14,7 @@ async function nextNo(db, table, prefix) {
 const T = (name, label, type = 'text', extra = {}) => ({ name, label, type, ...extra });
 const REG = {
   // ---- Supply Chain ----
-  pos: { label: 'Purchase Orders', group: 'Inventory & Procurement', table: 'purchase_orders', date: 'order_date', seq: { prefix: 'PO', field: 'po_no' },
+  pos: { label: 'Purchase Orders', group: 'Inventory & Procurement', custom: 'po', table: 'purchase_orders', date: 'order_date', seq: { prefix: 'PO', field: 'po_no' },
     search: ['po_no', 'vendor'], cols: [T('po_no', 'PO No', 'ro'), T('vendor', 'Vendor', 'select', { lookup: 'vendors', lv: 'name', ll: 'name' }), T('order_date', 'Order Date', 'date'), T('total', 'Total', 'num'), T('status', 'Status', 'ro')],
     actions: [{ id: 'po-approve', label: 'Approve', when: 'DRAFT' }] },
   landed: { label: 'Landed Cost', group: 'Inventory & Procurement', table: 'landed_costs', seq: null,
@@ -32,7 +32,8 @@ const REG = {
     search: ['si_no'], cols: [T('si_no', 'SI No', 'ro'), T('customer_id', 'Customer', 'select', { lookup: 'customers', lv: 'id', ll: 'name' }), T('sale_date', 'Date', 'date'), T('gross', 'Gross', 'num'), T('status', 'Status', 'ro')],
     actions: [{ id: 'sale-post', label: 'Post', when: 'DRAFT' }] },
   leases: { label: 'Lease Contracts', group: 'Finance & Accounting', table: 'leases', date: 'start_date', seq: { prefix: 'LC', field: 'contract_no' },
-    search: ['contract_no', 'serial_no'], cols: [T('contract_no', 'Contract', 'ro'), T('customer_id', 'Customer', 'select', { lookup: 'customers', lv: 'id', ll: 'name' }), T('serial_no', 'Serial', 'select', { lookup: 'serials', lv: 'serial_no', ll: 'serial_no' }), T('monthly', 'Monthly', 'num'), T('status', 'Status', 'ro')] },
+    search: ['contract_no', 'serial_no'], cols: [T('contract_no', 'Contract', 'ro'), T('customer_id', 'Customer', 'select', { lookup: 'customers', lv: 'id', ll: 'name' }), T('serial_no', 'Serial', 'select', { lookup: 'serials', lv: 'serial_no', ll: 'serial_no' }), T('monthly', 'Monthly', 'num'), T('status', 'Status', 'ro')],
+    actions: [{ id: 'lease-activate', label: 'Activate & Charge', when: 'DRAFT' }] },
   collections: { label: 'Collections', group: 'Finance & Accounting', table: 'collections', date: 'collect_date', seq: { prefix: 'OR', field: 'or_no' },
     search: ['or_no'], cols: [T('or_no', 'OR No', 'ro'), T('customer_id', 'Customer', 'select', { lookup: 'customers', lv: 'id', ll: 'name' }), T('amount', 'Amount', 'num'), T('collect_date', 'Date', 'date'), T('status', 'Status', 'ro')],
     actions: [{ id: 'collection-post', label: 'Post to AR', when: 'DRAFT' }] },
@@ -196,7 +197,7 @@ app.put('/api/m/:key/:id', async (c) => {
 });
 function defaultStatus(table) {
   if (table === 'purchase_orders' || table === 'sales' || table === 'collections' || table === 'journal_headers') return 'DRAFT';
-  if (table === 'leases') return 'ACTIVE';
+  if (table === 'leases') return 'DRAFT';
   if (table === 'deliveries') return 'FOR_DELIVERY';
   if (table === 'procurement_bills') return 'OPEN';
   return 'ACTIVE';
@@ -216,6 +217,15 @@ app.post('/api/act/sale-post/:id', async (c) => {
   await db.prepare(`INSERT INTO customer_receivables (customer_id, sale_id, amount, balance) VALUES (?,?,?,?)`).bind(s.customer_id || null, id, s.gross, s.gross).run();
   return ok(c, { posted: true });
 });
+app.post('/api/act/lease-activate/:id', async (c) => {
+  const db = c.env.DB, id = c.req.param('id');
+  const l = await db.prepare(`SELECT * FROM leases WHERE id=?`).bind(id).first();
+  if (!l) return bad(c, 'Not found', 404); if (l.status === 'ACTIVE') return bad(c, 'Already active');
+  if (l.serial_no) await db.prepare(`UPDATE inventory_serials SET status='LEASED', customer_id=? WHERE serial_no=?`).bind(l.customer_id || null, l.serial_no).run();
+  await db.prepare(`INSERT INTO customer_receivables (customer_id, sale_id, amount, balance, due_date) VALUES (?, NULL, ?, ?, date('now','+30 day'))`).bind(l.customer_id || null, l.monthly, l.monthly).run();
+  await db.prepare(`UPDATE leases SET status='ACTIVE' WHERE id=?`).bind(id).run();
+  return ok(c, { activated: true });
+});
 app.post('/api/act/collection-post/:id', async (c) => {
   const db = c.env.DB, id = c.req.param('id');
   const col = await db.prepare(`SELECT * FROM collections WHERE id=?`).bind(id).first();
@@ -227,20 +237,55 @@ app.post('/api/act/collection-post/:id', async (c) => {
   return ok(c, { posted: true, unapplied: rem });
 });
 
-/* receiving into inventory (serial-unique) */
+/* Purchase Order with line items */
+app.post('/api/po', async (c) => {
+  const db = c.env.DB, b = await c.req.json();
+  const lines = (Array.isArray(b.lines) ? b.lines : []).filter(l => (l.description || l.item_id) && num(l.qty) > 0);
+  if (!lines.length) return bad(c, 'Add at least one line item');
+  const total = lines.reduce((s, l) => s + num(l.qty) * num(l.unit_cost), 0);
+  const no = await nextNo(db, 'purchase_orders', 'PO');
+  const r = await db.prepare(`INSERT INTO purchase_orders (po_no, vendor, order_date, status, total, created_by) VALUES (?,?,?, 'DRAFT', ?, ?)`).bind(no, b.vendor || null, b.order_date || null, total, userEmail(c)).run();
+  const pid = r.meta.last_row_id;
+  for (const l of lines) await db.prepare(`INSERT INTO po_lines (po_id, item_id, description, qty, unit_cost, received_qty) VALUES (?,?,?,?,?,0)`).bind(pid, l.item_id || null, l.description || null, num(l.qty), num(l.unit_cost)).run();
+  return ok(c, { id: pid, po_no: no, total });
+});
+app.get('/api/po/:id', async (c) => {
+  const db = c.env.DB, id = c.req.param('id');
+  const h = await db.prepare(`SELECT * FROM purchase_orders WHERE id=?`).bind(id).first();
+  if (!h) return bad(c, 'Not found', 404);
+  const l = await db.prepare(`SELECT * FROM po_lines WHERE po_id=? ORDER BY id`).bind(id).all();
+  return ok(c, { header: h, lines: l.results || [] });
+});
+
+/* receiving into inventory (serial-unique) — must be against an approved PO */
 app.post('/api/receive', async (c) => {
   const db = c.env.DB, b = await c.req.json();
   const serials = (Array.isArray(b.serials) ? b.serials : []).map(s => String(s).trim()).filter(Boolean);
-  if (!serials.length) return bad(c, 'No serials');
+  if (!b.po_id) return bad(c, 'Select a Purchase Order to receive against');
+  if (!serials.length) return bad(c, 'Enter at least one serial number');
+  const po = await db.prepare(`SELECT * FROM purchase_orders WHERE id=?`).bind(b.po_id).first();
+  if (!po) return bad(c, 'PO not found', 404);
+  if (!['APPROVED', 'PARTIAL'].includes(po.status)) return bad(c, 'PO must be Approved before receiving');
   const locName = b.location || 'Main';
   let loc = await db.prepare(`SELECT id FROM locations WHERE name=?`).bind(locName).first();
   if (!loc) { const r = await db.prepare(`INSERT INTO locations (name) VALUES (?)`).bind(locName).run(); loc = { id: r.meta.last_row_id }; }
+  const line = b.po_line_id ? await db.prepare(`SELECT * FROM po_lines WHERE id=? AND po_id=?`).bind(b.po_line_id, b.po_id).first() : null;
+  const itemDesc = b.item_desc || (line && line.description) || 'Item';
+  const itemId = (line && line.item_id) || null;
+  const unitCost = line ? line.unit_cost : num(b.unit_cost);
   const ins = [], dupes = [];
   for (const sn of serials) {
-    try { await db.prepare(`INSERT INTO inventory_serials (serial_no, item_desc, category, status, location_id, location_name, po_id, unit_cost) VALUES (?,?,?, 'AVAILABLE', ?,?,?,?)`).bind(sn, b.item_desc || 'Item', b.category || null, loc.id, locName, b.po_id || null, num(b.unit_cost)).run(); ins.push(sn); }
+    try { await db.prepare(`INSERT INTO inventory_serials (serial_no, item_id, item_desc, category, status, location_id, location_name, po_id, unit_cost) VALUES (?,?,?,?, 'AVAILABLE', ?,?,?,?)`).bind(sn, itemId, itemDesc, b.category || null, loc.id, locName, b.po_id, unitCost).run(); ins.push(sn); }
     catch (e) { if (String(e).includes('UNIQUE')) dupes.push(sn); else throw e; }
   }
-  if (ins.length) { const rn = await nextNo(db, 'receipts', 'RCV'); await db.prepare(`INSERT INTO receipts (receipt_no, po_id, location_id, qty, received_by) VALUES (?,?,?,?,?)`).bind(rn, b.po_id || null, loc.id, ins.length, userEmail(c)).run(); if (b.po_id) await db.prepare(`UPDATE purchase_orders SET status='PARTIAL' WHERE id=? AND status='APPROVED'`).bind(b.po_id).run(); }
+  if (ins.length) {
+    const rn = await nextNo(db, 'receipts', 'RCV');
+    await db.prepare(`INSERT INTO receipts (receipt_no, po_id, location_id, qty, received_by) VALUES (?,?,?,?,?)`).bind(rn, b.po_id, loc.id, ins.length, userEmail(c)).run();
+    if (line) await db.prepare(`UPDATE po_lines SET received_qty=received_qty+? WHERE id=?`).bind(ins.length, line.id).run();
+    const lns = (await db.prepare(`SELECT qty, received_qty FROM po_lines WHERE po_id=?`).bind(b.po_id).all()).results || [];
+    const done = lns.length && lns.every(l => (l.received_qty || 0) >= (l.qty || 0));
+    await db.prepare(`UPDATE purchase_orders SET status=? WHERE id=?`).bind(done ? 'RECEIVED' : 'PARTIAL', b.po_id).run();
+  }
   return ok(c, { received: ins.length, duplicatesSkipped: dupes, dupeCount: dupes.length });
 });
 
