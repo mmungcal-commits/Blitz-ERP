@@ -61,14 +61,16 @@ const REG = {
     search: ['doc_no', 'ref', 'customer'], cols: [T('doc_no', 'Doc No', 'ro'), T('doc_type', 'Type', 'select', { opts: ['SI', 'DR'] }), T('ref', 'Reference', 'text'), T('customer', 'Customer', 'text'), T('amount', 'Amount', 'num'), T('doc_date', 'Date', 'date'), T('status', 'Status', 'text')] },
   // ---- Masters ----
   items: { label: 'Items', group: 'Inventory & Procurement', table: 'items', seq: null,
-    search: ['sku', 'description'], cols: [T('sku', 'SKU', 'text'), T('description', 'Description', 'text'), T('category', 'Category', 'text'), T('class', 'Class', 'text'), T('unit_cost', 'Unit Cost', 'num')] },
+    search: ['sku', 'description'], cols: [T('sku', 'SKU', 'text'), T('description', 'Description', 'text'), T('category', 'Category', 'select', { lookup: 'item_categories', lv: 'name', ll: 'name' }), T('class', 'Class', 'select', { lookup: 'item_classes', lv: 'name', ll: 'name' }), T('unit_cost', 'Unit Cost', 'num')] },
   customers: { label: 'Customers', group: 'Finance & Accounting', table: 'customers', seq: { prefix: 'CUS', field: 'code' },
     search: ['code', 'name'], cols: [T('code', 'Code', 'ro'), T('name', 'Name', 'text')] },
   vendors: { label: 'Vendors', group: 'Inventory & Procurement', table: 'vendors', seq: { prefix: 'VEN', field: 'code' },
-    search: ['code', 'name'], cols: [T('code', 'Code', 'ro'), T('name', 'Name', 'text'), T('tin', 'TIN', 'text'), T('terms', 'Terms', 'text')] },
+    search: ['code', 'name', 'contact_person', 'email'], cols: [T('code', 'Code', 'ro'), T('name', 'Vendor Name', 'text'), T('contact_person', 'Contact Person', 'text'), T('email', 'Email', 'text'), T('phone', 'Phone', 'text'), T('address', 'Address', 'textarea'), T('tin', 'TIN', 'text'), T('terms', 'Payment Terms', 'select', { opts: ['COD', 'Net 15', 'Net 30', 'Net 45', 'Net 60', '50% DP'] })] },
   accounts: { label: 'Chart of Accounts', group: 'Finance & Accounting', table: 'accounts', seq: null,
     search: ['code', 'name'], cols: [T('code', 'Code', 'text'), T('name', 'Name', 'text'), T('type', 'Type', 'select', { opts: ['Asset', 'Liability', 'Equity', 'Income', 'Expense'] }), T('normal_side', 'Normal', 'select', { opts: ['DEBIT', 'CREDIT'] })] },
-  locations: { label: 'Locations', group: 'Inventory & Procurement', table: 'locations', seq: null, search: ['name'], cols: [T('name', 'Name', 'text')] },
+  locations: { label: 'Locations', group: 'Settings', table: 'locations', seq: null, search: ['name'], cols: [T('name', 'Location Name', 'text')] },
+  item_categories: { label: 'Item Categories', group: 'Settings', table: 'item_categories', seq: null, search: ['name'], cols: [T('name', 'Category', 'text')] },
+  item_classes: { label: 'Item Classes', group: 'Settings', table: 'item_classes', seq: null, search: ['name'], cols: [T('name', 'Class', 'text')] },
   users: { label: 'Users & Access', group: 'HCM', table: 'users', seq: null, search: ['email', 'name'], cols: [T('email', 'Email', 'text'), T('name', 'Name', 'text'), T('role', 'Role', 'select', { opts: ['Admin', 'Manager', 'Staff', 'Viewer'] }), T('active', 'Active', 'select', { opts: ['1', '0'] }), T('permissions', 'Module Access', 'perms')] },
 
   // ---- Fixed Assets ----
@@ -175,6 +177,12 @@ app.post('/api/m/:key', async (c) => {
   if ((m.cols || []).some(x => x.name === 'created_by') || m.table === 'purchase_orders') { }
   const ph = fields.map(() => '?').join(',');
   const r = await db.prepare(`INSERT INTO ${m.table} (${fields.join(',')}) VALUES (${ph})`).bind(...vals).run();
+  // Stock Movement is the single mechanism that relocates a serial: update its current location.
+  if (c.req.param('key') === 'movements' && b.serial_no && b.to_loc) {
+    const st = b.mv_type === 'DEPLOY' ? 'DEPLOYED' : (b.mv_type === 'RETURN' ? 'AVAILABLE' : null);
+    if (st) await db.prepare(`UPDATE inventory_serials SET location_name=?, status=? WHERE serial_no=?`).bind(b.to_loc, st, b.serial_no).run();
+    else await db.prepare(`UPDATE inventory_serials SET location_name=? WHERE serial_no=?`).bind(b.to_loc, b.serial_no).run();
+  }
   return ok(c, { id: r.meta.last_row_id });
 });
 app.put('/api/m/:key/:id', async (c) => {
