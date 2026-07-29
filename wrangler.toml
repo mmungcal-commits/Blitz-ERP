@@ -12,8 +12,8 @@ run_worker_first = true
 # D1 database. database_id is filled in after `wrangler d1 create e88`.
 [[d1_databases]]
 binding = "DB"
-database_name = "e88"
-database_id = "ed5e7a18-4f30-4ec2-9b2f-4b94d05f3a6e"
+database_name = "e88-v7"
+database_id = "37da8de0-9574-43d0-8bde-69719342cbbd"
 
 [vars]
 ENVIRONMENT = "production"

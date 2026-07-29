@@ -37,7 +37,7 @@ const files = [...coreFiles, ...(manifest.files || []).map(f => `migrations/open
 for (const rel of files) {
   const full = join(ROOT, rel);
   try { await access(full, constants.R_OK); } catch { throw new Error(`Missing SQL file: ${rel}`); }
-  const commandArgs = ['wrangler', 'd1', 'execute', 'e88', local ? '--local' : '--remote', `--file=${full}`];
+  const commandArgs = ['wrangler', 'd1', 'execute', 'DB', local ? '--local' : '--remote', `--file=${full}`];
   console.log(`\n[${files.indexOf(rel)+1}/${files.length}] Applying ${rel}`);
   const result = spawnSync('npx', commandArgs, { cwd: ROOT, stdio: 'inherit', shell: process.platform === 'win32' });
   if (result.status !== 0) {
