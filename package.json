@@ -1,6 +1,6 @@
 {
   "name": "e88-finsys",
-  "version": "8.1.0",
+  "version": "8.1.1",
   "private": true,
   "type": "module",
   "description": "E88 FinSys Ramco-style connected ERP with ATLAS expected shipments and controlled actual receiving.",
@@ -9,6 +9,7 @@
     "deploy": "npm run predeploy && wrangler deploy",
     "check": "node scripts/check-structure.mjs",
     "test:unit": "node --test test/*.test.mjs",
+    "test:integration": "node test/auth.integration.mjs",
     "test:data": "python scripts/self_test.py",
     "test": "npm run test:unit && npm run test:data",
     "build": "npm run check && npm test",
@@ -23,7 +24,9 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "wrangler": "^3.90.0"
+    "esbuild": "^0.28.1",
+    "miniflare": "^4.20260722.1",
+    "wrangler": "^4.115.0"
   },
   "engines": {
     "node": ">=20"

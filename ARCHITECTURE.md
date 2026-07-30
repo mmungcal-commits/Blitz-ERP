@@ -87,9 +87,11 @@ Opening-data migration advances each sequence beyond the highest imported code t
 
 ## Security model
 
-- Cloudflare Access must protect the Worker URL.
-- `Cf-Access-Authenticated-User-Email` is the production identity source.
+- The E88-branded application login is always available when no valid session is present.
+- Only users pre-registered in `erp_users`, active, and approved for LIVE access can sign in.
+- Each user activates the account and sets a private password. Passwords are stored only as salted PBKDF2 hashes and are never returned to administrators.
+- Session tokens are random, stored as hashes in D1, and sent only through Secure, HttpOnly, SameSite cookies.
+- Cloudflare Access may also protect the Worker URL. When enabled, `Cf-Access-Authenticated-User-Email` remains a supported additional identity source.
 - Users outside `nrdev.ph` are rejected.
 - Permissions are checked server-side by module/action: View, Create, Edit, Approve, Post, Export, Manage.
-- The application does not store user passwords when Cloudflare Access is used.
 - Audit logs retain user, action, record, before/after details, and timestamp.

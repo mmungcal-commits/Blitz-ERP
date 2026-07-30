@@ -71,11 +71,19 @@ bucket_name = "e88-finsys-documents"
 
 Without R2, operational records work but uploaded ATLAS and supporting documents are not permanently stored by the Worker.
 
-## 7. Protect the URL with Cloudflare Access
+## 7. Install the application login
 
-Create an Access application for the E88 FinSys Worker/custom domain. Allow only the `nrdev.ph` email domain. The application reads the authenticated user from the Cloudflare Access header.
+Apply `migrations/0014_application_auth.sql` before deploying v8.1.1. For the existing v8.1 production database, use the manual GitHub Action:
 
-Do not expose the production Worker without Access protection.
+`Repair E88 FinSys Login and Deploy`
+
+Enter confirmation:
+
+`E88_REPAIR_LOGIN`
+
+The existing administrator `mmungcal@nrdev.ph` can use the prior `APP_PASS` once on the new branded login page. The Worker immediately converts that first successful login into an individual salted password hash. Other authorized users must be created in **Users & Diagnostics**, then activated through their one-time activation link.
+
+Cloudflare Access may remain enabled as an additional outer security layer. If used, allow only the `nrdev.ph` domain.
 
 ## 8. Deploy
 
