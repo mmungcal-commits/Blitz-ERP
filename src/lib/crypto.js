@@ -1,5 +1,5 @@
 const encoder = new TextEncoder();
-const PASSWORD_ITERATIONS = 210000;
+const PASSWORD_ITERATIONS = 100000;
 
 function bytesToBase64Url(bytes) {
   let binary = '';
