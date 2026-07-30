@@ -1,4 +1,5 @@
 import { first, run } from './db.js';
+import { readCookie, sha256 } from './crypto.js';
 
 const DOMAIN = 'nrdev.ph';
 
@@ -23,22 +24,37 @@ export function requestEmail(c) {
   return String(accessEmail || (allowDev ? devEmail : '') || emailFromBasic(c.req.raw, c.env) || '').trim().toLowerCase();
 }
 
+function isAuthorizedUser(user, env) {
+  if (!user?.active) return false;
+  const production = String(env.ENVIRONMENT || '').toLowerCase() === 'production';
+  return !production || !!user.live_access;
+}
+
+async function userFromSession(c) {
+  const token = readCookie(c.req.raw, 'e88_session');
+  if (!token) return null;
+  const tokenHash = await sha256(token);
+  const user = await first(c.env.DB,
+    `SELECT u.*
+       FROM erp_sessions s
+       JOIN erp_users u ON u.id=s.user_id
+      WHERE s.token_hash=? AND julianday(s.expires_at)>julianday('now')`,
+    [tokenHash]);
+  if (!isAuthorizedUser(user, c.env)) return null;
+  await run(c.env.DB, `UPDATE erp_sessions SET last_seen_at=datetime('now') WHERE token_hash=?`, [tokenHash]);
+  return user;
+}
+
 export async function loadUser(c) {
+  const sessionUser = await userFromSession(c);
+  if (sessionUser) return sessionUser;
+
   const email = requestEmail(c);
   if (!email || !email.endsWith(`@${c.env.ALLOWED_DOMAIN || DOMAIN}`)) {
     return null;
   }
-  let user = await first(c.env.DB, `SELECT * FROM erp_users WHERE email=?`, [email]);
-  if (!user) {
-    const adminEmail = String(c.env.APP_ADMIN_EMAIL || 'mmungcal@nrdev.ph').toLowerCase();
-    const role = email === adminEmail ? 'ADMIN' : 'STAFF';
-    const live = role === 'ADMIN' ? 1 : 0;
-    const r = await run(c.env.DB,
-      `INSERT INTO erp_users(email,display_name,role_code,live_access) VALUES(?,?,?,?)`,
-      [email, email.split('@')[0], role, live]);
-    user = { id: r.meta.last_row_id, email, display_name: email.split('@')[0], role_code: role, live_access: live, active: 1 };
-  }
-  if (!user.active) return null;
+  const user = await first(c.env.DB, `SELECT * FROM erp_users WHERE email=?`, [email]);
+  if (!isAuthorizedUser(user, c.env)) return null;
   await run(c.env.DB, `UPDATE erp_users SET last_login_at=datetime('now') WHERE id=?`, [user.id]);
   return user;
 }
@@ -52,7 +68,7 @@ export async function permissionFor(db, roleCode, module) {
 
 export async function requireUser(c, next) {
   const user = await loadUser(c);
-  if (!user) return c.json({ ok: false, error: 'Access is restricted to authorized @nrdev.ph users.' }, 401);
+  if (!user) return c.json({ ok: false, error: 'Authentication required.' }, 401);
   c.set('erpUser', user);
   return next();
 }

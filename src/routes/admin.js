@@ -4,13 +4,72 @@ import { ok, fail, jsonBody } from '../lib/http.js';
 import { requirePermission } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { normalizeText, nextCode, normalizeSerial } from '../lib/codes.js';
+import { randomToken, sha256 } from '../lib/crypto.js';
 
 export const adminRoutes = new Hono();
 const MODULES=['DASHBOARD','PROCUREMENT','SHIPMENTS','RECEIVING','INVENTORY','RETURNS','REQUISITIONS','DELIVERIES','SALES','CUSTOMERS','STATIONS','PLANNING','ADMIN'];
 
-adminRoutes.get('/users', requirePermission('ADMIN','MANAGE'), async c=>{const users=await all(c.env.DB,`SELECT * FROM erp_users ORDER BY active DESC,email`);const roles=await all(c.env.DB,`SELECT * FROM erp_roles ORDER BY name`);const permissions=await all(c.env.DB,`SELECT * FROM erp_role_permissions ORDER BY role_code,module`);return ok(c,{users,roles,permissions,modules:MODULES});});
+function userColumns() {
+  return `u.id,u.email,u.display_name,u.role_code,u.department,u.live_access,u.active,u.last_login_at,u.created_at,
+          CASE WHEN cr.activated_at IS NOT NULL AND cr.password_hash IS NOT NULL THEN 1 ELSE 0 END activated`;
+}
 
-adminRoutes.post('/users', requirePermission('ADMIN','MANAGE'), async c=>{const b=await jsonBody(c);const email=normalizeText(b.email).toLowerCase();if(!email.endsWith('@nrdev.ph'))return fail(c,'Only @nrdev.ph accounts are allowed');const before=await first(c.env.DB,`SELECT * FROM erp_users WHERE email=?`,[email]);if(before){await run(c.env.DB,`UPDATE erp_users SET display_name=?,role_code=?,department=?,live_access=?,active=? WHERE email=?`,[normalizeText(b.displayName||before.display_name),b.roleCode||before.role_code,normalizeText(b.department),b.liveAccess?1:0,b.active===false?0:1,email]);}else{await run(c.env.DB,`INSERT INTO erp_users(email,display_name,role_code,department,live_access,active) VALUES(?,?,?,?,?,?)`,[email,normalizeText(b.displayName||email.split('@')[0]),b.roleCode||'STAFF',normalizeText(b.department),b.liveAccess?1:0,b.active===false?0:1]);}const after=await first(c.env.DB,`SELECT * FROM erp_users WHERE email=?`,[email]);await audit(c,{action:before?'UPDATE_USER':'CREATE_USER',module:'ADMIN',recordType:'USER',recordId:after.id,recordNo:email,before,after});return ok(c,{user:after});});
+async function issueAuthLink(c, user, mode) {
+  const token = randomToken(32);
+  const tokenHash = await sha256(token);
+  const activation = mode === 'activate';
+  await run(c.env.DB, `INSERT OR IGNORE INTO erp_user_credentials(user_id) VALUES(?)`, [user.id]);
+  await run(c.env.DB,
+    activation
+      ? `UPDATE erp_user_credentials SET activation_token_hash=?,activation_expires_at=datetime('now','+24 hours'),updated_at=datetime('now') WHERE user_id=?`
+      : `UPDATE erp_user_credentials SET reset_token_hash=?,reset_expires_at=datetime('now','+1 hour'),updated_at=datetime('now') WHERE user_id=?`,
+    [tokenHash, user.id]);
+  const url = new URL(c.req.url);
+  const key = activation ? 'activate' : 'reset';
+  return `${url.origin}/?${key}=${encodeURIComponent(token)}&email=${encodeURIComponent(user.email)}`;
+}
+
+adminRoutes.get('/users', requirePermission('ADMIN','MANAGE'), async c=>{
+  const users=await all(c.env.DB,`SELECT ${userColumns()} FROM erp_users u LEFT JOIN erp_user_credentials cr ON cr.user_id=u.id ORDER BY u.active DESC,u.email`);
+  const roles=await all(c.env.DB,`SELECT * FROM erp_roles ORDER BY name`);
+  const permissions=await all(c.env.DB,`SELECT * FROM erp_role_permissions ORDER BY role_code,module`);
+  return ok(c,{users,roles,permissions,modules:MODULES});
+});
+
+adminRoutes.post('/users', requirePermission('ADMIN','MANAGE'), async c=>{
+  const b=await jsonBody(c);
+  const email=normalizeText(b.email).toLowerCase();
+  if(!email.endsWith('@nrdev.ph'))return fail(c,'Only @nrdev.ph accounts are allowed');
+  const before=await first(c.env.DB,`SELECT * FROM erp_users WHERE email=?`,[email]);
+  if(before){
+    await run(c.env.DB,`UPDATE erp_users SET display_name=?,role_code=?,department=?,live_access=?,active=? WHERE email=?`,[normalizeText(b.displayName||before.display_name),b.roleCode||before.role_code,normalizeText(b.department),b.liveAccess?1:0,b.active===false?0:1,email]);
+  }else{
+    await run(c.env.DB,`INSERT INTO erp_users(email,display_name,role_code,department,live_access,active) VALUES(?,?,?,?,?,?)`,[email,normalizeText(b.displayName||email.split('@')[0]),b.roleCode||'STAFF',normalizeText(b.department),b.liveAccess?1:0,b.active===false?0:1]);
+  }
+  const after=await first(c.env.DB,`SELECT * FROM erp_users WHERE email=?`,[email]);
+  await run(c.env.DB,`INSERT OR IGNORE INTO erp_user_credentials(user_id) VALUES(?)`,[after.id]);
+  const credential=await first(c.env.DB,`SELECT activated_at,password_hash FROM erp_user_credentials WHERE user_id=?`,[after.id]);
+  const activationLink=!credential?.activated_at||!credential?.password_hash?await issueAuthLink(c,after,'activate'):null;
+  await audit(c,{action:before?'UPDATE_USER':'CREATE_USER',module:'ADMIN',recordType:'USER',recordId:after.id,recordNo:email,before,after});
+  return ok(c,{user:after,activationLink});
+});
+
+adminRoutes.post('/users/:id/activation', requirePermission('ADMIN','MANAGE'), async c=>{
+  const user=await first(c.env.DB,`SELECT * FROM erp_users WHERE id=?`,[Number(c.req.param('id'))]);
+  if(!user)return fail(c,'User not found',404);
+  const activationLink=await issueAuthLink(c,user,'activate');
+  await audit(c,{action:'ISSUE_ACTIVATION',module:'ADMIN',recordType:'USER',recordId:user.id,recordNo:user.email});
+  return ok(c,{activationLink});
+});
+
+adminRoutes.post('/users/:id/reset', requirePermission('ADMIN','MANAGE'), async c=>{
+  const user=await first(c.env.DB,`SELECT * FROM erp_users WHERE id=?`,[Number(c.req.param('id'))]);
+  if(!user)return fail(c,'User not found',404);
+  const resetLink=await issueAuthLink(c,user,'reset');
+  await run(c.env.DB,`DELETE FROM erp_sessions WHERE user_id=?`,[user.id]);
+  await audit(c,{action:'ISSUE_PASSWORD_RESET',module:'ADMIN',recordType:'USER',recordId:user.id,recordNo:user.email});
+  return ok(c,{resetLink});
+});
 
 adminRoutes.post('/permissions/:role', requirePermission('ADMIN','MANAGE'), async c=>{const role=normalizeText(c.req.param('role')).toUpperCase();const b=await jsonBody(c);const rows=Array.isArray(b.permissions)?b.permissions:[];for(const p of rows){if(!MODULES.includes(p.module))continue;await run(c.env.DB,`INSERT INTO erp_role_permissions(role_code,module,can_view,can_create,can_edit,can_approve,can_post,can_export,can_manage) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(role_code,module) DO UPDATE SET can_view=excluded.can_view,can_create=excluded.can_create,can_edit=excluded.can_edit,can_approve=excluded.can_approve,can_post=excluded.can_post,can_export=excluded.can_export,can_manage=excluded.can_manage`,[role,p.module,p.canView?1:0,p.canCreate?1:0,p.canEdit?1:0,p.canApprove?1:0,p.canPost?1:0,p.canExport?1:0,p.canManage?1:0]);}await audit(c,{action:'UPDATE_PERMISSIONS',module:'ADMIN',recordType:'ROLE',recordNo:role,after:{permissions:rows}});return ok(c,{updated:rows.length});});
 

@@ -34,6 +34,7 @@ async function main() {
     'wrangler.toml','package.json','migrations/0008_connected_erp.sql',
     'migrations/0010_procurement_sales_controls.sql','migrations/0011_finance_planning_registers.sql',
     'migrations/0012_ramco_enterprise.sql','migrations/0013_atlas_receiving_workbench.sql',
+    'migrations/0014_application_auth.sql','src/routes/auth.js','src/lib/crypto.js',
     'migrations/opening/manifest.json','scripts/generate_opening_data.py','scripts/self_test.py'
   ];
   for (const rel of required) check(await exists(join(ROOT, rel)), `Required file: ${rel}`);
@@ -70,7 +71,7 @@ async function main() {
   for (const token of [
     'BATTERY_SWAP','UNRECONCILED','ensureItem','categoryCode','BarcodeDetector',
     'erp_stock_ledger','erp_serial_exceptions','erp_reconciliation_cases',
-    'requirePermission','ALLOWED_DOMAIN',
+    'requirePermission','ALLOWED_DOMAIN','erp_user_credentials','e88_session',
     'erp_expected_receipt_matches','SERIAL_SUBSTITUTED','EXPECTED_SHIPMENT_ONLY'
   ]) check(allSource.includes(token), `Business control present: ${token}`);
 

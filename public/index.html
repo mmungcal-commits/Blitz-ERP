@@ -10,11 +10,20 @@
 </head>
 <body>
   <div id="loading" class="loading-screen"><img src="/logo.png" alt="E88"><div><strong>E88 FinSys</strong><span>Loading E88 FinSys…</span></div></div>
+  <div id="login" class="auth-shell hidden">
+    <section class="auth-card" aria-live="polite">
+      <div class="auth-brand">
+        <img src="/logo.png" alt="E88 Ventures">
+        <div><strong>E88 FinSys</strong><span>Authorized NRD users only</span></div>
+      </div>
+      <div id="authContent"></div>
+    </section>
+  </div>
   <div id="app" class="app-shell hidden">
     <aside class="sidebar" id="sidebar">
       <div class="brand"><img src="/logo.png" alt="E88 Ventures"><div><b>E88 FinSys</b><span>Enterprise Resource Planning</span></div></div>
       <nav id="nav"></nav>
-      <div class="sidebar-footer"><div><div id="userBadge"></div><small class="copyright">© 2026 AM</small></div><button class="icon-button" id="themeToggle" title="Light or dark mode">◐</button></div>
+      <div class="sidebar-footer"><div><div id="userBadge"></div><small class="copyright">© 2026 AM</small></div><div class="sidebar-tools"><button class="icon-button" id="logoutBtn" title="Sign out">↪</button><button class="icon-button" id="themeToggle" title="Light or dark mode">◐</button></div></div>
     </aside>
     <div class="mobile-overlay" id="mobileOverlay"></div>
     <main class="main">

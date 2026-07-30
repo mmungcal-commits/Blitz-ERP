@@ -20,7 +20,7 @@ function quantity(v){const n=Number(v||0);return new Intl.NumberFormat('en-US',{
 function date(v){if(!v)return '—';const d=new Date(v);return Number.isNaN(d.getTime())?esc(v):d.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});}
 function statusClass(s=''){s=String(s).toUpperCase();if(/AVAILABLE|ACTIVE|APPROVED|POSTED|DELIVERED|RECEIVED|CLEAR|PASSED|MATCHED/.test(s))return'good';if(/DRAFT|PLANNED|PENDING|PARTIAL|IN_TRANSIT|FOR_REVIEW|RESERVED/.test(s))return'warn';if(/BLOCKED|FAILED|CANCELLED|DUPLICATE|UNRECONCILED|QUARANTINE|EXCEPTION|OVERDUE/.test(s))return'bad';return'info';}
 function badge(s){return `<span class="status ${statusClass(s)}">${esc(s||'—')}</span>`;}
-async function api(path,opts={}){const res=await fetch('/api'+path,{...opts,headers:{...(opts.body instanceof FormData?{}:{'Content-Type':'application/json'}),...(opts.headers||{})}});const data=await res.json().catch(()=>({ok:false,error:`HTTP ${res.status}`}));if(!res.ok||!data.ok)throw new Error(data.error||`Request failed (${res.status})`);return data;}
+async function api(path,opts={}){const res=await fetch('/api'+path,{...opts,credentials:'same-origin',headers:{...(opts.body instanceof FormData?{}:{'Content-Type':'application/json'}),...(opts.headers||{})}});const data=await res.json().catch(()=>({ok:false,error:`HTTP ${res.status}`}));if(!res.ok||!data.ok){const error=new Error(data.error||`Request failed (${res.status})`);error.status=res.status;error.details=data.details;throw error;}return data;}
 function toast(msg,type='success'){const el=document.createElement('div');el.className=`toast ${type}`;el.textContent=msg;$('#toastHost').append(el);setTimeout(()=>el.remove(),4200);}
 function modal(title,body,subtitle=''){ $('#modalTitle').textContent=title;$('#modalSubtitle').textContent=subtitle;$('#modalBody').innerHTML=body;$('#modal').classList.remove('hidden');}
 function closeModal(){$('#modal').classList.add('hidden');}
@@ -30,7 +30,65 @@ function formDataObject(form){return Object.fromEntries(new FormData(form).entri
 function panel(title,body,actions=''){return `<section class="panel"><div class="panel-head"><h3>${esc(title)}</h3><div>${actions}</div></div><div class="panel-body">${body}</div></section>`;}
 function detailGrid(obj,fields){return `<div class="detail-grid">${fields.map(([k,l,r])=>`<div class="detail-item"><small>${esc(l)}</small><b>${r?r(obj[k],obj):fmt(obj[k])}</b></div>`).join('')}</div>`;}
 
-async function init(){try{state.session=await api('/session');renderNav();$('#userBadge').innerHTML=`<b>${esc(state.session.user.displayName||state.session.user.email)}</b><small>${esc(state.session.user.role)} · ${esc(state.session.user.email)}</small>`;$('#loading').classList.add('hidden');$('#app').classList.remove('hidden');await openModule('dashboard');}catch(e){$('#loading').innerHTML=`<div><strong>Unable to open E88 FinSys</strong><span>${esc(e.message)}</span></div>`;}}
+function authField(label,name,type,value='',extra=''){return `<label class="auth-field"><span>${esc(label)}</span><input name="${name}" type="${type}" value="${esc(value)}" ${extra}></label>`;}
+function authMessage(message,type='error'){const el=$('#authMessage');if(!el)return;el.className=`auth-message ${type}`;el.textContent=message||'';}
+function showAuth(mode='login'){
+  state.session=null;
+  $('#loading').classList.add('hidden');
+  $('#app').classList.add('hidden');
+  $('#login').classList.remove('hidden');
+  const query=new URLSearchParams(location.search);
+  const email=query.get('email')||'';
+  const activationToken=query.get('activate')||'';
+  const resetToken=query.get('reset')||'';
+  if(activationToken)mode='activate';
+  if(resetToken)mode='reset';
+  const auth=$('#authContent');
+  if(mode==='login'){
+    auth.innerHTML=`<div class="auth-heading"><h1>Sign in</h1><p>Use your activated E88 FinSys account.</p></div>
+      <form id="loginForm" class="auth-form">
+        ${authField('Corporate email','email','email',email,'autocomplete="username" placeholder="name@nrdev.ph" required')}
+        ${authField('Password','password','password','','autocomplete="current-password" required')}
+        <button class="button auth-submit">Sign in</button>
+      </form>
+      <div id="authMessage" class="auth-message"></div>
+      <div class="auth-links"><button type="button" data-auth="activate">Activate account</button><button type="button" data-auth="reset">Reset password</button></div>`;
+    $('#loginForm').onsubmit=async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;authMessage('Signing in…','info');try{await api('/auth/login',{method:'POST',body:JSON.stringify(formDataObject(event.currentTarget))});history.replaceState({},'',location.pathname);await init();}catch(error){authMessage(error.message);}finally{button.disabled=false;}};
+  }else{
+    const activation=mode==='activate';
+    const token=activation?activationToken:resetToken;
+    auth.innerHTML=`<div class="auth-heading"><h1>${activation?'Activate account':'Reset password'}</h1><p>${activation?'Set your private E88 FinSys password using the link issued by the administrator.':'Use the password-reset link issued by the administrator.'}</p></div>
+      <form id="credentialForm" class="auth-form">
+        ${authField('Corporate email','email','email',email,'autocomplete="username" placeholder="name@nrdev.ph" required')}
+        ${authField(activation?'Activation code':'Reset code','token','text',token,'autocomplete="one-time-code" required')}
+        ${authField('New password','password','password','','autocomplete="new-password" minlength="12" required')}
+        ${authField('Confirm password','confirmPassword','password','','autocomplete="new-password" minlength="12" required')}
+        <small class="password-rule">At least 12 characters with uppercase, lowercase, and a number.</small>
+        <button class="button auth-submit">${activation?'Activate and sign in':'Update password and sign in'}</button>
+      </form>
+      <div id="authMessage" class="auth-message"></div>
+      <div class="auth-links"><button type="button" data-auth="login">Back to sign in</button></div>`;
+    $('#credentialForm').onsubmit=async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;authMessage(activation?'Activating account…':'Updating password…','info');try{await api(activation?'/auth/activate':'/auth/reset-password',{method:'POST',body:JSON.stringify(formDataObject(event.currentTarget))});history.replaceState({},'',location.pathname);await init();}catch(error){authMessage(error.message);}finally{button.disabled=false;}};
+  }
+  document.querySelectorAll('[data-auth]').forEach(button=>button.onclick=()=>showAuth(button.dataset.auth));
+}
+
+async function init(){
+  $('#login').classList.add('hidden');
+  $('#app').classList.add('hidden');
+  $('#loading').classList.remove('hidden');
+  try{
+    state.session=await api('/session');
+    renderNav();
+    $('#userBadge').innerHTML=`<b>${esc(state.session.user.displayName||state.session.user.email)}</b><small>${esc(state.session.user.role)} · ${esc(state.session.user.email)}</small>`;
+    $('#loading').classList.add('hidden');
+    $('#app').classList.remove('hidden');
+    await openModule('dashboard');
+  }catch(e){
+    if(e.status===401)return showAuth();
+    $('#loading').innerHTML=`<div><strong>Unable to open E88 FinSys</strong><span>${esc(e.message)}</span></div>`;
+  }
+}
 function renderNav(){const nav=$('#nav');nav.innerHTML=NAV.map(g=>{const items=g.items.filter(x=>can(x[3]));if(!items.length)return'';return `<div class="nav-group">${g.group}</div>${items.map(([id,label,icon])=>`<button class="nav-item" data-module="${id}"><span class="nav-icon">${icon}</span>${label}</button>`).join('')}`}).join('');nav.querySelectorAll('[data-module]').forEach(b=>b.onclick=()=>openModule(b.dataset.module));}
 async function openModule(id){state.module=id;document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.module===id));const m=META[id]||[id,''];$('#pageTitle').textContent=m[0];$('#pageSubtitle').textContent=m[1];content.innerHTML='<div class="empty">Loading…</div>';closeMobile();try{await (renderers[id]||renderDashboard)();}catch(e){content.innerHTML=`<div class="panel"><div class="empty"><b>Unable to load module</b><br>${esc(e.message)}</div></div>`;toast(e.message,'error');}}
 function closeMobile(){$('#sidebar').classList.remove('open');$('#mobileOverlay').classList.remove('open');}
@@ -112,7 +170,33 @@ async function loadPlanningWorkbench(){const year=Number($('#planYear').value);c
 function recalcPlanningRow(tr){let total=0;tr.querySelectorAll('.budget-cell').forEach(x=>total+=Number(x.value||0));tr.querySelector('.total-cell').textContent=money(total);}
 async function savePlanningCells(){const cells=[];document.querySelectorAll('.budget-cell[data-changed="1"]').forEach(input=>{const tr=input.closest('tr'),r=state.planningRows[Number(tr.dataset.planRow)];cells.push({year:Number($('#planYear').value),month:Number(input.dataset.month),department:r.department,costCenter:r.costCenter,accountTitle:r.accountTitle,capexOpex:r.capexOpex,amount:Number(input.value||0)});});if(!cells.length)return toast('No budget changes to save.','error');const d=await api('/planning/budget-cells',{method:'POST',body:JSON.stringify({year:Number($('#planYear').value),cells})});toast(`${d.saved} budget cell(s) saved`);await loadPlanningWorkbench();}
 
-async function renderAdmin(){const [u,d]=await Promise.all([api('/admin/users'),api('/admin/diagnostics')]);content.innerHTML=`<div class="kpi-grid">${Object.entries(d.counts).slice(0,8).map(([k,v])=>kpi(k.replace('erp_','').replaceAll('_',' '),v,'Loaded records','','')).join('')}</div><div class="panel-grid">${panel('Users',table(u.users,[{key:'email',label:'Email'},{key:'display_name',label:'Name'},{key:'role_code',label:'Role',render:badge},{key:'department',label:'Department'},{key:'live_access',label:'Live',render:v=>v?'Yes':'No'},{key:'active',label:'Active',render:v=>v?'Yes':'No'}]))}${panel('Integrity checks',detailGrid(d.invariants,Object.keys(d.invariants).map(k=>[k,k.replaceAll('_',' '),v=>Number(v)===0?badge('PASS'):badge(v)])))}</div>`;}
+async function renderAdmin(){
+  const [u,d]=await Promise.all([api('/admin/users'),api('/admin/diagnostics')]);
+  content.innerHTML=`<div class="page-actions"><button class="button" id="newUser">Add authorized user</button></div>
+    <div class="kpi-grid">${Object.entries(d.counts).slice(0,8).map(([k,v])=>kpi(k.replace('erp_','').replaceAll('_',' '),v,'Loaded records','','')).join('')}</div>
+    <div class="panel-grid">${panel('Users',table(u.users,[{key:'email',label:'Email'},{key:'display_name',label:'Name'},{key:'role_code',label:'Role',render:badge},{key:'department',label:'Department'},{key:'activated',label:'Login',render:v=>v?badge('ACTIVATED'):badge('PENDING')},{key:'live_access',label:'Live',render:v=>v?'Yes':'No'},{key:'active',label:'Active',render:v=>v?'Yes':'No'}],'admin-user'))}${panel('Integrity checks',detailGrid(d.invariants,Object.keys(d.invariants).map(k=>[k,k.replaceAll('_',' '),v=>Number(v)===0?badge('PASS'):badge(v)])))}</div>`;
+  $('#newUser').onclick=()=>openUserForm(null,u.roles);
+  bindRows('admin-user',u.users,row=>openUserForm(row,u.roles));
+}
+
+function showAuthLink(title,link){
+  modal(title,`<p class="auth-link-note">Send this one-time link only to the named user. The administrator cannot see or set the user's password.</p><div class="copy-row"><input id="issuedAuthLink" value="${esc(link)}" readonly><button class="button" id="copyAuthLink">Copy link</button></div>`);
+  $('#copyAuthLink').onclick=async()=>{await navigator.clipboard.writeText($('#issuedAuthLink').value);toast('Link copied');};
+}
+
+function openUserForm(user,roles){
+  const roleOptions=(roles||[]).map(role=>({value:role.code,label:role.name}));
+  modal(user?'Authorized user':'Add authorized user',`<form id="adminUserForm"><div class="form-grid">
+    ${formField('Corporate email','email','email',user?.email||'',null,user?'readonly':'placeholder="name@nrdev.ph" required')}
+    ${formField('Display name','displayName','text',user?.display_name||'')}
+    ${formField('Role','roleCode','select',user?.role_code||'STAFF',roleOptions)}
+    ${formField('Department','department','text',user?.department||'')}
+    <label class="check-field"><input type="checkbox" name="liveAccess" ${!user||user.live_access?'checked':''}><span>Allow LIVE access</span></label>
+    <label class="check-field"><input type="checkbox" name="active" ${user?.active!==0?'checked':''}><span>Account active</span></label>
+    </div><div class="form-actions">${user?`<button type="button" class="button secondary" id="issueCredential">${user.activated?'Issue password-reset link':'Issue activation link'}</button>`:''}<button class="button">Save user</button></div></form>`);
+  $('#adminUserForm').onsubmit=async event=>{event.preventDefault();const data=formDataObject(event.currentTarget);data.liveAccess=event.currentTarget.elements.liveAccess.checked;data.active=event.currentTarget.elements.active.checked;const result=await api('/admin/users',{method:'POST',body:JSON.stringify(data)});toast(user?'User updated':'Authorized user added');await renderAdmin();if(result.activationLink)return showAuthLink('Account activation link',result.activationLink);closeModal();};
+  if($('#issueCredential'))$('#issueCredential').onclick=async()=>{const result=await api(`/admin/users/${user.id}/${user.activated?'reset':'activation'}`,{method:'POST',body:'{}'});showAuthLink(user.activated?'Password-reset link':'Account activation link',result.resetLink||result.activationLink);};
+}
 
 async function ensureLookups(){if(!state.lookups)state.lookups=await api('/masters/lookups');return state.lookups;}
 function bindRows(name,rows,handler){document.querySelectorAll(`[data-click="${name}"]`).forEach(tr=>tr.onclick=()=>handler(rows[Number(tr.dataset.row)]));}
@@ -122,4 +206,5 @@ async function scanQrFile(file,callback){if(!file)return;const img=await createI
 
 const renderers={dashboard:renderDashboard,atlas:renderAtlas,procurement:renderProcurement,shipments:renderShipments,receiving:renderReceiving,inventory:()=>renderInventory(),movement:renderMovement,returns:renderReturns,requisitions:renderRequisitions,checklists:renderChecklists,deliveries:renderDeliveries,sales:renderSales,customers:renderCustomers,stations:renderStations,planning:renderPlanning,admin:renderAdmin};
 $('#modalClose').onclick=closeModal;$('#modal').onclick=e=>{if(e.target===$('#modal'))closeModal();};$('#refreshBtn').onclick=()=>openModule(state.module);$('#themeToggle').onclick=()=>{state.theme=state.theme==='light'?'dark':'light';document.documentElement.dataset.theme=state.theme;localStorage.setItem('e88-theme',state.theme);};$('#mobileMenu').onclick=()=>{$('#sidebar').classList.add('open');$('#mobileOverlay').classList.add('open');};$('#mobileOverlay').onclick=closeMobile;$('#quickActions').onchange=e=>{const v=e.target.value;e.target.value='';if(v==='atlas')openModule('atlas');if(v==='qr')openQrModal();if(v==='diagnostics')openModule('admin');};
+$('#logoutBtn').onclick=async()=>{try{await api('/auth/logout',{method:'POST',body:'{}'});}finally{showAuth('login');}};
 init();

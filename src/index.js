@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { ensureSchema } from './lib/db.js';
 import { requireUser } from './lib/auth.js';
 import { ok, fail } from './lib/http.js';
+import { authRoutes } from './routes/auth.js';
 import { sessionRoutes } from './routes/session.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { masterRoutes } from './routes/masters.js';
@@ -26,9 +27,10 @@ app.use('/api/*', async (c,next)=>{
   catch (e) { return fail(c,e.message,503); }
   return next();
 });
-app.use('/api/*', requireUser);
 
-app.get('/api/health', c=>ok(c,{service:'E88 FinSys',version:'8.1.0',time:new Date().toISOString()}));
+app.get('/api/health', c=>ok(c,{service:'E88 FinSys',version:'8.1.1',time:new Date().toISOString()}));
+app.route('/api/auth',authRoutes);
+app.use('/api/*', requireUser);
 app.route('/api/session',sessionRoutes);
 app.route('/api/dashboard',dashboardRoutes);
 app.route('/api/masters',masterRoutes);
