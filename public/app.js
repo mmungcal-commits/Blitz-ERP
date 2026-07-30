@@ -1,9 +1,9 @@
-const state={session:null,module:'dashboard',lookups:null,theme:localStorage.getItem('e88-theme')||'light',receiveShipment:null,receiveWorkbench:null,receiveRows:[]};
+const state={session:null,module:'launchpad',lookups:null,theme:localStorage.getItem('e88-theme')||'light',receiveShipment:null,receiveWorkbench:null,receiveRows:[]};
 const $=s=>document.querySelector(s);const content=$('#content');
 document.documentElement.dataset.theme=state.theme;
 
 const NAV=[
-  {group:'Overview',items:[['dashboard','Dashboard','▦','DASHBOARD']]},
+  {group:'Overview',items:[['launchpad','Enterprise Modules','▦',''],['dashboard','Dashboard','▦','DASHBOARD']]},
   {group:'Inbound Logistics',items:[['atlas','ATLAS Supplier Upload','⇧','SHIPMENTS','CREATE'],['procurement','Purchase Orders','⌑','PROCUREMENT'],['shipments','Shipments','◫','SHIPMENTS'],['receiving','Receiving','⇩','RECEIVING']]},
   {group:'Inventory Control',items:[['inventory','Inventory & Serials','▤','INVENTORY'],['movement','Stock Movement','⇄','INVENTORY','POST'],['returns','Returns & Reconciliation','↩','RETURNS']]},
   {group:'Outbound Logistics',items:[['requisitions','Requisitions','☷','REQUISITIONS'],['checklists','Pre-release Checks','✓','DELIVERIES'],['deliveries','Deliveries','▣','DELIVERIES']]},
@@ -11,7 +11,59 @@ const NAV=[
   {group:'Network & Planning',items:[['stations','Swapping Station Projects','⌂','STATIONS'],['planning','Budget & Forecast','▥','PLANNING']]},
   {group:'System',items:[['admin','Users & Diagnostics','⚙','ADMIN','MANAGE']]}
 ];
-const META={dashboard:['Dashboard',''],atlas:['ATLAS Supplier Upload',''],procurement:['Purchase Orders',''],shipments:['Shipments',''],receiving:['Receiving Workbench',''],inventory:['Inventory & Serials',''],movement:['Stock Movement',''],returns:['Returns & Reconciliation',''],requisitions:['Requisitions',''],checklists:['Pre-release Checks',''],deliveries:['Deliveries',''],sales:['Sales & Lease',''],customers:['Customers & Credit',''],stations:['Swapping Station Projects',''],planning:['Budget & Forecast',''],admin:['Users & Diagnostics','']};
+const META={launchpad:['Enterprise Modules',''],dashboard:['Dashboard',''],atlas:['ATLAS Supplier Upload',''],procurement:['Purchase Orders',''],shipments:['Shipments',''],receiving:['Receiving Workbench',''],inventory:['Inventory & Serials',''],movement:['Stock Movement',''],returns:['Returns & Reconciliation',''],requisitions:['Requisitions',''],checklists:['Pre-release Checks',''],deliveries:['Deliveries',''],sales:['Sales & Lease',''],customers:['Customers & Credit',''],stations:['Swapping Station Projects',''],planning:['Budget & Forecast',''],admin:['Users & Diagnostics','']};
+const ENTERPRISE_MODULES=[
+  {title:'Finance & Accounting',items:[
+    ['General Accounting'],['Receivables & Payables Mgmt.'],['Fixed Assets Management','inventory','INVENTORY'],['Management Accounting'],
+    ['Consolidation & Reporting'],['Financial Services'],['Planning & Budgeting','planning','PLANNING'],['Grants & Funds Management']
+  ]},
+  {title:'Sales & Distribution',items:[
+    ['CRM','customers','CUSTOMERS'],['Demand Planning','planning','PLANNING'],['Order Management','sales','SALES'],['Outbound Logistics','deliveries','DELIVERIES'],
+    ['Warranty Management','returns','RETURNS'],['Service Management'],['PIM','inventory','INVENTORY'],['Customer Portal','customers','CUSTOMERS']
+  ]},
+  {title:'Inventory & Procurement',items:[
+    ['Inventory Analysis & Planning','inventory','INVENTORY'],['Warehouse Management','inventory','INVENTORY'],['Inventory & Cycle Counting','inventory','INVENTORY'],
+    ['Sourcing & Purchasing','procurement','PROCUREMENT'],['Inbound Logistics','shipments','SHIPMENTS'],['Subcontracting','procurement','PROCUREMENT'],['Supplier Portal','atlas','SHIPMENTS','CREATE']
+  ]},
+  {title:'Manufacturing',items:[
+    ['Estimation','planning','PLANNING'],['Planning','planning','PLANNING'],['Work Order Management'],['Scheduling','planning','PLANNING'],
+    ['Manufacturing Execution','receiving','RECEIVING'],['Costing','planning','PLANNING']
+  ]},
+  {title:'Quality Management',items:[
+    ['Attribute Management','inventory','INVENTORY'],['Inspection & Sampling Plans','receiving','RECEIVING'],
+    ['Quality Administration','checklists','DELIVERIES'],['Acceptance & Rejection analysis','returns','RETURNS']
+  ]},
+  {title:'Project Management',items:[
+    ['Planning & Budgeting','planning','PLANNING'],['Project Definition','stations','STATIONS'],['Project Planning & Tracking','stations','STATIONS'],
+    ['Billing','sales','SALES'],['Project Closure','stations','STATIONS']
+  ]},
+  {title:'Enterprise Asset Management',items:[
+    ['Equipment Induction & Setup','inventory','INVENTORY'],['Preventive Maintenance','inventory','INVENTORY'],['Online Maintenance','returns','RETURNS'],
+    ['Shutdown / Outage Mgmt.'],['Work Management','stations','STATIONS'],['Reliability & Review','returns','RETURNS'],['Equipment Rental Mgmt.','sales','SALES']
+  ]},
+  {title:'Facility Management',items:[
+    ['Assessment','stations','STATIONS'],['Quotation','sales','SALES'],['Contract Mgmt','sales','SALES'],
+    ['Site Administration','stations','STATIONS'],['Resource Allocation','stations','STATIONS'],['Work Reporting','stations','STATIONS']
+  ]},
+  {title:'Logistics Management',items:[
+    ['Transport Management','deliveries','DELIVERIES'],['Order & Warehouse Management','shipments','SHIPMENTS'],['Hub Management','inventory','INVENTORY'],
+    ['Logistics Command center','dashboard','DASHBOARD'],['Contracting and Billing','sales','SALES'],['Fleet Management','inventory','INVENTORY']
+  ]},
+  {title:'HCM',items:[
+    ['Workforce Management'],['Recruitment'],['Talent Management'],['Employee Development'],['Payroll & Benefits'],['Work Force Planning']
+  ]},
+  {title:'SRP',items:[
+    ['Proposal & Estimation','sales','SALES'],['Rates & Contract Mgmt','sales','SALES'],['SOW /Project Mgmt','sales','SALES'],
+    ['Timesheet Mgmt'],['Expense Mgmt','planning','PLANNING'],['Billing & Revenue Mgmt','sales','SALES'],['Budgets','planning','PLANNING'],['Resource & Bench Mgmt','planning','PLANNING']
+  ]}
+];
+const ENTERPRISE_TOOLS=[
+  ['Advanced Reporting','dashboard','DASHBOARD'],
+  ['Wizard Interface'],
+  ['Embedded Workflow'],
+  ['Data Uploads','atlas','SHIPMENTS','CREATE']
+];
+const ENTERPRISE_ADDONS=['Analytics','Mobility','Extension Toolkit','eSignature','Device Integration','SOA Integration / Collaboration','Advanced Planning & Optimization'];
 function can(module,action='VIEW'){if(state.session?.user?.role==='ADMIN')return true;const p=(state.session?.permissions||[]).find(x=>x.module===module);return !!p?.[`can_${action.toLowerCase()}`];}
 function esc(v){return String(v??'').replace(/[&<>'"]/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[x]));}
 function fmt(v){if(v===null||v===undefined||v==='')return '—';if(typeof v==='number')return new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(v);return esc(v);}
@@ -34,6 +86,7 @@ function authField(label,name,type,value='',extra=''){return `<label class="auth
 function authMessage(message,type='error'){const el=$('#authMessage');if(!el)return;el.className=`auth-message ${type}`;el.textContent=message||'';}
 function showAuth(mode='login'){
   state.session=null;
+  document.body.classList.remove('launchpad-view');
   $('#loading').classList.add('hidden');
   $('#app').classList.add('hidden');
   $('#login').classList.remove('hidden');
@@ -84,22 +137,49 @@ async function init(){
     $('#userBadge').innerHTML=`<b>${esc(state.session.user.displayName||state.session.user.email)}</b><small>${esc(state.session.user.role)} · ${esc(state.session.user.email)}</small>`;
     $('#loading').classList.add('hidden');
     $('#app').classList.remove('hidden');
-    const firstModule=NAV.flatMap(group=>group.items).find(item=>can(item[3],item[4]||'VIEW'))?.[0];
-    if(firstModule)await openModule(firstModule);
-    else{
-      $('#pageTitle').textContent='No module access';
-      content.innerHTML='<div class="panel"><div class="empty"><b>No ERP modules are assigned to this account.</b></div></div>';
-    }
+    await openModule('launchpad');
   }catch(e){
     if(e.status===401)return showAuth();
     $('#loading').innerHTML=`<div><strong>Unable to open E88 FinSys</strong><span>${esc(e.message)}</span></div>`;
   }
 }
-function renderNav(){const nav=$('#nav');nav.innerHTML=NAV.map(g=>{const items=g.items.filter(x=>can(x[3],x[4]||'VIEW'));if(!items.length)return'';return `<div class="nav-group">${g.group}</div>${items.map(([id,label,icon])=>`<button class="nav-item" data-module="${id}"><span class="nav-icon">${icon}</span>${label}</button>`).join('')}`}).join('');nav.querySelectorAll('[data-module]').forEach(b=>b.onclick=()=>openModule(b.dataset.module));}
+function renderNav(){const nav=$('#nav');nav.innerHTML=NAV.map(g=>{const items=g.items.filter(x=>!x[3]||can(x[3],x[4]||'VIEW'));if(!items.length)return'';return `<div class="nav-group">${g.group}</div>${items.map(([id,label,icon])=>`<button class="nav-item" data-module="${id}"><span class="nav-icon">${icon}</span>${label}</button>`).join('')}`}).join('');nav.querySelectorAll('[data-module]').forEach(b=>b.onclick=()=>openModule(b.dataset.module));}
 function permissionForNav(id){const item=NAV.flatMap(group=>group.items).find(value=>value[0]===id);return item?{module:item[3],action:item[4]||'VIEW'}:{module:'',action:'VIEW'};}
 function renderQuickActions(){const options=['<option value="">Quick actions ▾</option>'];if(can('SHIPMENTS','CREATE'))options.push('<option value="atlas">Upload ATLAS</option>');if(can('INVENTORY','VIEW'))options.push('<option value="qr">Scan QR / serial</option>');if(can('ADMIN','MANAGE'))options.push('<option value="diagnostics">Run diagnostics</option>');$('#quickActions').innerHTML=options.join('');}
-async function openModule(id){const permission=permissionForNav(id);if(permission.module&&!can(permission.module,permission.action)){toast('This module is not assigned to your account.','error');return;}state.module=id;document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.module===id));const m=META[id]||[id,''];$('#pageTitle').textContent=m[0];$('#pageSubtitle').textContent=m[1];content.innerHTML='<div class="empty">Loading…</div>';closeMobile();try{await (renderers[id]||renderDashboard)();}catch(e){content.innerHTML=`<div class="panel"><div class="empty"><b>Unable to load module</b><br>${esc(e.message)}</div></div>`;toast(e.message,'error');}}
+async function openModule(id){const permission=permissionForNav(id);if(permission.module&&!can(permission.module,permission.action)){toast('This module is not assigned to your account.','error');return;}state.module=id;document.body.classList.toggle('launchpad-view',id==='launchpad');document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.module===id));const m=META[id]||[id,''];$('#pageTitle').textContent=m[0];$('#pageSubtitle').textContent=m[1];content.innerHTML='<div class="empty">Loading…</div>';closeMobile();try{await (renderers[id]||renderDashboard)();}catch(e){content.innerHTML=`<div class="panel"><div class="empty"><b>Unable to load module</b><br>${esc(e.message)}</div></div>`;toast(e.message,'error');}}
 function closeMobile(){$('#sidebar').classList.remove('open');$('#mobileOverlay').classList.remove('open');}
+
+function enterpriseModuleButton(item,className='enterprise-module-button'){
+  const [label,target,module,action='VIEW']=item;
+  const allowed=!module||can(module,action);
+  return `<button class="${className}" data-enterprise-label="${esc(label)}" ${target?`data-enterprise-target="${esc(target)}"`:''} ${module?`data-enterprise-module="${esc(module)}" data-enterprise-action="${esc(action)}"`:''} ${allowed?'':'disabled aria-disabled="true"'}>${esc(label)}</button>`;
+}
+async function openEnterpriseModule(button){
+  const label=button.dataset.enterpriseLabel;
+  const target=button.dataset.enterpriseTarget;
+  const module=button.dataset.enterpriseModule;
+  const action=button.dataset.enterpriseAction||'VIEW';
+  if(module&&!can(module,action))return toast('This module is not assigned to your account.','error');
+  if(target)return openModule(target);
+  modal(label,`<div class="enterprise-pending"><b>${esc(label)}</b><p>This internal module shell is ready for its module-by-module configuration.</p></div>`,'Enterprise module');
+}
+async function renderLaunchpad(){
+  const user=state.session?.user||{};
+  content.innerHTML=`<section class="enterprise-launchpad">
+    <div class="enterprise-map">
+      <div class="enterprise-columns">${ENTERPRISE_MODULES.map(column=>`<section class="enterprise-column"><div class="enterprise-category">${esc(column.title)}</div><div class="enterprise-module-stack">${column.items.map(item=>enterpriseModuleButton(item)).join('')}</div></section>`).join('')}</div>
+      <div class="enterprise-tools">${ENTERPRISE_TOOLS.map(item=>enterpriseModuleButton(item,'enterprise-tool-button')).join('')}</div>
+      <div class="enterprise-addons-title"><span>Enterprise Add-ons</span></div>
+      <div class="enterprise-addons">${ENTERPRISE_ADDONS.map(label=>`<button class="enterprise-addon-button" data-enterprise-label="${esc(label)}">${esc(label)}</button>`).join('')}</div>
+      <footer class="enterprise-brand-strip">
+        <div class="enterprise-brand-primary">E88 FinSys</div><div class="enterprise-brand-secondary">Power of One · © 2026 AL23</div>
+        <div class="enterprise-user">${esc(user.displayName||user.email||'')} · ${esc(user.role||'')}<button id="launchpadLogout">Sign out</button></div>
+      </footer>
+    </div>
+  </section>`;
+  document.querySelectorAll('[data-enterprise-label]').forEach(button=>button.onclick=()=>openEnterpriseModule(button));
+  $('#launchpadLogout').onclick=async()=>{try{await api('/auth/logout',{method:'POST',body:'{}'});}finally{showAuth('login');}};
+}
 
 async function renderDashboard(){const d=await api('/dashboard');const inv=d.inventory||{};const mc=inv.MC||{total:0,statuses:{}};const bat=inv.BAT||{total:0,statuses:{}};const bss=inv.BSS||{total:0,statuses:{}};const k=d.kpis;
   content.innerHTML=`<div class="kpi-grid compact-kpis">
@@ -222,7 +302,8 @@ async function openQrModal(){modal('Scan QR or barcode',`<div class="scan-box"><
 async function lookupSerial(serial){const d=await api('/inventory/qr-lookup?serial='+encodeURIComponent(serial));$('#globalQrResult').innerHTML=d.found?`<b class="code">${esc(d.serial)}</b><br>${d.asset?`${esc(d.asset.item_name)} · ${badge(d.asset.current_status)}`:`Expected in ${esc(d.expected.shipment_no)} · ${badge(d.expected.shipment_status)}`}`:`<b>No serial match.</b><br><small>${esc(d.serial)} can be reviewed as an unplanned receipt.</small>`;}
 async function scanQrFile(file,callback){if(!file)return;const img=await createImageBitmap(file);const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0);const data=ctx.getImageData(0,0,canvas.width,canvas.height);let value='';if(window.jsQR){const code=window.jsQR(data.data,data.width,data.height,{inversionAttempts:'attemptBoth'});value=code?.data||'';}if(!value&&'BarcodeDetector'in window){try{const list=await new BarcodeDetector({formats:['qr_code','code_128','data_matrix']}).detect(canvas);value=list[0]?.rawValue||'';}catch{}}if(!value){toast('No readable QR or barcode was detected. Enter the serial manually.','error');return;}callback(value.trim());}
 
-const renderers={dashboard:renderDashboard,atlas:renderAtlas,procurement:renderProcurement,shipments:renderShipments,receiving:renderReceiving,inventory:()=>renderInventory(),movement:renderMovement,returns:renderReturns,requisitions:renderRequisitions,checklists:renderChecklists,deliveries:renderDeliveries,sales:renderSales,customers:renderCustomers,stations:renderStations,planning:renderPlanning,admin:renderAdmin};
+const renderers={launchpad:renderLaunchpad,dashboard:renderDashboard,atlas:renderAtlas,procurement:renderProcurement,shipments:renderShipments,receiving:renderReceiving,inventory:()=>renderInventory(),movement:renderMovement,returns:renderReturns,requisitions:renderRequisitions,checklists:renderChecklists,deliveries:renderDeliveries,sales:renderSales,customers:renderCustomers,stations:renderStations,planning:renderPlanning,admin:renderAdmin};
 $('#modalClose').onclick=closeModal;$('#modal').onclick=e=>{if(e.target===$('#modal'))closeModal();};$('#refreshBtn').onclick=()=>openModule(state.module);$('#themeToggle').onclick=()=>{state.theme=state.theme==='light'?'dark':'light';document.documentElement.dataset.theme=state.theme;localStorage.setItem('e88-theme',state.theme);};$('#mobileMenu').onclick=()=>{$('#sidebar').classList.add('open');$('#mobileOverlay').classList.add('open');};$('#mobileOverlay').onclick=closeMobile;$('#quickActions').onchange=e=>{const v=e.target.value;e.target.value='';if(v==='atlas')openModule('atlas');if(v==='qr')openQrModal();if(v==='diagnostics')openModule('admin');};
 $('#logoutBtn').onclick=async()=>{try{await api('/auth/logout',{method:'POST',body:'{}'});}finally{showAuth('login');}};
+$('.brand').onclick=()=>openModule('launchpad');
 init();
