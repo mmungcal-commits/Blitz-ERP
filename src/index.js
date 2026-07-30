@@ -29,7 +29,7 @@ app.use('/api/*', async (c,next)=>{
   return next();
 });
 
-app.get('/api/health', c=>ok(c,{service:'E88 FinSys',version:'8.1.1',time:new Date().toISOString()}));
+app.get('/api/health', c=>ok(c,{service:'E88 Enterprise System',version:'9.0.0-foundation',build:'E88-CLEAN-FOUNDATION-20260730',time:new Date().toISOString()}));
 app.route('/api/auth',authRoutes);
 app.use('/api/*', requireUser);
 app.route('/api/session',sessionRoutes);
@@ -62,7 +62,11 @@ export default {
     if(url.pathname.startsWith('/api/')) return app.fetch(request,env,ctx);
     if(!env.ASSETS) return new Response('Static asset binding is not configured.',{status:503});
     const response=await env.ASSETS.fetch(request);
-    if(response.status!==404) return response;
-    return env.ASSETS.fetch(new Request(new URL('/index.html',request.url),request));
+    const asset=response.status!==404?response:await env.ASSETS.fetch(new Request(new URL('/index.html',request.url),request));
+    const headers=new Headers(asset.headers);
+    headers.set('Cache-Control','no-store, no-cache, must-revalidate');
+    headers.set('Pragma','no-cache');
+    headers.set('X-E88-Build','E88-CLEAN-FOUNDATION-20260730');
+    return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
   }
 };

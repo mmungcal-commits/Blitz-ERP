@@ -30,7 +30,7 @@ async function exists(path) {
 
 async function main() {
   const required = [
-    'src/index.js','public/index.html','public/app.js','public/app.css','public/logo.png',
+    'src/index.js','public/index.html','public/foundation.js','public/foundation.css','public/logo.png',
     'wrangler.toml','package.json','migrations/0008_connected_erp.sql',
     'migrations/0010_procurement_sales_controls.sql','migrations/0011_finance_planning_registers.sql',
     'migrations/0012_ramco_enterprise.sql','migrations/0013_atlas_receiving_workbench.sql',

@@ -1,3 +1,4 @@
+const FOUNDATION_BUILD='E88-CLEAN-FOUNDATION-20260730';
 const state={
   session:null,
   catalog:{groups:[],tools:[],addons:[]},
@@ -89,7 +90,7 @@ function canWorkspace(code){
 function showAuth(mode='login'){
   state.session=null;
   state.module=null;
-  document.body.classList.remove('launchpad-view');
+  document.body.classList.remove('launchpad-view','workbench-view');
   $('#loading').classList.add('hidden');
   $('#app').classList.add('hidden');
   $('#login').classList.remove('hidden');
@@ -177,6 +178,7 @@ function enterpriseButton(item,className='enterprise-module-button'){
 function renderLaunchpad(){
   state.module=null;
   state.section='center';
+  document.body.classList.remove('workbench-view');
   document.body.classList.add('launchpad-view');
   content.innerHTML=`<section class="enterprise-launchpad">
     <div class="launchpad-controls">
@@ -228,6 +230,7 @@ async function openWorkspace(code){
   state.module=module;
   state.section='center';
   document.body.classList.remove('launchpad-view');
+  document.body.classList.add('workbench-view');
   setHeader(module.label,module.groupTitle);
   renderSidebar();
   await renderRoleCenter();
@@ -238,11 +241,46 @@ async function openSection(section){
   renderSidebar();
   if(section==='center')return renderRoleCenter();
   if(section==='records')return renderRecords();
+  if(section==='approvals')return renderRecords('FOR_APPROVAL');
   if(section==='reports')return renderEmptyWorkspace('Reports');
   if(section==='setup')return renderEmptyWorkspace('Setup');
 }
 function kpi(label,value){
   return `<article class="workspace-kpi"><span>${esc(label)}</span><strong>${esc(value)}</strong></article>`;
+}
+function workbenchShell(body,active=state.section){
+  const module=state.module;
+  const user=state.session.user;
+  const tabs=[
+    ['center','Role Center'],['records','Transactions'],['approvals','Approvals'],['reports','Reports'],['setup','Setup'],
+  ];
+  return `<section class="erp-workbench">
+    <header class="workbench-systembar">
+      <div><button class="workbench-home" title="Enterprise Modules">▦</button><span class="workbench-user-dot">●</span><b>${esc(user.displayName||user.email)}</b><small>${esc(user.role)}</small></div>
+      <div><span>INTERNAL</span><button class="workbench-home">Modules</button><button class="workbench-logout">Sign out</button></div>
+    </header>
+    <div class="workbench-modulebar">
+      <div><span class="workbench-star">★</span><div><h1>${esc(module.label)}</h1><small>${esc(module.groupTitle)}</small></div></div>
+      <div class="workbench-module-chip">${esc(module.label)}</div>
+    </div>
+    <nav class="workbench-tabs">${tabs.map(([id,label])=>`<button data-workbench-section="${id}" class="${active===id?'active':''}">${esc(label)}</button>`).join('')}</nav>
+    <main class="workbench-canvas">${body}</main>
+    <footer class="workbench-footer"><span>E88 Enterprise System</span><span>Connected Workspace · © 2026 AL23</span></footer>
+  </section>`;
+}
+function bindWorkbench(){
+  $$('.workbench-home').forEach(button=>button.onclick=renderLaunchpad);
+  $$('.workbench-logout').forEach(button=>button.onclick=logout);
+  $$('[data-workbench-section]').forEach(button=>button.onclick=()=>openSection(button.dataset.workbenchSection));
+  $$('[data-go]').forEach(button=>button.onclick=()=>openSection(button.dataset.go));
+}
+function miniBars(values){
+  const max=Math.max(1,...values.map(value=>Number(value[1]||0)));
+  return `<div class="mini-bars">${values.map(([label,value,tone='blue'])=>`<div><span class="${tone}" style="height:${Math.max(7,Math.round(Number(value||0)/max*78))}px"></span><small>${esc(label)}</small><b>${esc(value||0)}</b></div>`).join('')}</div>`;
+}
+function horizontalBars(values){
+  const max=Math.max(1,...values.map(value=>Number(value[1]||0)));
+  return `<div class="horizontal-bars">${values.map(([label,value,tone='blue'])=>`<div><small>${esc(label)}</small><span><i class="${tone}" style="width:${Math.round(Number(value||0)/max*100)}%"></i></span><b>${esc(value||0)}</b></div>`).join('')}</div>`;
 }
 function recordsTable(rows){
   if(!rows?.length)return'<div class="workspace-empty"><b>No records</b></div>';
@@ -259,34 +297,62 @@ async function renderRoleCenter(){
     const kpis=lease
       ? `${kpi('Lease Contracts',data.counts.total)}${kpi('B2B',data.counts.b2b)}${kpi('B2C',data.counts.b2c)}${kpi('B2B2C',data.counts.b2b2c)}`
       : `${kpi('Total Records',data.counts.total)}${kpi('Drafts',data.counts.drafts)}${kpi('Pending Approval',data.counts.pending)}${kpi('Completed',data.counts.completed)}`;
-    content.innerHTML=`<div class="workspace-commandbar">
-      <button class="command primary" id="newRecord" ${can(state.module.permission,'CREATE')?'':'disabled'}>New Record</button>
-      <button class="command" data-go="records">Transactions</button>
-      <button class="command" data-go="reports">Reports</button>
-      <span class="command-spacer"></span><span class="workspace-mode">MODULE FOUNDATION</span>
+    const first=data.recent?.[0];
+    const statusValues=lease
+      ? [['B2B',data.counts.b2b,'blue'],['B2C',data.counts.b2c,'orange'],['B2B2C',data.counts.b2b2c,'green']]
+      : [['Draft',data.counts.drafts,'blue'],['Approval',data.counts.pending,'orange'],['Complete',data.counts.completed,'green']];
+    const body=`<div class="ramco-status-tabs">
+      <button class="active">All <b>${data.counts.total}</b></button>
+      <button>Draft <b>${data.counts.drafts}</b></button>
+      <button>Pending <b>${data.counts.pending}</b></button>
+      <button>Completed <b>${data.counts.completed}</b></button>
     </div>
-    <div class="workspace-kpis">${kpis}</div>
-    <div class="workspace-grid">
-      <section class="workspace-card wide"><header><h2>Recent Records</h2><button data-go="records">View All</button></header>${recordsTable(data.recent)}</section>
-      <section class="workspace-card"><header><h2>My Work</h2></header><div class="workspace-empty"><b>No assigned work</b></div></section>
-      <section class="workspace-card"><header><h2>Alerts</h2></header><div class="workspace-empty"><b>No alerts</b></div></section>
-    </div>`;
+    <div class="ramco-layout">
+      <div class="ramco-main">
+        <section class="ramco-window">
+          <header><div class="ramco-window-tabs"><button class="active">Work List</button><button>Recent</button><button>My Records</button></div><button id="newRecord" class="ramco-primary" ${can(state.module.permission,'CREATE')?'':'disabled'}>New Record</button></header>
+          <div class="ramco-filterbar"><select><option>All Records</option></select><input placeholder="Search reference, entity or owner"><select><option>All Statuses</option></select><button data-go="records">Go</button></div>
+          ${recordsTable(data.recent)}
+        </section>
+        <section class="ramco-detail-panel">
+          <header><b>${first?esc(first.record_no):'Record Details'}</b><div><button>◉</button><button>▦</button><button>↗</button></div></header>
+          <div class="ramco-detail-grid">
+            <div><small>Record Type</small><b>${first?esc(first.record_type):'—'}</b><small>Document Date</small><b>${first?date(first.transaction_date):'—'}</b></div>
+            <div><small>Document Summary</small><b>${first?esc(first.description||'—'):'—'}</b><small>Amount</small><b>${first?money(first.amount):'0.00'}</b></div>
+            <div class="ramco-detail-actions"><button data-go="records">Open Transactions</button><button id="detailNew" ${can(state.module.permission,'CREATE')?'':'disabled'}>Create Record</button><button data-go="approvals">Review Approvals</button></div>
+          </div>
+        </section>
+      </div>
+      <aside class="ramco-rail">
+        <section><header>Document Processing</header>${miniBars(statusValues)}</section>
+        <section><header>${lease?'Contracts by Channel':'Record Status'}</header>${horizontalBars(statusValues)}</section>
+        <section><header><span>Action Links</span><span>Reports</span></header><div class="ramco-action-links"><button id="railNew" ${can(state.module.permission,'CREATE')?'':'disabled'}>Create Record</button><button data-go="records">View Transactions</button><button data-go="approvals">Pending Approvals</button><button data-go="reports">Module Reports</button><button data-go="setup">Module Setup</button></div></section>
+      </aside>
+    </div>
+    <nav class="ramco-bottom-links"><button data-go="records">Transaction Register</button><button data-go="approvals">Approval Worklist</button><button data-go="reports">Analysis & Reports</button><button data-go="setup">Configuration</button></nav>`;
+    content.innerHTML=workbenchShell(body,'center');
+    bindWorkbench();
     $('#newRecord').onclick=()=>renderRecordForm();
+    $('#detailNew').onclick=()=>renderRecordForm();
+    $('#railNew').onclick=()=>renderRecordForm();
     $$('[data-go]').forEach(button=>button.onclick=()=>openSection(button.dataset.go));
     $$('[data-record-id]').forEach(row=>row.onclick=()=>openRecord(row.dataset.recordId));
   }catch(error){showWorkspaceError(error);}
 }
-async function renderRecords(){
+async function renderRecords(defaultStatus=''){
   const lease=state.module.code==='sd-lease-contract-management';
-  content.innerHTML=`<div class="workspace-commandbar">
+  const body=`<div class="workspace-commandbar">
     <button class="command primary" id="newRecord" ${can(state.module.permission,'CREATE')?'':'disabled'}>New Record</button>
     <select id="savedView"><option>All Records</option><option>My Records</option><option>Drafts</option><option>Pending Approval</option></select>
     <input id="recordSearch" placeholder="Search records">
-    <select id="recordStatus"><option value="">All Statuses</option><option>DRAFT</option><option>FOR_APPROVAL</option><option>APPROVED</option><option>POSTED</option><option>CLOSED</option></select>
+    <select id="recordStatus"><option value="">All Statuses</option><option ${defaultStatus==='DRAFT'?'selected':''}>DRAFT</option><option ${defaultStatus==='FOR_APPROVAL'?'selected':''}>FOR_APPROVAL</option><option>APPROVED</option><option>POSTED</option><option>CLOSED</option></select>
     ${lease?'<select id="recordChannel"><option value="">All Channels</option><option>B2B</option><option>B2C</option><option>B2B2C</option></select>':''}
     <button class="command" id="runSearch">Search</button>
-  </div><section class="workspace-card"><header><h2>Transactions</h2><span id="recordCount"></span></header><div id="recordsHost"><div class="workspace-loading">Loading records…</div></div></section>`;
+  </div><div class="ramco-layout records-layout"><section class="workspace-card"><header><h2>${defaultStatus?'Approval Worklist':'Transaction Register'}</h2><span id="recordCount"></span></header><div id="recordsHost"><div class="workspace-loading">Loading records…</div></div></section><aside class="ramco-rail"><section><header>Saved Views</header><div class="ramco-action-links"><button>All Records</button><button>My Records</button><button>Drafts</button><button data-go="approvals">Pending Approval</button></div></section><section><header>Actions</header><div class="ramco-action-links"><button id="railNew" ${can(state.module.permission,'CREATE')?'':'disabled'}>Create Record</button><button data-go="reports">Reports</button><button data-go="setup">Setup</button></div></section></aside></div>`;
+  content.innerHTML=workbenchShell(body,defaultStatus?'approvals':'records');
+  bindWorkbench();
   $('#newRecord').onclick=()=>renderRecordForm();
+  $('#railNew').onclick=()=>renderRecordForm();
   const load=async()=>{
     try{
       const query=new URLSearchParams({q:$('#recordSearch').value,status:$('#recordStatus').value,channel:$('#recordChannel')?.value||''});
@@ -319,7 +385,7 @@ function renderRecordForm(record=null){
         <label class="record-field"><span>Billing Frequency</span><select name="billingFrequency"><option value="">Select…</option>${['MONTHLY','QUARTERLY','ANNUAL'].map(value=>`<option value="${value}" ${record?.payload?.billingFrequency===value?'selected':''}>${value}</option>`).join('')}</select></label>
         ${recordField('Units','unitCount','number',record?.payload?.unitCount||0,'min="0" step="1"')}
   `:'';
-  content.innerHTML=`<div class="record-actionbar">
+  const body=`<div class="record-actionbar">
     <button class="command primary" id="saveRecord" ${allowed?'':'disabled'}>Save Draft</button>
     <button class="command" id="submitRecord" ${allowed?'':'disabled'}>Submit for Approval</button>
     <button class="command" id="cancelRecord">Cancel</button>
@@ -342,6 +408,8 @@ function renderRecordForm(record=null){
     <div class="record-tabs"><button type="button" class="active">Lines</button><button type="button">Related Records</button><button type="button">System Information</button></div>
     <section class="record-sublist"><div class="workspace-empty"><b>No lines</b></div></section>
   </form>`;
+  content.innerHTML=workbenchShell(body,'records');
+  bindWorkbench();
   $('#cancelRecord').onclick=()=>openSection('records');
   const save=async status=>{
     const body=formDataObject($('#recordForm'));
@@ -357,8 +425,10 @@ function renderRecordForm(record=null){
   $('#submitRecord').onclick=()=>save('FOR_APPROVAL');
 }
 function renderEmptyWorkspace(title){
-  content.innerHTML=`<div class="workspace-commandbar"><button class="command" data-go="center">Role Center</button><span class="command-spacer"></span><span class="workspace-mode">MODULE FOUNDATION</span></div>
-    <section class="workspace-card"><header><h2>${esc(title)}</h2></header><div class="workspace-empty"><b>Not configured</b></div></section>`;
+  const body=`<div class="workspace-commandbar"><button class="command" data-go="center">Role Center</button><span class="command-spacer"></span><span class="workspace-mode">CONNECTED WORKSPACE</span></div>
+    <div class="ramco-layout records-layout"><section class="workspace-card"><header><h2>${esc(title)}</h2></header><div class="workspace-empty"><b>Not configured</b></div></section><aside class="ramco-rail"><section><header>Module Links</header><div class="ramco-action-links"><button data-go="center">Role Center</button><button data-go="records">Transactions</button><button data-go="approvals">Approvals</button></div></section></aside></div>`;
+  content.innerHTML=workbenchShell(body,title==='Reports'?'reports':'setup');
+  bindWorkbench();
   $$('[data-go]').forEach(button=>button.onclick=()=>openSection(button.dataset.go));
 }
 function showWorkspaceError(error,selector='#content'){
@@ -368,7 +438,7 @@ function showWorkspaceError(error,selector='#content'){
 }
 
 async function renderAccessAdmin(){
-  document.body.classList.remove('launchpad-view');
+  document.body.classList.remove('launchpad-view','workbench-view');
   state.module=null;
   state.section='admin';
   setHeader('User Access','System Administration');
