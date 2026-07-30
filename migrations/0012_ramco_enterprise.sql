@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS erp_asset_quality (
 CREATE INDEX IF NOT EXISTS idx_asset_quality_class ON erp_asset_quality(asset_class, count_in_kpi);
 CREATE INDEX IF NOT EXISTS idx_asset_quality_status ON erp_asset_quality(quality_status);
 CREATE INDEX IF NOT EXISTS idx_asset_quality_key ON erp_asset_quality(canonical_serial_key);
+CREATE INDEX IF NOT EXISTS idx_asset_quality_key_count_id ON erp_asset_quality(canonical_serial_key,count_in_kpi,asset_id);
 
 -- Rebuild the reporting classification without deleting source evidence.
 DELETE FROM erp_asset_quality;
@@ -66,40 +67,89 @@ SELECT
 FROM erp_assets a;
 
 
--- Consolidate obvious spreadsheet suffix variants only when the unsuffixed base serial also exists.
-UPDATE erp_asset_quality
-SET canonical_serial_key=(
-      SELECT upper(rtrim(rtrim(trim(a.serial_no),'0123456789'),'-_ '))
-      FROM erp_assets a WHERE a.id=erp_asset_quality.asset_id
-    ),
-    quality_status='SUFFIX_VARIANT',
-    quality_reason='Numeric suffix variant linked to an existing base serial; retained as source evidence but excluded from physical-asset counts.',
-    updated_at=datetime('now')
-WHERE asset_id IN (
-  SELECT a.id
-  FROM erp_assets a
-  WHERE (upper(trim(a.serial_no)) GLOB '*-[0-9]*' OR upper(trim(a.serial_no)) GLOB '*_[0-9]*')
-    AND EXISTS (
-      SELECT 1 FROM erp_assets b
-      WHERE b.id<>a.id
-        AND upper(trim(b.serial_no))=upper(rtrim(rtrim(trim(a.serial_no),'0123456789'),'-_ '))
-    )
+-- Consolidate suffix variants using indexed helper tables.
+-- This avoids the previous row-by-row correlated scan that exceeded D1 CPU limits.
+
+DROP TABLE IF EXISTS erp_serial_base_lookup;
+CREATE TABLE erp_serial_base_lookup (
+  serial_key TEXT PRIMARY KEY
 );
 
--- Keep only one physical record per canonical serial in KPI counts. All rows remain available for audit and reconciliation.
+INSERT OR IGNORE INTO erp_serial_base_lookup(serial_key)
+SELECT upper(trim(serial_no))
+FROM erp_assets
+WHERE serial_no IS NOT NULL
+  AND trim(serial_no) <> '';
+
+DROP TABLE IF EXISTS erp_serial_suffix_map;
+CREATE TABLE erp_serial_suffix_map (
+  asset_id INTEGER PRIMARY KEY,
+  base_key TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO erp_serial_suffix_map(asset_id,base_key)
+SELECT
+  a.id,
+  upper(rtrim(rtrim(trim(a.serial_no),'0123456789'),'-_ '))
+FROM erp_assets a
+JOIN erp_serial_base_lookup l
+  ON l.serial_key =
+     upper(rtrim(rtrim(trim(a.serial_no),'0123456789'),'-_ '))
+WHERE (
+       upper(trim(a.serial_no)) GLOB '*-[0-9]*'
+       OR upper(trim(a.serial_no)) GLOB '*_[0-9]*'
+      )
+  AND upper(trim(a.serial_no)) <> l.serial_key;
+
 UPDATE erp_asset_quality
-SET count_in_kpi=0,
-    quality_status='DUPLICATE_SUFFIX',
-    quality_reason='Duplicate or suffixed representation of the same canonical physical serial; excluded from KPI counts.',
-    updated_at=datetime('now')
-WHERE count_in_kpi=1
-  AND EXISTS (
-    SELECT 1
-    FROM erp_asset_quality q2
-    WHERE q2.canonical_serial_key=erp_asset_quality.canonical_serial_key
-      AND q2.asset_id<erp_asset_quality.asset_id
-      AND q2.count_in_kpi=1
-  );
+SET canonical_serial_key = (
+      SELECT m.base_key
+      FROM erp_serial_suffix_map m
+      WHERE m.asset_id = erp_asset_quality.asset_id
+    ),
+    quality_status = 'SUFFIX_VARIANT',
+    quality_reason =
+      'Numeric suffix variant linked to an existing base serial; retained as source evidence but excluded from physical-asset counts.',
+    updated_at = datetime('now')
+WHERE asset_id IN (
+  SELECT asset_id FROM erp_serial_suffix_map
+);
+
+-- Identify repeated canonical serials in one indexed window-function pass.
+DROP TABLE IF EXISTS erp_asset_duplicate_map;
+CREATE TABLE erp_asset_duplicate_map (
+  asset_id INTEGER PRIMARY KEY
+);
+
+INSERT OR IGNORE INTO erp_asset_duplicate_map(asset_id)
+SELECT asset_id
+FROM (
+  SELECT
+    asset_id,
+    ROW_NUMBER() OVER (
+      PARTITION BY canonical_serial_key
+      ORDER BY asset_id
+    ) AS duplicate_sequence
+  FROM erp_asset_quality
+  WHERE count_in_kpi = 1
+    AND canonical_serial_key IS NOT NULL
+    AND canonical_serial_key <> ''
+) ranked
+WHERE duplicate_sequence > 1;
+
+UPDATE erp_asset_quality
+SET count_in_kpi = 0,
+    quality_status = 'DUPLICATE_SUFFIX',
+    quality_reason =
+      'Duplicate or suffixed representation of the same canonical physical serial; excluded from KPI counts.',
+    updated_at = datetime('now')
+WHERE asset_id IN (
+  SELECT asset_id FROM erp_asset_duplicate_map
+);
+
+DROP TABLE IF EXISTS erp_serial_base_lookup;
+DROP TABLE IF EXISTS erp_serial_suffix_map;
+DROP TABLE IF EXISTS erp_asset_duplicate_map;
 
 DROP VIEW IF EXISTS vw_erp_serialized_assets;
 CREATE VIEW vw_erp_serialized_assets AS
@@ -236,7 +286,7 @@ INSERT OR IGNORE INTO erp_role_permissions(role_code,module,can_view,can_create,
 ('VIEWER','DATA_QUALITY',1,0,0,0,0,0,0);
 
 INSERT OR REPLACE INTO erp_settings(key,value,updated_at) VALUES
-('APP_VERSION','8.0.0',datetime('now')),
+('APP_VERSION','8.1.1',datetime('now')),
 ('UI_STYLE','RAMCO_ENTERPRISE_WORKBENCH',datetime('now')),
 ('SERIAL_KPI_POLICY','VERIFIED_PHYSICAL_ASSETS_ONLY',datetime('now')),
 ('LEGACY_QUANTITY_POLICY','AGGREGATE_AS_STOCK_BALANCE',datetime('now')),
