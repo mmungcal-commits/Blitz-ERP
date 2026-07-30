@@ -36,6 +36,7 @@ async function main() {
     'migrations/0012_ramco_enterprise.sql','migrations/0013_atlas_receiving_workbench.sql',
     'migrations/0014_application_auth.sql','src/routes/auth.js','src/lib/crypto.js',
     'migrations/0015_user_access_station_connections.sql',
+    'migrations/0016_clean_module_workspace.sql','src/lib/workspace.js','src/routes/workspace.js',
     'migrations/opening/manifest.json','scripts/generate_opening_data.py','scripts/self_test.py'
   ];
   for (const rel of required) check(await exists(join(ROOT, rel)), `Required file: ${rel}`);

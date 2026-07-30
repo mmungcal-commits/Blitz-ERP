@@ -5,6 +5,7 @@ import { ERP_MODULES, requirePermission } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { normalizeText, nextCode, normalizeSerial } from '../lib/codes.js';
 import { randomToken, sha256 } from '../lib/crypto.js';
+import { WORKSPACE_MODULES } from '../lib/workspace.js';
 
 export const adminRoutes = new Hono();
 
@@ -33,6 +34,7 @@ adminRoutes.get('/users', requirePermission('ADMIN','MANAGE'), async c=>{
   const roles=await all(c.env.DB,`SELECT * FROM erp_roles ORDER BY name`);
   const permissions=await all(c.env.DB,`SELECT * FROM erp_role_permissions ORDER BY role_code,module`);
   const userAccess=await all(c.env.DB,`SELECT user_id,module,allowed FROM erp_user_module_access ORDER BY user_id,module`);
+  const workspaceAccess=await all(c.env.DB,`SELECT user_id,module_code,allowed FROM erp_user_workspace_access ORDER BY user_id,module_code`);
   const roleMap=new Map();
   for(const permission of permissions){
     if(!roleMap.has(permission.role_code))roleMap.set(permission.role_code,[]);
@@ -43,12 +45,23 @@ adminRoutes.get('/users', requirePermission('ADMIN','MANAGE'), async c=>{
     if(!accessMap.has(access.user_id))accessMap.set(access.user_id,[]);
     if(access.allowed)accessMap.get(access.user_id).push(access.module);
   }
+  const workspaceMap=new Map();
+  for(const access of workspaceAccess){
+    if(!workspaceMap.has(access.user_id))workspaceMap.set(access.user_id,[]);
+    if(access.allowed)workspaceMap.get(access.user_id).push(access.module_code);
+  }
   for(const user of users){
     const explicit=userAccess.some(access=>access.user_id===user.id);
     user.allowed_modules=user.role_code==='ADMIN'?[...ERP_MODULES]:(explicit?(accessMap.get(user.id)||[]):(roleMap.get(user.role_code)||[]));
     user.module_count=user.allowed_modules.length;
+    const explicitWorkspace=workspaceAccess.some(access=>access.user_id===user.id);
+    user.allowed_workspace_modules=user.role_code==='ADMIN'
+      ? WORKSPACE_MODULES.map(module=>module.code)
+      : (explicitWorkspace
+        ? (workspaceMap.get(user.id)||[])
+        : WORKSPACE_MODULES.filter(module=>user.allowed_modules.includes(module.permission)).map(module=>module.code));
   }
-  return ok(c,{users,roles,permissions,modules:ERP_MODULES});
+  return ok(c,{users,roles,permissions,modules:ERP_MODULES,workspaceModules:WORKSPACE_MODULES});
 });
 
 adminRoutes.post('/users', requirePermission('ADMIN','MANAGE'), async c=>{
@@ -71,12 +84,21 @@ adminRoutes.post('/users', requirePermission('ADMIN','MANAGE'), async c=>{
       await run(c.env.DB,`INSERT INTO erp_user_module_access(user_id,module,allowed,updated_at,updated_by) VALUES(?,?,?,datetime('now'),?) ON CONFLICT(user_id,module) DO UPDATE SET allowed=excluded.allowed,updated_at=excluded.updated_at,updated_by=excluded.updated_by`,[after.id,module,allowedModules.includes(module)?1:0,c.get('erpUser').email]);
     }
   }
+  const workspaceProvided=Array.isArray(b.workspaceModules);
+  if(workspaceProvided){
+    const requestedWorkspace=new Set(b.workspaceModules.map(value=>normalizeText(value).toLowerCase()));
+    for(const module of WORKSPACE_MODULES){
+      await run(c.env.DB,`INSERT INTO erp_user_workspace_access(user_id,module_code,allowed,updated_at,updated_by) VALUES(?,?,?,datetime('now'),?) ON CONFLICT(user_id,module_code) DO UPDATE SET allowed=excluded.allowed,updated_at=excluded.updated_at,updated_by=excluded.updated_by`,[after.id,module.code,requestedWorkspace.has(module.code)?1:0,c.get('erpUser').email]);
+    }
+  }
   const credential=await first(c.env.DB,`SELECT activated_at,password_hash FROM erp_user_credentials WHERE user_id=?`,[after.id]);
   const activationLink=!credential?.activated_at||!credential?.password_hash?await issueAuthLink(c,after,'activate'):null;
   const savedAccess=await all(c.env.DB,`SELECT module FROM erp_user_module_access WHERE user_id=? AND allowed=1 ORDER BY module`,[after.id]);
   const effectiveAllowed=after.role_code==='ADMIN'?ERP_MODULES:savedAccess.map(row=>row.module);
   await audit(c,{action:before?'UPDATE_USER':'CREATE_USER',module:'ADMIN',recordType:'USER',recordId:after.id,recordNo:email,before,after:{...after,allowedModules:effectiveAllowed}});
-  return ok(c,{user:{...after,allowed_modules:effectiveAllowed},activationLink});
+  const savedWorkspace=await all(c.env.DB,`SELECT module_code FROM erp_user_workspace_access WHERE user_id=? AND allowed=1 ORDER BY module_code`,[after.id]);
+  const effectiveWorkspace=after.role_code==='ADMIN'?WORKSPACE_MODULES.map(module=>module.code):savedWorkspace.map(row=>row.module_code);
+  return ok(c,{user:{...after,allowed_modules:effectiveAllowed,allowed_workspace_modules:effectiveWorkspace},activationLink});
 });
 
 adminRoutes.post('/users/:id/activation', requirePermission('ADMIN','MANAGE'), async c=>{

@@ -4,44 +4,66 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0a2239">
-  <title>E88 FinSys</title>
+  <title>E88 Enterprise System</title>
   <link rel="icon" href="/logo.png">
-  <link rel="stylesheet" href="/app.css?v=812-launchpad2">
+  <link rel="stylesheet" href="/app.css?v=900-foundation2">
 </head>
 <body>
-  <div id="loading" class="loading-screen"><img src="/logo.png" alt="E88"><div><strong>E88 FinSys</strong><span>Loading E88 FinSys…</span></div></div>
+  <div id="loading" class="loading-screen">
+    <img src="/logo.png" alt="E88">
+    <div><strong>E88 Enterprise System</strong><span>Loading…</span></div>
+  </div>
+
   <div id="login" class="auth-shell hidden">
     <section class="auth-card" aria-live="polite">
       <div class="auth-brand">
         <img src="/logo.png" alt="E88 Ventures">
-        <div><strong>E88 FinSys</strong><span>Authorized NRD users only</span></div>
+        <div><strong>E88 Enterprise System</strong><span>Authorized NRD users only</span></div>
       </div>
       <div id="authContent"></div>
+      <small class="auth-copyright">© 2026 AL23</small>
     </section>
   </div>
+
   <div id="app" class="app-shell hidden">
     <aside class="sidebar" id="sidebar">
-      <div class="brand"><img src="/logo.png" alt="E88 Ventures"><div><b>E88 FinSys</b><span>Enterprise Resource Planning</span></div></div>
+      <div class="brand">
+        <img src="/logo.png" alt="E88 Ventures">
+        <div><b>E88</b><span>Enterprise System</span></div>
+      </div>
       <nav id="nav"></nav>
-      <div class="sidebar-footer"><div><div id="userBadge"></div><small class="copyright">© 2026 AL23</small></div><div class="sidebar-tools"><button class="icon-button" id="logoutBtn" title="Sign out">↪</button><button class="icon-button" id="themeToggle" title="Light or dark mode">◐</button></div></div>
+      <div class="sidebar-footer">
+        <div><div id="userBadge"></div><small>© 2026 AL23</small></div>
+        <button class="icon-button" id="themeToggle" title="Light or dark mode">◐</button>
+      </div>
     </aside>
     <div class="mobile-overlay" id="mobileOverlay"></div>
     <main class="main">
       <header class="topbar">
         <button class="mobile-menu" id="mobileMenu" aria-label="Menu">☰</button>
-        <div><h1 id="pageTitle">Dashboard</h1><p id="pageSubtitle"></p></div>
+        <div><h1 id="pageTitle">Enterprise Modules</h1><p id="pageSubtitle"></p></div>
         <div class="top-actions">
-          <span class="environment live">LIVE</span>
+          <span class="environment">INTERNAL</span>
+          <button class="button secondary" id="modulesBtn">Modules</button>
+          <button class="button secondary hidden" id="accessBtn">User Access</button>
           <button class="button secondary" id="refreshBtn">Refresh</button>
-          <select id="quickActions" class="select compact"><option value="">Quick actions ▾</option><option value="atlas">Upload ATLAS</option><option value="qr">Scan QR / serial</option><option value="diagnostics">Run diagnostics</option></select>
+          <button class="button" id="logoutBtn">Sign out</button>
         </div>
       </header>
       <section id="content" class="content"></section>
     </main>
   </div>
+
   <div id="toastHost" class="toast-host"></div>
-  <div id="modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-card"><div class="modal-head"><div><h2 id="modalTitle"></h2><p id="modalSubtitle"></p></div><button id="modalClose" class="icon-button">×</button></div><div id="modalBody" class="modal-body"></div></div></div>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js" referrerpolicy="no-referrer"></script>
-  <script type="module" src="/app.js?v=812-launchpad3"></script>
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div><h2 id="modalTitle"></h2><p id="modalSubtitle"></p></div>
+        <button id="modalClose" class="icon-button">×</button>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+  <script type="module" src="/app.js?v=900-foundation2"></script>
 </body>
 </html>

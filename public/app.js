@@ -1,91 +1,94 @@
-const state={session:null,module:'launchpad',lookups:null,theme:localStorage.getItem('e88-theme')||'light',receiveShipment:null,receiveWorkbench:null,receiveRows:[]};
-const $=s=>document.querySelector(s);const content=$('#content');
+const state={
+  session:null,
+  catalog:{groups:[],tools:[],addons:[]},
+  workspaceAccess:[],
+  module:null,
+  section:'center',
+  theme:localStorage.getItem('e88-theme')||'light',
+};
+
+const $=selector=>document.querySelector(selector);
+const $$=selector=>[...document.querySelectorAll(selector)];
+const content=$('#content');
 document.documentElement.dataset.theme=state.theme;
 
-const NAV=[
-  {group:'Overview',items:[['launchpad','Enterprise Modules','▦',''],['dashboard','Dashboard','▦','DASHBOARD']]},
-  {group:'Inbound Logistics',items:[['atlas','ATLAS Supplier Upload','⇧','SHIPMENTS','CREATE'],['procurement','Purchase Orders','⌑','PROCUREMENT'],['shipments','Shipments','◫','SHIPMENTS'],['receiving','Receiving','⇩','RECEIVING']]},
-  {group:'Inventory Control',items:[['inventory','Inventory & Serials','▤','INVENTORY'],['movement','Stock Movement','⇄','INVENTORY','POST'],['returns','Returns & Reconciliation','↩','RETURNS']]},
-  {group:'Outbound Logistics',items:[['requisitions','Requisitions','☷','REQUISITIONS'],['checklists','Pre-release Checks','✓','DELIVERIES'],['deliveries','Deliveries','▣','DELIVERIES']]},
-  {group:'Commercial',items:[['sales','Sales & Lease','◎','SALES'],['customers','Customers & Credit','♙','CUSTOMERS']]},
-  {group:'Network & Planning',items:[['stations','Swapping Station Projects','⌂','STATIONS'],['planning','Budget & Forecast','▥','PLANNING']]},
-  {group:'System',items:[['admin','Users & Diagnostics','⚙','ADMIN','MANAGE']]}
-];
-const META={launchpad:['Enterprise Modules',''],dashboard:['Dashboard',''],atlas:['ATLAS Supplier Upload',''],procurement:['Purchase Orders',''],shipments:['Shipments',''],receiving:['Receiving Workbench',''],inventory:['Inventory & Serials',''],movement:['Stock Movement',''],returns:['Returns & Reconciliation',''],requisitions:['Requisitions',''],checklists:['Pre-release Checks',''],deliveries:['Deliveries',''],sales:['Sales & Lease',''],customers:['Customers & Credit',''],stations:['Swapping Station Projects',''],planning:['Budget & Forecast',''],admin:['Users & Diagnostics','']};
-const ENTERPRISE_MODULES=[
-  {title:'Finance & Accounting',items:[
-    ['General Accounting'],['Receivables & Payables Mgmt.'],['Fixed Assets Management','inventory','INVENTORY'],['Management Accounting'],
-    ['Consolidation & Reporting'],['Financial Services'],['Planning & Budgeting','planning','PLANNING'],['Grants & Funds Management']
-  ]},
-  {title:'Sales & Distribution',items:[
-    ['CRM','customers','CUSTOMERS'],['Demand Planning','planning','PLANNING'],['Order Management','sales','SALES'],['Outbound Logistics','deliveries','DELIVERIES'],
-    ['Warranty Management','returns','RETURNS'],['Service Management'],['PIM','inventory','INVENTORY'],['Customer Portal','customers','CUSTOMERS']
-  ]},
-  {title:'Inventory & Procurement',items:[
-    ['Inventory Analysis & Planning','inventory','INVENTORY'],['Warehouse Management','inventory','INVENTORY'],['Inventory & Cycle Counting','inventory','INVENTORY'],
-    ['Sourcing & Purchasing','procurement','PROCUREMENT'],['Inbound Logistics','shipments','SHIPMENTS'],['Subcontracting','procurement','PROCUREMENT'],['Supplier Portal','atlas','SHIPMENTS','CREATE']
-  ]},
-  {title:'Manufacturing',items:[
-    ['Estimation','planning','PLANNING'],['Planning','planning','PLANNING'],['Work Order Management'],['Scheduling','planning','PLANNING'],
-    ['Manufacturing Execution','receiving','RECEIVING'],['Costing','planning','PLANNING']
-  ]},
-  {title:'Quality Management',items:[
-    ['Attribute Management','inventory','INVENTORY'],['Inspection & Sampling Plans','receiving','RECEIVING'],
-    ['Quality Administration','checklists','DELIVERIES'],['Acceptance & Rejection analysis','returns','RETURNS']
-  ]},
-  {title:'Project Management',items:[
-    ['Planning & Budgeting','planning','PLANNING'],['Project Definition','stations','STATIONS'],['Project Planning & Tracking','stations','STATIONS'],
-    ['Billing','sales','SALES'],['Project Closure','stations','STATIONS']
-  ]},
-  {title:'Enterprise Asset Management',items:[
-    ['Equipment Induction & Setup','inventory','INVENTORY'],['Preventive Maintenance','inventory','INVENTORY'],['Online Maintenance','returns','RETURNS'],
-    ['Shutdown / Outage Mgmt.'],['Work Management','stations','STATIONS'],['Reliability & Review','returns','RETURNS'],['Equipment Rental Mgmt.','sales','SALES']
-  ]},
-  {title:'Facility Management',items:[
-    ['Assessment','stations','STATIONS'],['Quotation','sales','SALES'],['Contract Mgmt','sales','SALES'],
-    ['Site Administration','stations','STATIONS'],['Resource Allocation','stations','STATIONS'],['Work Reporting','stations','STATIONS']
-  ]},
-  {title:'Logistics Management',items:[
-    ['Transport Management','deliveries','DELIVERIES'],['Order & Warehouse Management','shipments','SHIPMENTS'],['Hub Management','inventory','INVENTORY'],
-    ['Logistics Command center','dashboard','DASHBOARD'],['Contracting and Billing','sales','SALES'],['Fleet Management','inventory','INVENTORY']
-  ]},
-  {title:'HCM',items:[
-    ['Workforce Management'],['Recruitment'],['Talent Management'],['Employee Development'],['Payroll & Benefits'],['Work Force Planning']
-  ]},
-  {title:'SRP',items:[
-    ['Proposal & Estimation','sales','SALES'],['Rates & Contract Mgmt','sales','SALES'],['SOW /Project Mgmt','sales','SALES'],
-    ['Timesheet Mgmt'],['Expense Mgmt','planning','PLANNING'],['Billing & Revenue Mgmt','sales','SALES'],['Budgets','planning','PLANNING'],['Resource & Bench Mgmt','planning','PLANNING']
-  ]}
-];
-const ENTERPRISE_TOOLS=[
-  ['Advanced Reporting','dashboard','DASHBOARD'],
-  ['Wizard Interface'],
-  ['Embedded Workflow'],
-  ['Data Uploads','atlas','SHIPMENTS','CREATE']
-];
-const ENTERPRISE_ADDONS=['Analytics','Mobility','Extension Toolkit','eSignature','Device Integration','SOA Integration / Collaboration','Advanced Planning & Optimization'];
-function can(module,action='VIEW'){if(state.session?.user?.role==='ADMIN')return true;const p=(state.session?.permissions||[]).find(x=>x.module===module);return !!p?.[`can_${action.toLowerCase()}`];}
-function esc(v){return String(v??'').replace(/[&<>'"]/g,x=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[x]));}
-function fmt(v){if(v===null||v===undefined||v==='')return '—';if(typeof v==='number')return new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(v);return esc(v);}
-function money(v){const n=Number(v||0);if(!Number.isFinite(n))return '—';const x=new Intl.NumberFormat('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Math.abs(n));return n<0?`(${x})`:x;}
-function quantity(v){const n=Number(v||0);return new Intl.NumberFormat('en-US',{maximumFractionDigits:2}).format(n);}
-function date(v){if(!v)return '—';const d=new Date(v);return Number.isNaN(d.getTime())?esc(v):d.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});}
-function statusClass(s=''){s=String(s).toUpperCase();if(/BLOCKED|FAILED|CANCELLED|DUPLICATE|UNRECONCILED|QUARANTINE|EXCEPTION|OVERDUE|DISCONNECTED|MISSING/.test(s))return'bad';if(/AVAILABLE|ACTIVE|APPROVED|POSTED|DELIVERED|RECEIVED|CLEAR|PASSED|MATCHED|CONNECTED/.test(s))return'good';if(/DRAFT|PLANNED|PENDING|PARTIAL|IN_TRANSIT|FOR_REVIEW|RESERVED|MAINTENANCE|UNDER_REPAIR/.test(s))return'warn';return'info';}
-function badge(s){return `<span class="status ${statusClass(s)}">${esc(s||'—')}</span>`;}
-async function api(path,opts={}){const res=await fetch('/api'+path,{...opts,credentials:'same-origin',headers:{...(opts.body instanceof FormData?{}:{'Content-Type':'application/json'}),...(opts.headers||{})}});const data=await res.json().catch(()=>({ok:false,error:`HTTP ${res.status}`}));if(!res.ok||!data.ok){const error=new Error(data.error||`Request failed (${res.status})`);error.status=res.status;error.details=data.details;throw error;}return data;}
-function toast(msg,type='success'){const el=document.createElement('div');el.className=`toast ${type}`;el.textContent=msg;$('#toastHost').append(el);setTimeout(()=>el.remove(),4200);}
-function modal(title,body,subtitle=''){ $('#modalTitle').textContent=title;$('#modalSubtitle').textContent=subtitle;$('#modalBody').innerHTML=body;$('#modal').classList.remove('hidden');}
+function esc(value){
+  return String(value??'').replace(/[&<>'"]/g,char=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;',
+  }[char]));
+}
+function date(value){
+  if(!value)return'—';
+  const parsed=new Date(value);
+  return Number.isNaN(parsed.getTime())?esc(value):parsed.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});
+}
+function money(value){
+  const number=Number(value||0);
+  return new Intl.NumberFormat('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}).format(number);
+}
+function statusBadge(value='DRAFT'){
+  const status=String(value).toUpperCase();
+  const tone=/APPROVED|POSTED|CLOSED/.test(status)?'good':/CANCELLED|REJECTED/.test(status)?'bad':/FOR_APPROVAL|PENDING/.test(status)?'warn':'info';
+  return `<span class="status ${tone}">${esc(status.replaceAll('_',' '))}</span>`;
+}
+async function api(path,options={}){
+  const response=await fetch('/api'+path,{
+    ...options,
+    credentials:'same-origin',
+    headers:{...(options.body instanceof FormData?{}:{'Content-Type':'application/json'}),...(options.headers||{})},
+  });
+  const data=await response.json().catch(()=>({ok:false,error:`HTTP ${response.status}`}));
+  if(!response.ok||!data.ok){
+    const error=new Error(data.error||`Request failed (${response.status})`);
+    error.status=response.status;
+    throw error;
+  }
+  return data;
+}
+function toast(message,type='success'){
+  const element=document.createElement('div');
+  element.className=`toast ${type}`;
+  element.textContent=message;
+  $('#toastHost').append(element);
+  setTimeout(()=>element.remove(),4200);
+}
+function modal(title,body,subtitle=''){
+  $('#modalTitle').textContent=title;
+  $('#modalSubtitle').textContent=subtitle;
+  $('#modalBody').innerHTML=body;
+  $('#modal').classList.remove('hidden');
+}
 function closeModal(){$('#modal').classList.add('hidden');}
-function table(rows,cols,onClick=''){if(!rows?.length)return'<div class="empty compact-empty">No records found.</div>';return `<div class="table-wrap"><table class="data-table"><thead><tr>${cols.map(c=>`<th class="${c.align==='right'?'num':''}">${esc(c.label)}</th>`).join('')}</tr></thead><tbody>${rows.map((r,i)=>`<tr ${onClick?`data-row="${i}" data-click="${onClick}"`:''}>${cols.map(c=>`<td class="${c.align==='right'?'num':''}" data-label="${esc(c.label)}">${c.render?c.render(r[c.key],r):fmt(r[c.key])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;}
-function formField(label,name,type='text',value='',options=null,extra=''){if(type==='select')return `<div class="field"><label>${esc(label)}</label><select name="${name}" ${extra}><option value="">Select…</option>${(options||[]).map(o=>{const val=typeof o==='object'?(o.value??o.id??o.code):o;const lab=typeof o==='object'?(o.label??o.name??o.item_name??o.code):o;return `<option value="${esc(val)}" ${String(val)===String(value)?'selected':''}>${esc(lab)}</option>`}).join('')}</select></div>`;if(type==='textarea')return `<div class="field full"><label>${esc(label)}</label><textarea name="${name}" ${extra}>${esc(value)}</textarea></div>`;return `<div class="field"><label>${esc(label)}</label><input type="${type}" name="${name}" value="${esc(value)}" ${extra}></div>`;}
 function formDataObject(form){return Object.fromEntries(new FormData(form).entries());}
-function panel(title,body,actions=''){return `<section class="panel"><div class="panel-head"><h3>${esc(title)}</h3><div>${actions}</div></div><div class="panel-body">${body}</div></section>`;}
-function detailGrid(obj,fields){return `<div class="detail-grid">${fields.map(([k,l,r])=>`<div class="detail-item"><small>${esc(l)}</small><b>${r?r(obj[k],obj):fmt(obj[k])}</b></div>`).join('')}</div>`;}
+function authField(label,name,type,value='',extra=''){
+  return `<label class="auth-field"><span>${esc(label)}</span><input name="${name}" type="${type}" value="${esc(value)}" ${extra}></label>`;
+}
+function authMessage(message,type='error'){
+  const element=$('#authMessage');
+  if(!element)return;
+  element.className=`auth-message ${type}`;
+  element.textContent=message||'';
+}
+function moduleList(){
+  return [
+    ...state.catalog.groups.flatMap(group=>group.items.map(item=>({...item,groupCode:group.code,groupTitle:group.title,type:'module'}))),
+    ...state.catalog.tools.map(item=>({...item,groupCode:'tools',groupTitle:'Enterprise Tools',type:'tool'})),
+    ...state.catalog.addons.map(item=>({...item,groupCode:'addons',groupTitle:'Enterprise Add-ons',type:'addon'})),
+  ];
+}
+function moduleByCode(code){return moduleList().find(module=>module.code===code);}
+function can(permission,action='VIEW'){
+  if(state.session?.user?.role==='ADMIN')return true;
+  const row=(state.session?.permissions||[]).find(value=>value.module===permission);
+  return !!row?.[`can_${action.toLowerCase()}`];
+}
+function canWorkspace(code){
+  return state.session?.user?.role==='ADMIN'||state.workspaceAccess.includes(code);
+}
 
-function authField(label,name,type,value='',extra=''){return `<label class="auth-field"><span>${esc(label)}</span><input name="${name}" type="${type}" value="${esc(value)}" ${extra}></label>`;}
-function authMessage(message,type='error'){const el=$('#authMessage');if(!el)return;el.className=`auth-message ${type}`;el.textContent=message||'';}
 function showAuth(mode='login'){
   state.session=null;
+  state.module=null;
   document.body.classList.remove('launchpad-view');
   $('#loading').classList.add('hidden');
   $('#app').classList.add('hidden');
@@ -96,9 +99,9 @@ function showAuth(mode='login'){
   const resetToken=query.get('reset')||'';
   if(activationToken)mode='activate';
   if(resetToken)mode='reset';
-  const auth=$('#authContent');
+  const host=$('#authContent');
   if(mode==='login'){
-    auth.innerHTML=`<div class="auth-heading"><h1>Sign in</h1><p>Use your activated E88 FinSys account.</p></div>
+    host.innerHTML=`<div class="auth-heading"><h1>Sign in</h1><p>E88 Enterprise System</p></div>
       <form id="loginForm" class="auth-form">
         ${authField('Corporate email','email','email',email,'autocomplete="username" placeholder="name@nrdev.ph" required')}
         ${authField('Password','password','password','','autocomplete="current-password" required')}
@@ -106,11 +109,22 @@ function showAuth(mode='login'){
       </form>
       <div id="authMessage" class="auth-message"></div>
       <div class="auth-links"><button type="button" data-auth="activate">Activate account</button><button type="button" data-auth="reset">Reset password</button></div>`;
-    $('#loginForm').onsubmit=async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;authMessage('Signing in…','info');try{await api('/auth/login',{method:'POST',body:JSON.stringify(formDataObject(event.currentTarget))});history.replaceState({},'',location.pathname);await init();}catch(error){authMessage(error.message);}finally{button.disabled=false;}};
+    $('#loginForm').onsubmit=async event=>{
+      event.preventDefault();
+      const button=event.currentTarget.querySelector('button');
+      button.disabled=true;
+      authMessage('Signing in…','info');
+      try{
+        await api('/auth/login',{method:'POST',body:JSON.stringify(formDataObject(event.currentTarget))});
+        history.replaceState({},'',location.pathname);
+        await init();
+      }catch(error){authMessage(error.message);}
+      finally{button.disabled=false;}
+    };
   }else{
     const activation=mode==='activate';
     const token=activation?activationToken:resetToken;
-    auth.innerHTML=`<div class="auth-heading"><h1>${activation?'Activate account':'Reset password'}</h1><p>${activation?'Set your private E88 FinSys password using the link issued by the administrator.':'Use the password-reset link issued by the administrator.'}</p></div>
+    host.innerHTML=`<div class="auth-heading"><h1>${activation?'Activate account':'Reset password'}</h1><p>${activation?'Create your private password.':'Set a new private password.'}</p></div>
       <form id="credentialForm" class="auth-form">
         ${authField('Corporate email','email','email',email,'autocomplete="username" placeholder="name@nrdev.ph" required')}
         ${authField(activation?'Activation code':'Reset code','token','text',token,'autocomplete="one-time-code" required')}
@@ -121,9 +135,20 @@ function showAuth(mode='login'){
       </form>
       <div id="authMessage" class="auth-message"></div>
       <div class="auth-links"><button type="button" data-auth="login">Back to sign in</button></div>`;
-    $('#credentialForm').onsubmit=async event=>{event.preventDefault();const button=event.currentTarget.querySelector('button');button.disabled=true;authMessage(activation?'Activating account…':'Updating password…','info');try{await api(activation?'/auth/activate':'/auth/reset-password',{method:'POST',body:JSON.stringify(formDataObject(event.currentTarget))});history.replaceState({},'',location.pathname);await init();}catch(error){authMessage(error.message);}finally{button.disabled=false;}};
+    $('#credentialForm').onsubmit=async event=>{
+      event.preventDefault();
+      const button=event.currentTarget.querySelector('button');
+      button.disabled=true;
+      authMessage(activation?'Activating account…':'Updating password…','info');
+      try{
+        await api(activation?'/auth/activate':'/auth/reset-password',{method:'POST',body:JSON.stringify(formDataObject(event.currentTarget))});
+        history.replaceState({},'',location.pathname);
+        await init();
+      }catch(error){authMessage(error.message);}
+      finally{button.disabled=false;}
+    };
   }
-  document.querySelectorAll('[data-auth]').forEach(button=>button.onclick=()=>showAuth(button.dataset.auth));
+  $$('[data-auth]').forEach(button=>button.onclick=()=>showAuth(button.dataset.auth));
 }
 
 async function init(){
@@ -132,178 +157,304 @@ async function init(){
   $('#loading').classList.remove('hidden');
   try{
     state.session=await api('/session');
-    renderNav();
-    renderQuickActions();
+    state.catalog=state.session.workspaceCatalog||{groups:[],tools:[],addons:[]};
+    state.workspaceAccess=state.session.workspaceAccess||[];
     $('#userBadge').innerHTML=`<b>${esc(state.session.user.displayName||state.session.user.email)}</b><small>${esc(state.session.user.role)} · ${esc(state.session.user.email)}</small>`;
+    $('#accessBtn').classList.toggle('hidden',state.session.user.role!=='ADMIN');
     $('#loading').classList.add('hidden');
     $('#app').classList.remove('hidden');
-    await openModule('launchpad');
-  }catch(e){
-    if(e.status===401)return showAuth();
-    $('#loading').innerHTML=`<div><strong>Unable to open E88 FinSys</strong><span>${esc(e.message)}</span></div>`;
+    renderLaunchpad();
+  }catch(error){
+    if(error.status===401)return showAuth();
+    $('#loading').innerHTML=`<div><strong>Unable to open system</strong><span>${esc(error.message)}</span></div>`;
   }
 }
-function renderNav(){const nav=$('#nav');nav.innerHTML=NAV.map(g=>{const items=g.items.filter(x=>!x[3]||can(x[3],x[4]||'VIEW'));if(!items.length)return'';return `<div class="nav-group">${g.group}</div>${items.map(([id,label,icon])=>`<button class="nav-item" data-module="${id}"><span class="nav-icon">${icon}</span>${label}</button>`).join('')}`}).join('');nav.querySelectorAll('[data-module]').forEach(b=>b.onclick=()=>openModule(b.dataset.module));}
-function permissionForNav(id){const item=NAV.flatMap(group=>group.items).find(value=>value[0]===id);return item?{module:item[3],action:item[4]||'VIEW'}:{module:'',action:'VIEW'};}
-function renderQuickActions(){const options=['<option value="">Quick actions ▾</option>'];if(can('SHIPMENTS','CREATE'))options.push('<option value="atlas">Upload ATLAS</option>');if(can('INVENTORY','VIEW'))options.push('<option value="qr">Scan QR / serial</option>');if(can('ADMIN','MANAGE'))options.push('<option value="diagnostics">Run diagnostics</option>');$('#quickActions').innerHTML=options.join('');}
-async function openModule(id){const permission=permissionForNav(id);if(permission.module&&!can(permission.module,permission.action)){toast('This module is not assigned to your account.','error');return;}state.module=id;document.body.classList.toggle('launchpad-view',id==='launchpad');document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.module===id));const m=META[id]||[id,''];$('#pageTitle').textContent=m[0];$('#pageSubtitle').textContent=m[1];content.innerHTML='<div class="empty">Loading…</div>';closeMobile();try{await (renderers[id]||renderDashboard)();}catch(e){content.innerHTML=`<div class="panel"><div class="empty"><b>Unable to load module</b><br>${esc(e.message)}</div></div>`;toast(e.message,'error');}}
-function closeMobile(){$('#sidebar').classList.remove('open');$('#mobileOverlay').classList.remove('open');}
 
-function enterpriseModuleButton(item,className='enterprise-module-button'){
-  const [label,target,module,action='VIEW']=item;
-  const allowed=!module||can(module,action);
-  return `<button class="${className}" data-enterprise-label="${esc(label)}" ${target?`data-enterprise-target="${esc(target)}"`:''} ${module?`data-enterprise-module="${esc(module)}" data-enterprise-action="${esc(action)}"`:''} ${allowed?'':'disabled aria-disabled="true"'}>${esc(label)}</button>`;
+function enterpriseButton(item,className='enterprise-module-button'){
+  const allowed=canWorkspace(item.code);
+  return `<button class="${className}" data-workspace="${esc(item.code)}" ${allowed?'':'disabled aria-disabled="true"'}>${esc(item.label)}</button>`;
 }
-async function openEnterpriseModule(button){
-  const label=button.dataset.enterpriseLabel;
-  const target=button.dataset.enterpriseTarget;
-  const module=button.dataset.enterpriseModule;
-  const action=button.dataset.enterpriseAction||'VIEW';
-  if(module&&!can(module,action))return toast('This module is not assigned to your account.','error');
-  if(target)return openModule(target);
-  modal(label,`<div class="enterprise-pending"><b>${esc(label)}</b><p>This internal module shell is ready for its module-by-module configuration.</p></div>`,'Enterprise module');
-}
-async function renderLaunchpad(){
-  const user=state.session?.user||{};
+function renderLaunchpad(){
+  state.module=null;
+  state.section='center';
+  document.body.classList.add('launchpad-view');
   content.innerHTML=`<section class="enterprise-launchpad">
+    <div class="launchpad-controls">
+      <div><img src="/logo.png" alt="E88"><span>Enterprise Modules</span></div>
+      <div><span>${esc(state.session.user.displayName||state.session.user.email)}</span>${state.session.user.role==='ADMIN'?'<button id="launchAccess">User Access</button>':''}<button id="launchLogout">Sign out</button></div>
+    </div>
     <div class="enterprise-map">
-      <div class="enterprise-columns">${ENTERPRISE_MODULES.map(column=>`<section class="enterprise-column"><div class="enterprise-category">${esc(column.title)}</div><div class="enterprise-module-stack">${column.items.map(item=>enterpriseModuleButton(item)).join('')}</div></section>`).join('')}</div>
-      <div class="enterprise-tools">${ENTERPRISE_TOOLS.map(item=>enterpriseModuleButton(item,'enterprise-tool-button')).join('')}</div>
+      <div class="enterprise-columns">${state.catalog.groups.map(group=>`<section class="enterprise-column">
+        <div class="enterprise-category">${esc(group.title)}</div>
+        <div class="enterprise-module-stack">${group.items.map(item=>enterpriseButton(item)).join('')}</div>
+      </section>`).join('')}</div>
+      <div class="enterprise-tools">${state.catalog.tools.map(item=>enterpriseButton(item,'enterprise-tool-button')).join('')}</div>
       <div class="enterprise-addons-title"><span>Enterprise Add-ons</span></div>
-      <div class="enterprise-addons">${ENTERPRISE_ADDONS.map(label=>`<button class="enterprise-addon-button" data-enterprise-label="${esc(label)}">${esc(label)}</button>`).join('')}</div>
+      <div class="enterprise-addons">${state.catalog.addons.map(item=>enterpriseButton(item,'enterprise-addon-button')).join('')}</div>
       <footer class="enterprise-brand-strip">
-        <div class="enterprise-brand-primary">E88 FinSys</div><div class="enterprise-brand-secondary">Power of One · © 2026 AL23</div>
-        <div class="enterprise-user">${esc(user.displayName||user.email||'')} · ${esc(user.role||'')}<button id="launchpadLogout">Sign out</button></div>
+        <div class="enterprise-brand-primary">E88</div>
+        <div class="enterprise-brand-secondary">Enterprise System · © 2026 AL23</div>
       </footer>
     </div>
   </section>`;
-  document.querySelectorAll('[data-enterprise-label]').forEach(button=>button.onclick=()=>openEnterpriseModule(button));
-  $('#launchpadLogout').onclick=async()=>{try{await api('/auth/logout',{method:'POST',body:'{}'});}finally{showAuth('login');}};
+  $$('[data-workspace]').forEach(button=>button.onclick=()=>openWorkspace(button.dataset.workspace));
+  $('#launchLogout').onclick=logout;
+  if($('#launchAccess'))$('#launchAccess').onclick=renderAccessAdmin;
 }
 
-async function renderDashboard(){const d=await api('/dashboard');const inv=d.inventory||{};const mc=inv.MC||{total:0,statuses:{}};const bat=inv.BAT||{total:0,statuses:{}};const bss=inv.BSS||{total:0,statuses:{}};const k=d.kpis;
-  content.innerHTML=`<div class="kpi-grid compact-kpis">
-    ${kpi('Motorcycles',mc.total,`Leased ${mc.statuses.LEASED||0} · Sold ${mc.statuses.SOLD||0} · Available ${(mc.statuses.AVAILABLE||0)+(mc.statuses.IN_STOCK||0)}`,'inventory','MC')}
-    ${kpi('Batteries',bat.total,`Assigned ${(bat.statuses.ASSIGNED_TO_STATION||0)+(bat.statuses.LEASED||0)} · Available ${(bat.statuses.AVAILABLE||0)+(bat.statuses.IN_STOCK||0)}`,'inventory','BAT')}
-    ${kpi('Swapping Stations',bss.total,`Active ${bss.statuses.ASSIGNED_TO_STATION||0} · Available ${(bss.statuses.AVAILABLE||0)+(bss.statuses.IN_STOCK||0)}`,'inventory','BSS')}
-    ${kpi('Available Assets',k.availableAssets,'Canonical and cleared','metric','available-assets')}
-    ${kpi('Open Shipments',(d.shipments||[]).filter(x=>!['RECEIVED','CLOSED','CANCELLED'].includes(x.status)).reduce((a,x)=>a+x.qty,0),'','module','shipments')}
-    ${kpi('Open Requisitions',k.openRequisitions,'','metric','requisitions')}
-    ${kpi('Pending Deliveries',k.pendingDeliveries,'','metric','deliveries')}
-    ${kpi('Unreconciled Returns',k.unreconciledReturns,'','metric','unreconciled')}
+function renderSidebar(){
+  const module=state.module;
+  const items=[
+    ['center','Role Center','▦'],
+    ['records','Transactions','☷'],
+    ['reports','Reports','▥'],
+    ['setup','Setup','⚙'],
+  ];
+  $('#nav').innerHTML=`<button class="nav-home" id="moduleHome">← Enterprise Modules</button>
+    <div class="nav-group">${esc(module.groupTitle)}</div>
+    ${items.map(([section,label,icon])=>`<button class="nav-item ${state.section===section?'active':''}" data-section="${section}"><span class="nav-icon">${icon}</span>${label}</button>`).join('')}
+    ${state.session.user.role==='ADMIN'?'<div class="nav-group">System</div><button class="nav-item" id="sidebarAccess"><span class="nav-icon">♙</span>User Access</button>':''}`;
+  $('#moduleHome').onclick=renderLaunchpad;
+  $$('[data-section]').forEach(button=>button.onclick=()=>openSection(button.dataset.section));
+  if($('#sidebarAccess'))$('#sidebarAccess').onclick=renderAccessAdmin;
+}
+function setHeader(title,subtitle=''){
+  $('#pageTitle').textContent=title;
+  $('#pageSubtitle').textContent=subtitle;
+}
+async function openWorkspace(code){
+  const module=moduleByCode(code);
+  if(!module||!canWorkspace(code))return toast('This module is not assigned to your account.','error');
+  state.module=module;
+  state.section='center';
+  document.body.classList.remove('launchpad-view');
+  setHeader(module.label,module.groupTitle);
+  renderSidebar();
+  await renderRoleCenter();
+}
+async function openSection(section){
+  if(!state.module)return renderLaunchpad();
+  state.section=section;
+  renderSidebar();
+  if(section==='center')return renderRoleCenter();
+  if(section==='records')return renderRecords();
+  if(section==='reports')return renderEmptyWorkspace('Reports');
+  if(section==='setup')return renderEmptyWorkspace('Setup');
+}
+function kpi(label,value){
+  return `<article class="workspace-kpi"><span>${esc(label)}</span><strong>${esc(value)}</strong></article>`;
+}
+function recordsTable(rows){
+  if(!rows?.length)return'<div class="workspace-empty"><b>No records</b></div>';
+  const lease=state.module?.code==='sd-lease-contract-management';
+  return `<div class="record-table-wrap"><table class="record-table"><thead><tr><th>Reference</th><th>Date</th><th>Type</th>${lease?'<th>Channel</th>':''}<th>Description</th><th>Owner</th><th class="num">Amount</th><th>Status</th><th>Updated</th></tr></thead><tbody>
+    ${rows.map(row=>`<tr data-record-id="${row.id}"><td><b>${esc(row.record_no)}</b></td><td>${date(row.transaction_date)}</td><td>${esc(row.record_type)}</td>${lease?`<td>${esc(row.business_channel||'—')}</td>`:''}<td>${esc(row.description||'—')}</td><td>${esc(row.owner_email||'—')}</td><td class="num">${money(row.amount)}</td><td>${statusBadge(row.status)}</td><td>${date(row.updated_at)}</td></tr>`).join('')}
+  </tbody></table></div>`;
+}
+async function renderRoleCenter(){
+  content.innerHTML='<div class="workspace-loading">Loading workspace…</div>';
+  try{
+    const data=await api(`/workspace/modules/${state.module.code}/summary`);
+    const lease=state.module.code==='sd-lease-contract-management';
+    const kpis=lease
+      ? `${kpi('Lease Contracts',data.counts.total)}${kpi('B2B',data.counts.b2b)}${kpi('B2C',data.counts.b2c)}${kpi('B2B2C',data.counts.b2b2c)}`
+      : `${kpi('Total Records',data.counts.total)}${kpi('Drafts',data.counts.drafts)}${kpi('Pending Approval',data.counts.pending)}${kpi('Completed',data.counts.completed)}`;
+    content.innerHTML=`<div class="workspace-commandbar">
+      <button class="command primary" id="newRecord" ${can(state.module.permission,'CREATE')?'':'disabled'}>New Record</button>
+      <button class="command" data-go="records">Transactions</button>
+      <button class="command" data-go="reports">Reports</button>
+      <span class="command-spacer"></span><span class="workspace-mode">MODULE FOUNDATION</span>
+    </div>
+    <div class="workspace-kpis">${kpis}</div>
+    <div class="workspace-grid">
+      <section class="workspace-card wide"><header><h2>Recent Records</h2><button data-go="records">View All</button></header>${recordsTable(data.recent)}</section>
+      <section class="workspace-card"><header><h2>My Work</h2></header><div class="workspace-empty"><b>No assigned work</b></div></section>
+      <section class="workspace-card"><header><h2>Alerts</h2></header><div class="workspace-empty"><b>No alerts</b></div></section>
+    </div>`;
+    $('#newRecord').onclick=()=>renderRecordForm();
+    $$('[data-go]').forEach(button=>button.onclick=()=>openSection(button.dataset.go));
+    $$('[data-record-id]').forEach(row=>row.onclick=()=>openRecord(row.dataset.recordId));
+  }catch(error){showWorkspaceError(error);}
+}
+async function renderRecords(){
+  const lease=state.module.code==='sd-lease-contract-management';
+  content.innerHTML=`<div class="workspace-commandbar">
+    <button class="command primary" id="newRecord" ${can(state.module.permission,'CREATE')?'':'disabled'}>New Record</button>
+    <select id="savedView"><option>All Records</option><option>My Records</option><option>Drafts</option><option>Pending Approval</option></select>
+    <input id="recordSearch" placeholder="Search records">
+    <select id="recordStatus"><option value="">All Statuses</option><option>DRAFT</option><option>FOR_APPROVAL</option><option>APPROVED</option><option>POSTED</option><option>CLOSED</option></select>
+    ${lease?'<select id="recordChannel"><option value="">All Channels</option><option>B2B</option><option>B2C</option><option>B2B2C</option></select>':''}
+    <button class="command" id="runSearch">Search</button>
+  </div><section class="workspace-card"><header><h2>Transactions</h2><span id="recordCount"></span></header><div id="recordsHost"><div class="workspace-loading">Loading records…</div></div></section>`;
+  $('#newRecord').onclick=()=>renderRecordForm();
+  const load=async()=>{
+    try{
+      const query=new URLSearchParams({q:$('#recordSearch').value,status:$('#recordStatus').value,channel:$('#recordChannel')?.value||''});
+      const data=await api(`/workspace/modules/${state.module.code}/records?${query}`);
+      $('#recordCount').textContent=`${data.rows.length} record${data.rows.length===1?'':'s'}`;
+      $('#recordsHost').innerHTML=recordsTable(data.rows);
+      $$('[data-record-id]').forEach(row=>row.onclick=()=>openRecord(row.dataset.recordId));
+    }catch(error){showWorkspaceError(error,'#recordsHost');}
+  };
+  $('#runSearch').onclick=load;
+  $('#recordSearch').onkeydown=event=>{if(event.key==='Enter')load();};
+  await load();
+}
+async function openRecord(id){
+  try{
+    const data=await api(`/workspace/modules/${state.module.code}/records/${id}`);
+    renderRecordForm(data.record);
+  }catch(error){showWorkspaceError(error);}
+}
+function recordField(label,name,type='text',value='',extra=''){
+  return `<label class="record-field"><span>${esc(label)}</span><input name="${name}" type="${type}" value="${esc(value)}" ${extra}></label>`;
+}
+function renderRecordForm(record=null){
+  const editing=!!record;
+  const allowed=can(state.module.permission,editing?'EDIT':'CREATE');
+  const lease=state.module.code==='sd-lease-contract-management';
+  const leaseFields=lease?`
+        <label class="record-field"><span>Business Channel</span><select name="businessChannel" required><option value="">Select…</option>${['B2B','B2C','B2B2C'].map(value=>`<option value="${value}" ${record?.payload?.businessChannel===value?'selected':''}>${value}</option>`).join('')}</select></label>
+        ${recordField('Contract End Date','contractEndDate','date',record?.payload?.contractEndDate||'')}
+        <label class="record-field"><span>Billing Frequency</span><select name="billingFrequency"><option value="">Select…</option>${['MONTHLY','QUARTERLY','ANNUAL'].map(value=>`<option value="${value}" ${record?.payload?.billingFrequency===value?'selected':''}>${value}</option>`).join('')}</select></label>
+        ${recordField('Units','unitCount','number',record?.payload?.unitCount||0,'min="0" step="1"')}
+  `:'';
+  content.innerHTML=`<div class="record-actionbar">
+    <button class="command primary" id="saveRecord" ${allowed?'':'disabled'}>Save Draft</button>
+    <button class="command" id="submitRecord" ${allowed?'':'disabled'}>Submit for Approval</button>
+    <button class="command" id="cancelRecord">Cancel</button>
+    <span class="command-spacer"></span>${editing?statusBadge(record.status):statusBadge('DRAFT')}
   </div>
-  <div class="panel-grid">${panel('Shipment status',shipmentStatusSummary(d.shipments||[]))}${panel('Recent activity',`<div class="list-stack">${(d.recentActivity||[]).map(x=>`<div class="activity"><b>${esc(x.action)} · ${esc(x.module)}</b><small>${esc(x.record_no||'')} · ${esc(x.user_email||'')} · ${date(x.event_at)}</small></div>`).join('')||'<div class="empty compact-empty">No activity yet.</div>'}</div>`)}</div>`;
-  document.querySelectorAll('.kpi-card').forEach(x=>x.onclick=async()=>{const t=x.dataset.type,v=x.dataset.value;if(t==='module')return openModule(v);if(t==='inventory')return openInventoryFiltered(v);const data=await api('/dashboard/detail/'+v);modal(x.dataset.label,table(data.rows,autoCols(data.rows)));});
+  <form id="recordForm" class="record-page">
+    <header><div><small>${esc(state.module.groupTitle)}</small><h2>${editing?esc(record.record_no):'New Record'}</h2></div><div class="record-number">${editing?esc(record.record_no):'AUTO NUMBER'}</div></header>
+    <section class="record-body">
+      <div class="record-fields">
+        ${recordField('Record Type','recordType','text',record?.record_type||state.module.label,'required')}
+        ${recordField('Transaction Date','transactionDate','date',record?.transaction_date||new Date().toISOString().slice(0,10),'required')}
+        ${recordField('Entity','entityName','text',record?.entity_name||'')}
+        ${recordField('Department','department','text',record?.department||state.session.user.department||'')}
+        ${recordField('Owner','ownerEmail','email',record?.owner_email||state.session.user.email,'required')}
+        ${recordField(lease?'Contract Value':'Amount','amount','number',record?.amount||0,'step="0.01"')}
+        ${leaseFields}
+        <label class="record-field full"><span>Description</span><textarea name="description">${esc(record?.description||'')}</textarea></label>
+      </div>
+    </section>
+    <div class="record-tabs"><button type="button" class="active">Lines</button><button type="button">Related Records</button><button type="button">System Information</button></div>
+    <section class="record-sublist"><div class="workspace-empty"><b>No lines</b></div></section>
+  </form>`;
+  $('#cancelRecord').onclick=()=>openSection('records');
+  const save=async status=>{
+    const body=formDataObject($('#recordForm'));
+    body.status=status;
+    try{
+      const path=`/workspace/modules/${state.module.code}/records${editing?`/${record.id}`:''}`;
+      const result=await api(path,{method:editing?'PATCH':'POST',body:JSON.stringify(body)});
+      toast(status==='DRAFT'?'Draft saved':'Record submitted');
+      await openRecord(result.record.id);
+    }catch(error){toast(error.message,'error');}
+  };
+  $('#saveRecord').onclick=()=>save('DRAFT');
+  $('#submitRecord').onclick=()=>save('FOR_APPROVAL');
+}
+function renderEmptyWorkspace(title){
+  content.innerHTML=`<div class="workspace-commandbar"><button class="command" data-go="center">Role Center</button><span class="command-spacer"></span><span class="workspace-mode">MODULE FOUNDATION</span></div>
+    <section class="workspace-card"><header><h2>${esc(title)}</h2></header><div class="workspace-empty"><b>Not configured</b></div></section>`;
+  $$('[data-go]').forEach(button=>button.onclick=()=>openSection(button.dataset.go));
+}
+function showWorkspaceError(error,selector='#content'){
+  const host=$(selector);
+  if(host)host.innerHTML=`<div class="workspace-error"><b>Unable to load</b><span>${esc(error.message)}</span></div>`;
+  toast(error.message,'error');
 }
 
-function kpi(label,value,sub,type,val){return `<article class="kpi-card" data-label="${esc(label)}" data-type="${type}" data-value="${esc(val)}"><div class="kpi-label">${esc(label)}</div><div class="kpi-value">${fmt(value)}</div><div class="kpi-sub"><span>${esc(sub)}</span></div></article>`;}
-function shipmentStatusSummary(rows){if(!rows?.length)return'<div class="empty compact-empty">No shipment records found.</div>';return `<div class="shipment-status-summary"><div class="shipment-status-row shipment-status-head"><span>Status</span><span>Shipments</span></div>${rows.map(row=>`<div class="shipment-status-row"><span>${badge(row.status)}</span><strong>${quantity(row.qty)}</strong></div>`).join('')}</div>`;}
-function autoCols(rows){const first=rows?.[0]||{};return Object.keys(first).slice(0,9).map(k=>({key:k,label:k.replaceAll('_',' ').replace(/\b\w/g,x=>x.toUpperCase()),render:(v)=>/status|reconciliation|acceptance/.test(k)?badge(v):fmt(v)}));}
-
-async function renderAtlas(){content.innerHTML=`<div class="enterprise-toolbar"><button class="tool primary" form="atlasForm">Preview</button><button class="tool" id="atlasHistory">History</button><span class="toolbar-spacer"></span><button class="tool" onclick="openModule('shipments')">Shipment Register</button></div>${panel('ATLAS Supplier Manifest',`<form id="atlasForm"><div class="file-drop compact-drop"><label><strong>Select ATLAS Excel file</strong><input type="file" name="file" accept=".xlsx,.xls" required></label></div></form><div id="atlasResult"></div>`)}`;
-  $('#atlasForm').onsubmit=async e=>{e.preventDefault();const fd=new FormData(e.currentTarget);const result=$('#atlasResult');result.innerHTML='<div class="empty compact-empty">Validating manifest…</div>';try{const d=await api('/atlas/preview',{method:'POST',body:fd});result.innerHTML=`<div class="summary-strip">${summaryCell('Rows',d.summary.total)}${summaryCell('Valid',d.summary.valid)}${summaryCell('Exceptions',d.summary.exceptions)}${summaryCell('Shipment batches',d.summary.batches)}</div>${panel('Manifest Preview',table(d.sampleRows,[{key:'sourceSheet',label:'Class'},{key:'batchCode',label:'Shipment / Batch'},{key:'serialNo',label:'Expected Serial'},{key:'model',label:'Model'},{key:'color',label:'Color'},{key:'validationStatus',label:'Validation',render:v=>badge(v)}]))}<div class="form-actions"><button class="button" id="commitAtlas">Create Expected Shipments</button></div>`;$('#commitAtlas').onclick=async()=>{if(!confirm('Create expected shipments from this ATLAS manifest?'))return;const posted=await api(`/atlas/${d.importId}/commit`,{method:'POST',body:'{}'});toast(`${posted.shipments.length} expected shipment(s) created`);openModule('shipments');};}catch(err){result.innerHTML=`<div class="empty compact-empty">${esc(err.message)}</div>`;toast(err.message,'error');}};
+async function renderAccessAdmin(){
+  document.body.classList.remove('launchpad-view');
+  state.module=null;
+  state.section='admin';
+  setHeader('User Access','System Administration');
+  $('#nav').innerHTML=`<button class="nav-home" id="moduleHome">← Enterprise Modules</button><div class="nav-group">System</div><button class="nav-item active"><span class="nav-icon">♙</span>User Access</button>`;
+  $('#moduleHome').onclick=renderLaunchpad;
+  content.innerHTML='<div class="workspace-loading">Loading user access…</div>';
+  try{
+    const data=await api('/admin/users');
+    content.innerHTML=`<div class="workspace-commandbar"><button class="command primary" id="newUser">New User</button><span class="command-spacer"></span><span class="workspace-mode">ACCESS CONTROL</span></div>
+      <section class="workspace-card"><header><h2>Authorized Users</h2><span>${data.users.length} users</span></header>
+      <div class="record-table-wrap"><table class="record-table"><thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Department</th><th>Modules</th><th>Status</th></tr></thead><tbody>
+      ${data.users.map((user,index)=>`<tr data-user="${index}"><td><b>${esc(user.email)}</b></td><td>${esc(user.display_name)}</td><td>${esc(user.role_code)}</td><td>${esc(user.department||'—')}</td><td>${user.allowed_workspace_modules?.length||0}</td><td>${statusBadge(user.active?'ACTIVE':'INACTIVE')}</td></tr>`).join('')}
+      </tbody></table></div></section>`;
+    $('#newUser').onclick=()=>openUserForm(data);
+    $$('[data-user]').forEach(row=>row.onclick=()=>openUserForm(data,data.users[Number(row.dataset.user)]));
+  }catch(error){showWorkspaceError(error);}
 }
-function summaryCell(label,value){const display=typeof value==='number'?quantity(value):esc(value);return `<div><small>${esc(label)}</small><b>${display}</b></div>`;}
-
-async function renderProcurement(){const d=await api('/procurement/purchase-orders');content.innerHTML=`<div class="page-actions"><button class="button" id="newPO">New purchase order</button><button class="button secondary" id="landedCost">Landed cost</button></div>${panel('Purchase orders',table(d.rows,[{key:'purchase_order_no',label:'PO No.'},{key:'vendor_name',label:'Vendor'},{key:'order_date',label:'Order Date',render:date},{key:'total_amount',label:'Total',render:money},{key:'status',label:'Status',render:badge},{key:'line_count',label:'Lines'}],'po'))}`;$('#newPO').onclick=openPOForm;$('#landedCost').onclick=renderLandedCost;bindRows('po',d.rows,showPO);}
-async function openPOForm(){await ensureLookups();modal('New purchase order',`<form id="poForm"><div class="form-grid">${formField('Vendor name','vendorName')}${formField('Order date','orderDate','date')}${formField('Expected delivery','expectedDeliveryDate','date')}${formField('Currency','currency','select','PHP',['PHP','USD'])}${formField('Exchange rate','exchangeRate','number','1','', 'step="0.0001"')}${formField('Incoterm','incoterm')}${formField('Payment terms','paymentTerms')}${formField('Lines — one per row: description | category | qty | unit cost','linesText','textarea','','','placeholder="D400 Blue | MC | 10 | 0"')}</div><div class="form-actions"><button class="button">Save draft PO</button></div></form>`);$('#poForm').onsubmit=async e=>{e.preventDefault();const b=formDataObject(e.currentTarget);b.lines=b.linesText.split('\n').filter(Boolean).map(x=>{const p=x.split('|').map(y=>y.trim());return{description:p[0],category:p[1],qty:Number(p[2]),unitCost:Number(p[3]),serialized:['MC','BAT','BSS'].includes((p[1]||'').toUpperCase())};});delete b.linesText;await api('/procurement/purchase-orders',{method:'POST',body:JSON.stringify(b)});closeModal();toast('Purchase order created');renderProcurement();};}
-async function showPO(row){const d=await api('/procurement/purchase-orders/'+row.id);modal(d.header.purchase_order_no,detailGrid(d.header,[['vendor_name','Vendor'],['order_date','Order date',date],['expected_delivery_date','Expected delivery',date],['currency','Currency'],['total_amount','Total',money],['status','Status',badge]])+panel('Lines',table(d.lines,[{key:'line_no',label:'#'},{key:'item_code',label:'Item code'},{key:'description',label:'Description'},{key:'ordered_qty',label:'Ordered'},{key:'received_qty',label:'Received'},{key:'unit_cost',label:'Unit cost',render:money},{key:'status',label:'Status',render:badge}]))+(d.header.status==='DRAFT'&&can('PROCUREMENT','APPROVE')?'<div class="form-actions"><button class="button" id="approvePO">Approve</button></div>':''));if($('#approvePO'))$('#approvePO').onclick=async()=>{await api(`/procurement/purchase-orders/${row.id}/approve`,{method:'POST',body:'{}'});toast('PO approved');closeModal();renderProcurement();};}
-async function renderLandedCost(){const d=await api('/procurement/landed-cost');modal('Landed cost records',table(d.rows,[{key:'landed_cost_no',label:'No.'},{key:'shipment_no',label:'Shipment'},{key:'purchase_order_no',label:'PO'},{key:'allocation_method',label:'Method'},{key:'total_cost',label:'Total',render:money},{key:'status',label:'Status',render:badge}]));}
-
-async function renderShipments(){const d=await api('/shipments?size=300');const cols=[{key:'shipment_no',label:'Shipment Reference'},{key:'batch_code',label:'ATLAS / Batch'},{key:'supplier_name',label:'Supplier'},{key:'eta',label:'ETA',render:date},{key:'expected_qty',label:'Expected Qty',align:'right',render:quantity},{key:'received_qty',label:'Received Qty',align:'right',render:quantity},{key:'substituted_serials',label:'Substituted',align:'right',render:quantity},{key:'open_variances',label:'Open Variances',align:'right',render:quantity},{key:'status',label:'Status',render:badge}];content.innerHTML=`<div class="enterprise-toolbar"><button class="tool primary" onclick="openModule('atlas')">ATLAS Upload</button><button class="tool" id="receiveSelected">Receive</button><span class="toolbar-spacer"></span><input class="toolbar-search" id="shipSearch" placeholder="Shipment, batch, supplier"></div>${panel('Inbound Shipment Register',table(d.rows,cols,'shipment'))}`;bindRows('shipment',d.rows,showShipment);$('#shipSearch').onchange=async e=>{const x=await api('/shipments?q='+encodeURIComponent(e.target.value)+'&size=300');document.querySelector('.panel-body').innerHTML=table(x.rows,cols,'shipment');bindRows('shipment',x.rows,showShipment);};$('#receiveSelected').onclick=()=>openModule('receiving');}
-async function showShipment(row){const d=await api('/shipments/'+row.id);modal(d.header.shipment_no,detailGrid(d.header,[['batch_code','ATLAS / Batch'],['supplier_name','Supplier'],['purchase_order_ref','Purchase Order'],['eta','ETA',date],['status','Status',badge]])+panel('Expected Shipment Lines',table(d.lines,[{key:'line_no',label:'Line',align:'right'},{key:'item_code',label:'Item Code'},{key:'description',label:'Description'},{key:'category',label:'Class'},{key:'expected_qty',label:'Expected',align:'right',render:quantity},{key:'received_qty',label:'Received',align:'right',render:quantity},{key:'status',label:'Status',render:badge}]))+panel('Expected Serials',table(d.expectedAssets,[{key:'item_code',label:'Item'},{key:'serial_no',label:'Expected Serial'},{key:'actual_serial_no',label:'Actual Serial'},{key:'expected_status',label:'Expected Status',render:badge},{key:'match_status',label:'Match Result',render:v=>v?badge(v):'—'}]))+`<div class="form-actions"><button class="button" id="receiveThis">Open Receiving Workbench</button></div>`);$('#receiveThis').onclick=()=>{closeModal();state.receiveShipment=row.id;openModule('receiving');};}
-
-function receiveRowTemplate(workbench,row={}){const openExpected=(workbench?.expectedAssets||[]).filter(x=>!['RECEIVED','SUBSTITUTED','CANCELLED','SHORT_CLOSED'].includes(x.expected_status));const lines=workbench?.lines||[];return {expectedAssetId:row.expectedAssetId||'',shipmentLineId:row.shipmentLineId||'',actualSerialNo:row.actualSerialNo||'',conditionCode:row.conditionCode||'GOOD',sourceMethod:row.sourceMethod||'MANUAL',acceptance:row.acceptance||'',message:row.message||'',expectedSerialNo:row.expectedSerialNo||'',expectedOptions:openExpected,lineOptions:lines};}
-function receivingGrid(rows){return `<div class="table-wrap"><table class="data-table editable-grid"><thead><tr><th>Expected Serial</th><th>Shipment Item</th><th>Actual Serial</th><th>Condition</th><th>Result</th><th></th></tr></thead><tbody>${rows.map((r,i)=>`<tr data-receive-row="${i}"><td><select class="grid-input expected-select"><option value="">Auto / not listed</option>${r.expectedOptions.map(x=>`<option value="${x.id}" ${String(x.id)===String(r.expectedAssetId)?'selected':''}>${esc(x.serial_no)} · ${esc(x.item_code)}</option>`).join('')}</select></td><td><select class="grid-input line-select"><option value="">Select line</option>${r.lineOptions.map(x=>`<option value="${x.id}" ${String(x.id)===String(r.shipmentLineId)?'selected':''}>${esc(x.item_code)} · ${esc(x.description)}</option>`).join('')}</select></td><td><div class="serial-input"><input class="grid-input actual-serial" value="${esc(r.actualSerialNo)}"><button class="icon-tool scan-row" type="button" title="Scan QR">⌁</button></div></td><td><select class="grid-input condition">${['GOOD','DAMAGED','FOR_INSPECTION'].map(x=>`<option ${x===r.conditionCode?'selected':''}>${x}</option>`).join('')}</select></td><td>${r.acceptance?badge(r.acceptance):'—'}<small class="row-message">${esc(r.message||'')}</small></td><td><button type="button" class="icon-tool remove-row">×</button></td></tr>`).join('')}</tbody></table></div>`;}
-async function renderReceiving(){const open=await api('/receiving/open-shipments');const selected=state.receiveShipment||open.rows[0]?.shipment_id||'';content.innerHTML=`<div class="enterprise-toolbar"><button class="tool primary" id="validateReceipt">Validate</button><button class="tool" id="postReceipt">Post Receipt</button><button class="tool" id="addReceiptRow">Add Actual Line</button><span class="toolbar-spacer"></span><button class="tool" onclick="openModule('shipments')">Shipment Register</button></div>${panel('Receiving Header',`<div class="form-grid receiving-header">${formField('Shipment Reference','shipmentId','select',selected,open.rows.map(x=>({value:x.shipment_id,label:`${x.shipment_no} · ${x.batch_code||''} · ${x.supplier_name||''}`})))}${formField('Warehouse / Location','locationName','text','E88 Asgard Warehouse')}${formField('Receiving Date','receivedAt','datetime-local')}${formField('Document Reference','documentRef')}</div>`)}<div id="receivingWorkbench"></div><input id="rowQrFile" type="file" accept="image/*" capture="environment" class="hidden">`;
-  const shipmentSelect=document.querySelector('[name=shipmentId]');shipmentSelect.onchange=()=>loadReceivingShipment(shipmentSelect.value);$('#addReceiptRow').onclick=()=>{if(!state.receiveWorkbench)return;state.receiveRows.push(receiveRowTemplate(state.receiveWorkbench));drawReceivingRows();};$('#validateReceipt').onclick=validateReceiptRows;$('#postReceipt').onclick=postReceiptRows;if(selected)await loadReceivingShipment(selected);}
-async function loadReceivingShipment(id){if(!id){$('#receivingWorkbench').innerHTML='';return;}state.receiveShipment=Number(id);state.receiveWorkbench=await api('/receiving/shipment/'+id);state.receiveRows=[];const w=state.receiveWorkbench;$('#receivingWorkbench').innerHTML=`<div class="summary-strip">${summaryCell('Expected',w.lines.reduce((a,x)=>a+Number(x.expected_qty||0),0))}${summaryCell('Previously Received',w.lines.reduce((a,x)=>a+Number(x.received_qty||0),0))}${summaryCell('Remaining',w.lines.reduce((a,x)=>a+Number(x.remaining_qty||0),0))}${summaryCell('Open Serials',w.expectedAssets.filter(x=>!['RECEIVED','SUBSTITUTED'].includes(x.expected_status)).length)}</div>${panel('Expected Shipment',table(w.lines,[{key:'line_no',label:'Line',align:'right'},{key:'item_code',label:'Item Code'},{key:'description',label:'Description'},{key:'expected_qty',label:'Expected',align:'right',render:quantity},{key:'received_qty',label:'Received',align:'right',render:quantity},{key:'remaining_qty',label:'Remaining',align:'right',render:quantity},{key:'status',label:'Status',render:badge}]))}${panel('Actual Receipt Entry','<div id="actualReceiptGrid"></div>')}`;state.receiveRows.push(receiveRowTemplate(w));drawReceivingRows();}
-function syncReceiveRows(){document.querySelectorAll('[data-receive-row]').forEach(tr=>{const i=Number(tr.dataset.receiveRow),r=state.receiveRows[i];r.expectedAssetId=tr.querySelector('.expected-select').value;r.shipmentLineId=tr.querySelector('.line-select').value;r.actualSerialNo=tr.querySelector('.actual-serial').value.trim();r.conditionCode=tr.querySelector('.condition').value;});}
-function drawReceivingRows(){const host=$('#actualReceiptGrid');if(!host)return;host.innerHTML=receivingGrid(state.receiveRows);host.querySelectorAll('[data-receive-row]').forEach(tr=>{const i=Number(tr.dataset.receiveRow);tr.querySelector('.remove-row').onclick=()=>{syncReceiveRows();state.receiveRows.splice(i,1);if(!state.receiveRows.length)state.receiveRows.push(receiveRowTemplate(state.receiveWorkbench));drawReceivingRows();};tr.querySelector('.scan-row').onclick=()=>{state.activeReceiveRow=i;$('#rowQrFile').click();};});$('#rowQrFile').onchange=e=>scanQrFile(e.target.files[0],serial=>{syncReceiveRows();state.receiveRows[state.activeReceiveRow].actualSerialNo=serial;drawReceivingRows();e.target.value='';});}
-async function validateReceiptRows(){if(!state.receiveWorkbench)return toast('Select a shipment.','error');syncReceiveRows();const lines=state.receiveRows.filter(x=>x.actualSerialNo);if(!lines.length)return toast('Add an actual serial.','error');const d=await api('/receiving/validate',{method:'POST',body:JSON.stringify({shipmentId:state.receiveShipment,lines})});state.receiveRows=d.results.map(x=>receiveRowTemplate(state.receiveWorkbench,x));drawReceivingRows();toast(`${d.summary.matched} matched; ${d.summary.exceptions} exception(s)`);}
-async function postReceiptRows(){if(!state.receiveWorkbench)return toast('Select a shipment.','error');await validateReceiptRows();syncReceiveRows();const lines=state.receiveRows.filter(x=>x.actualSerialNo);if(!lines.length)return;const payload={shipmentId:state.receiveShipment,locationName:document.querySelector('[name=locationName]').value,receivedAt:document.querySelector('[name=receivedAt]').value,documentRef:document.querySelector('[name=documentRef]').value,lines};if(!confirm(`Post ${lines.length} actual receiving line(s)? Variances will be quarantined for reconciliation.`))return;const d=await api('/receiving',{method:'POST',body:JSON.stringify(payload)});toast(`Receipt ${d.receiptNo} posted`);modal(d.receiptNo,`<div class="summary-strip">${summaryCell('Received',d.summary.total)}${summaryCell('Matched',d.summary.matched)}${summaryCell('Substituted',d.summary.substituted)}${summaryCell('Exceptions',d.summary.exceptions)}</div>${table(d.results,[{key:'expectedSerialNo',label:'Expected Serial'},{key:'actualSerialNo',label:'Actual Serial'},{key:'acceptance',label:'Result',render:badge},{key:'message',label:'Variance'}])}`);state.receiveRows=[];await loadReceivingShipment(state.receiveShipment);}
-
-async function renderInventory(filters={}){const qs=new URLSearchParams({size:'250',...filters});const d=await api('/inventory?'+qs);content.innerHTML=`<div class="page-actions"><input id="invSearch" class="search" placeholder="Serial, item, motor or holder"><select id="invCategory" class="select"><option value="">All classes</option>${['MC','BAT','BSS','SP','CHG','OTH'].map(x=>`<option ${filters.category===x?'selected':''}>${x}</option>`).join('')}</select><select id="invStatus" class="select"><option value="">All statuses</option>${['AVAILABLE','LEASED','SOLD','ASSIGNED_TO_STATION','OUT_FOR_DELIVERY','QUARANTINE','DEMO','PILOT_TEST'].map(x=>`<option ${filters.status===x?'selected':''}>${x}</option>`).join('')}</select><button class="button secondary" id="applyInv">Apply</button><span class="spacer"></span><button class="button" id="scanGlobal">Scan QR</button></div>${panel(`Serial inventory · ${d.total} records`,table(d.rows,[{key:'serial_no',label:'Serial'},{key:'item_code',label:'Item code'},{key:'item_name',label:'Item'},{key:'category',label:'Class'},{key:'current_status',label:'Status',render:badge},{key:'current_location_code',label:'Location'},{key:'current_holder_name',label:'Holder'},{key:'reconciliation_status',label:'Reconciliation',render:badge}],'asset'))}`;bindRows('asset',d.rows,showAsset);$('#applyInv').onclick=()=>renderInventory({q:$('#invSearch').value,category:$('#invCategory').value,status:$('#invStatus').value});$('#scanGlobal').onclick=openQrModal;}
-async function openInventoryFiltered(category){await openModule('inventory');renderInventory({category});}
-async function showAsset(row){const d=await api('/inventory/'+encodeURIComponent(row.serial_no)+'/history');modal(row.serial_no,detailGrid(d.asset,[['item_code','Item code'],['item_name','Item'],['category','Class'],['current_status','Status',badge],['current_location_code','Location'],['current_holder_name','Holder'],['condition_code','Condition'],['reconciliation_status','Reconciliation',badge],['unit_cost','Current cost',money]])+panel('Movement history',table(d.movements,[{key:'movement_date',label:'Date',render:date},{key:'movement_no',label:'Movement'},{key:'movement_type',label:'Type'},{key:'from_location_code',label:'From'},{key:'to_location_code',label:'To'},{key:'from_status',label:'From status',render:badge},{key:'to_status',label:'To status',render:badge},{key:'source_doc_no',label:'Source'}])));}
-async function renderMovement(){content.innerHTML=panel('Post controlled movement',`<form id="moveForm"><div class="form-grid">${formField('Serial number','serialNo')}${formField('Movement type','movementType','select','TRANSFER',['TRANSFER','EMPLOYEE_CUSTODY','PILOT_TEST','DEMO','REPAIR','RETURN_TO_STOCK','LOCATION_ASSIGNMENT'])}${formField('Destination / location','toLocationName')}${formField('Target status','toStatus','select','AVAILABLE',['AVAILABLE','ASSIGNED','EMPLOYEE_CUSTODY','PILOT_TEST','DEMO','UNDER_REPAIR','QUARANTINE'])}${formField('Holder type','holderType','select','',['CUSTOMER','EMPLOYEE','SITE_PARTNER','STATION_PROJECT'])}${formField('Holder name','holderName')}${formField('Reason','reasonCode')}${formField('Notes','notes','textarea')}</div><div class="form-actions"><button class="button">Post movement</button></div></form>`);$('#moveForm').onsubmit=async e=>{e.preventDefault();const d=await api('/inventory/move',{method:'POST',body:JSON.stringify(formDataObject(e.currentTarget))});toast(`Movement ${d.movement.movementNo} posted`);e.currentTarget.reset();};}
-
-async function renderReturns(){const [list,recon]=await Promise.all([api('/returns?size=200'),api('/returns/reconciliation/open')]);content.innerHTML=`<div class="page-actions"><button class="button" id="newReturn">New return</button></div><div class="panel-grid">${panel('Returns',table(list.rows,[{key:'return_no',label:'Return'},{key:'return_date',label:'Date',render:date},{key:'partner_name',label:'Customer / holder'},{key:'return_location_code',label:'Location'},{key:'line_count',label:'Lines'},{key:'status',label:'Status',render:badge}],'return'))}${panel(`Unreconciled · ${recon.rows.length}`,table(recon.rows,[{key:'case_no',label:'Case'},{key:'case_type',label:'Type',render:badge},{key:'expected_serial',label:'Expected'},{key:'actual_serial',label:'Returned'},{key:'opened_at',label:'Opened',render:date}],'recon'))}</div>`;$('#newReturn').onclick=openReturnForm;bindRows('return',list.rows,showReturn);bindRows('recon',recon.rows,showRecon);}
-async function openReturnForm(){await ensureLookups();modal('New return acceptance',`<form id="returnForm"><div class="form-grid">${formField('Customer / holder','partnerId','select','',state.lookups.customers)}${formField('Return date','returnDate','date')}${formField('Return location','returnLocationName','text','E88 Asgard Warehouse')}${formField('Reason','reasonCode')}${formField('Return lines — expected serial | actual returned serial | category','linesText','textarea','','','placeholder="EXPECTED_BATTERY | ACTUAL_BATTERY | BAT"')}${formField('Notes','notes','textarea')}</div><p class="status warn">A different returned battery is accepted but automatically placed in QUARANTINE and opened as UNRECONCILED.</p><div class="form-actions"><button class="button">Create return</button></div></form>`);$('#returnForm').onsubmit=async e=>{e.preventDefault();const b=formDataObject(e.currentTarget);b.lines=b.linesText.split('\n').filter(Boolean).map(x=>{const p=x.split('|').map(y=>y.trim());return{expectedSerial:p[0],actualSerial:p[1],itemCategory:p[2]||'BAT'};});delete b.linesText;const d=await api('/returns',{method:'POST',body:JSON.stringify(b)});toast(`Return ${d.returnNo} created`);closeModal();renderReturns();};}
-async function showReturn(row){const d=await api('/returns/'+row.id);modal(d.header.return_no,detailGrid(d.header,[['return_date','Return date',date],['partner_name','Holder'],['return_location_code','Location'],['reason_code','Reason'],['status','Status',badge]])+table(d.lines,[{key:'expected_serial',label:'Expected serial'},{key:'actual_serial',label:'Returned serial'},{key:'item_category',label:'Class'},{key:'acceptance_status',label:'Acceptance',render:badge},{key:'condition_code',label:'Condition'}])+(d.header.status!=='POSTED'?'<div class="form-actions"><button class="button" id="postReturn">Post return</button></div>':''));if($('#postReturn'))$('#postReturn').onclick=async()=>{await api(`/returns/${row.id}/post`,{method:'POST',body:'{}'});toast('Return posted');closeModal();renderReturns();};}
-async function showRecon(row){modal(row.case_no,detailGrid(row,[['case_type','Case type',badge],['expected_serial','Expected serial'],['actual_serial','Actual serial'],['related_motorcycle_serial','Motorcycle'],['current_location_code','Location'],['status','Status',badge]])+`<form id="resolveRecon"><div class="form-grid">${formField('Resolution code','resolutionCode','select','VERIFIED',['VERIFIED','SERIAL_SWAP_CONFIRMED','RETURNED_TO_OWNER','ADJUSTED'])}${formField('Resolution notes','resolutionNotes','textarea')}</div><label><input type="checkbox" name="clearActualSerial" value="1"> Release actual serial from quarantine</label><div class="form-actions"><button class="button">Resolve case</button></div></form>`);$('#resolveRecon').onsubmit=async e=>{e.preventDefault();const b=formDataObject(e.currentTarget);b.clearActualSerial=!!b.clearActualSerial;await api(`/returns/reconciliation/${row.id}/resolve`,{method:'POST',body:JSON.stringify(b)});toast('Reconciliation resolved');closeModal();renderReturns();};}
-
-async function renderRequisitions(){const d=await api('/requisitions?size=200');content.innerHTML=`<div class="page-actions"><button class="button" id="newReq">New requisition</button></div>${panel('Material and unit requisitions',table(d.rows,[{key:'requisition_no',label:'Requisition'},{key:'request_date',label:'Date',render:date},{key:'requestor_name',label:'Requestor'},{key:'department',label:'Department'},{key:'purpose',label:'Purpose'},{key:'partner_name',label:'Company / client'},{key:'required_date',label:'Required',render:date},{key:'status',label:'Status',render:badge}],'req'))}`;$('#newReq').onclick=openReqForm;bindRows('req',d.rows,showReq);}
-async function openReqForm(){modal('New requisition',`<form id="reqForm"><div class="form-grid">${formField('Requestor name','requestorName')}${formField('Department','department')}${formField('Purpose','purpose','select','',['SALE','LEASE','DEMO','PILOT TEST','INVENTORY TRANSFER','EMPLOYEE ASSIGNMENT','REPAIR','STATION DEPLOYMENT'])}${formField('Fulfillment method','fulfillmentMethod','select','Delivery',['Delivery','Pickup','Not applicable'])}${formField('Company / client','companyName')}${formField('Destination','destination')}${formField('Required date','requiredDate','date')}${formField('Lines — description | category | qty | serial required Y/N','linesText','textarea','','','placeholder="D400 Blue | MC | 1 | Y"')}${formField('Remarks','remarks','textarea')}</div><div class="form-actions"><button class="button">Submit requisition</button></div></form>`);$('#reqForm').onsubmit=async e=>{e.preventDefault();const b=formDataObject(e.currentTarget);b.lines=b.linesText.split('\n').filter(Boolean).map(x=>{const p=x.split('|').map(y=>y.trim());return{description:p[0],category:p[1],qty:Number(p[2]),serialRequired:/y|yes|true|1/i.test(p[3])};});delete b.linesText;await api('/requisitions',{method:'POST',body:JSON.stringify(b)});toast('Requisition submitted');closeModal();renderRequisitions();};}
-async function showReq(row){const d=await api('/requisitions/'+row.id);modal(d.header.requisition_no,detailGrid(d.header,[['requestor_name','Requestor'],['department','Department'],['purpose','Purpose'],['partner_name','Company / client'],['destination','Destination'],['required_date','Required date',date],['status','Status',badge]])+panel('Requested items',table(d.lines,[{key:'item_code',label:'Item code'},{key:'description',label:'Description'},{key:'qty',label:'Qty'},{key:'fulfilled_qty',label:'Fulfilled'},{key:'serialized',label:'Serialized',render:v=>v?'Yes':'No'}]))+(d.header.status==='SUBMITTED'&&can('REQUISITIONS','APPROVE')?'<div class="form-actions"><button class="button" id="approveReq">Approve</button></div>':''));if($('#approveReq'))$('#approveReq').onclick=async()=>{await api(`/requisitions/${row.id}/approve`,{method:'POST',body:'{}'});toast('Requisition approved');closeModal();renderRequisitions();};}
-
-async function renderChecklists(){const d=await api('/checklists?size=200');content.innerHTML=`<div class="page-actions"><button class="button" id="newCheck">New inspection</button></div>${panel('Pre-release inspections',table(d.rows,[{key:'checklist_no',label:'Checklist'},{key:'serial_no',label:'Motorcycle serial'},{key:'check_date',label:'Date',render:date},{key:'result',label:'Result',render:badge},{key:'defects',label:'Defects'},{key:'checked_by',label:'Checked by'}]))}`;$('#newCheck').onclick=openChecklistForm;}
-function openChecklistForm(){modal('Motorcycle pre-release inspection',`<form id="checkForm"><div class="form-grid">${formField('Motorcycle serial','serialNo')}${formField('Check date','checkDate','datetime-local')}${formField('Result','result','select','PASSED',['PASSED','FAILED','PENDING'])}${formField('Checks passed — comma separated','checks','textarea','','','placeholder="Brakes, lights, tires, motor, battery lock, charger"')}${formField('Defects / findings','defects','textarea')}</div><div class="form-actions"><button class="button">Save checklist</button></div></form>`);$('#checkForm').onsubmit=async e=>{e.preventDefault();const b=formDataObject(e.currentTarget);b.checklist=Object.fromEntries(b.checks.split(',').filter(Boolean).map(x=>[x.trim(),true]));delete b.checks;await api('/checklists',{method:'POST',body:JSON.stringify(b)});toast('Checklist saved');closeModal();renderChecklists();};}
-
-async function renderSales(){const d=await api('/sales?size=200');content.innerHTML=`<div class="page-actions"><button class="button" id="newSale">New sale / lease</button></div>${panel('Commercial orders and assignments',table(d.rows,[{key:'sales_order_no',label:'Order'},{key:'transaction_type',label:'Type',render:badge},{key:'customer_name',label:'Customer / holder'},{key:'order_date',label:'Date',render:date},{key:'gross_amount',label:'Amount',render:money},{key:'line_count',label:'Lines'},{key:'credit_status',label:'Credit',render:badge},{key:'status',label:'Status',render:badge}],'sale'))}`;$('#newSale').onclick=openSaleForm;bindRows('sale',d.rows,showSale);}
-async function openSaleForm(){await ensureLookups();modal('New commercial transaction',`<form id="saleForm"><div class="form-grid">${formField('Transaction type','transactionType','select','LEASE',['SALE','LEASE','DEMO','PILOT','EMPLOYEE_ASSIGNMENT'])}${formField('Existing customer','customerId','select','',state.lookups.customers)}${formField('New customer / holder name','customerName')}${formField('Order date','orderDate','date')}${formField('Contract start','contractStart','date')}${formField('Contract end / expected return','contractEnd','date')}${formField('Delivery address','deliveryAddress','textarea')}${formField('Lines — exact serial | unit price | role','linesText','textarea','','','placeholder="R5FB... | 0 | MOTORCYCLE\n519110... | 0 | BATTERY"')}</div><p class="status warn">Only available, clear serials can be selected. Blocked customers cannot be approved.</p><div class="form-actions"><button class="button">Save draft order</button></div></form>`);$('#saleForm').onsubmit=async e=>{e.preventDefault();const b=formDataObject(e.currentTarget);b.lines=b.linesText.split('\n').filter(Boolean).map(x=>{const p=x.split('|').map(y=>y.trim());return{serialNo:p[0],unitPrice:Number(p[1]),lineRole:p[2]};});delete b.linesText;const d=await api('/sales',{method:'POST',body:JSON.stringify(b)});toast(`Order ${d.salesOrderNo} created`);closeModal();renderSales();};}
-async function showSale(row){const d=await api('/sales/'+row.id);modal(d.header.sales_order_no,detailGrid(d.header,[['transaction_type','Transaction',badge],['customer_name','Customer'],['credit_status','Credit',badge],['order_date','Order date',date],['contract_start','Contract start',date],['contract_end','Contract end',date],['gross_amount','Amount',money],['status','Status',badge]])+panel('Assigned items',table(d.lines,[{key:'line_no',label:'#'},{key:'serial_no',label:'Serial'},{key:'item_code',label:'Item'},{key:'description',label:'Description'},{key:'line_role',label:'Role'},{key:'unit_price',label:'Price',render:money},{key:'current_status',label:'Current status',render:badge}]))+(d.header.status==='DRAFT'&&can('SALES','APPROVE')?'<div class="form-actions"><button class="button" id="approveSale">Approve and create delivery</button></div>':''));if($('#approveSale'))$('#approveSale').onclick=async()=>{const x=await api(`/sales/${row.id}/approve`,{method:'POST',body:'{}'});toast(`Approved; delivery ${x.deliveryNo} created`);closeModal();renderSales();};}
-
-async function renderDeliveries(){const d=await api('/deliveries?size=200');content.innerHTML=`${panel('Outbound deliveries',table(d.rows,[{key:'delivery_no',label:'Delivery'},{key:'sales_order_no',label:'Sales order'},{key:'requisition_no',label:'Requisition'},{key:'scheduled_date',label:'Scheduled',render:date},{key:'destination',label:'Destination'},{key:'recipient_name',label:'Recipient'},{key:'asset_count',label:'Assets'},{key:'status',label:'Status',render:badge}],'delivery'))}`;bindRows('delivery',d.rows,showDelivery);}
-async function showDelivery(row){const d=await api('/deliveries/'+row.id);modal(d.header.delivery_no,detailGrid(d.header,[['sales_order_no','Sales order'],['transaction_type','Type',badge],['scheduled_date','Scheduled',date],['destination','Destination'],['recipient_name','Recipient'],['status','Status',badge]])+panel('Assets',table(d.assets,[{key:'serial_no',label:'Serial'},{key:'item_code',label:'Item'},{key:'item_name',label:'Description'},{key:'category',label:'Class'},{key:'current_status',label:'Status',render:badge},{key:'reconciliation_status',label:'Reconciliation',render:badge}]))+`<div class="form-actions">${d.header.status==='PLANNED'?'<button class="button" id="releaseDelivery">Release</button>':''}${d.header.status==='RELEASED'?'<button class="button" id="completeDelivery">Confirm delivered</button>':''}</div>`);if($('#releaseDelivery'))$('#releaseDelivery').onclick=async()=>{await api(`/deliveries/${row.id}/release`,{method:'POST',body:JSON.stringify({releaseDate:new Date().toISOString()})});toast('Delivery released');closeModal();renderDeliveries();};if($('#completeDelivery'))$('#completeDelivery').onclick=async()=>{await api(`/deliveries/${row.id}/complete`,{method:'POST',body:JSON.stringify({deliveryDate:new Date().toISOString()})});toast('Delivery completed');closeModal();renderDeliveries();};}
-
-async function renderCustomers(){const d=await api('/masters/partners?type=CUSTOMER&size=500');content.innerHTML=`${panel('Customers and credit status',table(d.rows,[{key:'partner_code',label:'Customer code'},{key:'name',label:'Customer'},{key:'credit_status',label:'Credit status',render:badge},{key:'overdue_balance',label:'Overdue balance',render:money},{key:'hold_reason',label:'Hold reason'},{key:'active',label:'Active',render:v=>v?'Yes':'No'}],'customer'))}`;bindRows('customer',d.rows,showCustomer);}
-function showCustomer(row){modal(row.name,detailGrid(row,[['partner_code','Code'],['credit_status','Credit status',badge],['overdue_balance','Overdue balance',money],['hold_reason','Hold reason'],['email','Email'],['phone','Phone']])+`<form id="creditForm"><div class="form-grid">${formField('Credit status','creditStatus','select',row.credit_status,['CLEAR','WATCH','BLOCKED'])}${formField('Overdue balance','overdueBalance','number',row.overdue_balance||0)}${formField('Hold reason','holdReason','textarea',row.hold_reason||'')}</div><div class="form-actions"><button class="button">Update credit control</button></div></form>`);$('#creditForm').onsubmit=async e=>{e.preventDefault();await api(`/masters/partners/${row.id}/credit`,{method:'POST',body:JSON.stringify(formDataObject(e.currentTarget))});toast('Customer credit status updated');closeModal();renderCustomers();};}
-
-let stationSearchTimer;
-async function renderStations(search=''){const query=String(search||'').trim();const d=await api(`/stations?size=200&q=${encodeURIComponent(query)}`);content.innerHTML=`<div class="page-actions"><input class="search" id="stationSearch" type="search" value="${esc(query)}" placeholder="Search project, site, partner, or location">${can('STATIONS','CREATE')?'<button class="button" id="newStation">New station project</button>':''}</div>${panel('Battery swapping station lifecycle',table(d.rows,[{key:'project_no',label:'Project'},{key:'site_name',label:'Site'},{key:'partner_name',label:'Partner'},{key:'planned_location',label:'Location'},{key:'target_activation_date',label:'Target active',render:date},{key:'progress_pct',label:'Progress',render:v=>`${fmt(v)}%`},{key:'connected_asset_count',label:'Connected',align:'right'},{key:'disconnected_asset_count',label:'Issues',align:'right',render:v=>Number(v)?badge(`${v} DISCONNECTED`):fmt(v)},{key:'status',label:'Status',render:badge}],'station'))}`;if($('#newStation'))$('#newStation').onclick=openStationForm;$('#stationSearch').oninput=e=>{clearTimeout(stationSearchTimer);const value=e.target.value;stationSearchTimer=setTimeout(()=>renderStations(value),250);};bindRows('station',d.rows,showStation);}
-function openStationForm(){modal('New swapping-station project',`<form id="stationForm"><div class="form-grid">${formField('Site name','siteName')}${formField('Site partner','partnerName')}${formField('Planned location','plannedLocation')}${formField('Planned date','plannedDate','date')}${formField('Target activation','targetActivationDate','date')}${formField('Budget amount','budgetAmount','number','0')}${formField('Status','status','select','PLANNED',['PLANNED','SITE_VALIDATION','CONSTRUCTION','INSTALLATION','COMMISSIONING'])}</div><div class="form-actions"><button class="button">Create project</button></div></form>`);$('#stationForm').onsubmit=async e=>{e.preventDefault();await api('/stations',{method:'POST',body:JSON.stringify(formDataObject(e.currentTarget))});toast('Station project created');closeModal();renderStations();};}
-function stationAssetTable(rows,disconnected=false){return table(rows,[{key:'serial_no',label:'Serial'},{key:'asset_role',label:'Role'},{key:'category',label:'Class'},{key:'item_name',label:'Item'},{key:'current_status',label:'Lifecycle',render:badge},{key:'connection_status',label:'Connection',render:badge},...(disconnected?[{key:'current_holder_name',label:'Current holder'}]:[])]);}
-function filterStationAssets(rows,query){const value=String(query||'').trim().toLowerCase();if(!value)return rows;return rows.filter(row=>[row.serial_no,row.asset_role,row.category,row.item_name,row.current_status,row.connection_status,row.current_holder_name].some(field=>String(field||'').toLowerCase().includes(value)));}
-async function showStation(row){const d=await api('/stations/'+row.id);const assignForm=can('STATIONS','POST')?`<form id="stationAsset"><div class="form-grid">${formField('Assign available serial','serialNo')}${formField('Asset role','assetRole','select','',['LOCKER','BATTERY','CHARGER','COMPONENT'])}</div><div class="form-actions"><button class="button secondary">Assign asset</button>${d.header.status!=='ACTIVE'&&can('STATIONS','APPROVE')?'<button type="button" class="button" id="activateStation">Activate station</button>':''}</div></form>`:(d.header.status!=='ACTIVE'&&can('STATIONS','APPROVE')?'<div class="form-actions"><button type="button" class="button" id="activateStation">Activate station</button></div>':'');modal(d.header.project_no,detailGrid(d.header,[['site_name','Site'],['partner_name','Partner'],['planned_location','Location'],['target_activation_date','Target activation',date],['actual_activation_date','Actual activation',date],['progress_pct','Progress',v=>`${v}%`],['budget_amount','Budget',money],['actual_cost','Actual cost',money],['status','Status',badge]])+`<div class="summary-strip station-summary">${summaryCell('Connected',d.summary.connected)}${summaryCell('Maintenance',d.summary.maintenance)}${summaryCell('Disconnected',d.summary.disconnected)}${summaryCell('Total source links',d.assets.length)}</div>`+panel('Connected station inventory',`<div class="page-actions"><input class="search" id="stationAssetSearch" type="search" placeholder="Search serial, item, role, or status"></div><div id="stationConnectedAssets"></div>`)+(d.disconnectedAssets.length?panel('Disconnected source records','<div id="stationDisconnectedAssets"></div>'):'')+assignForm);const repaint=()=>{const query=$('#stationAssetSearch')?.value||'';$('#stationConnectedAssets').innerHTML=stationAssetTable(filterStationAssets(d.connectedAssets,query));if($('#stationDisconnectedAssets'))$('#stationDisconnectedAssets').innerHTML=stationAssetTable(filterStationAssets(d.disconnectedAssets,query),true);};repaint();$('#stationAssetSearch').oninput=repaint;if($('#stationAsset'))$('#stationAsset').onsubmit=async e=>{e.preventDefault();await api(`/stations/${row.id}/assets`,{method:'POST',body:JSON.stringify(formDataObject(e.currentTarget))});toast('Asset assigned and connected');closeModal();showStation(row);};if($('#activateStation'))$('#activateStation').onclick=async()=>{await api(`/stations/${row.id}/activate`,{method:'POST',body:'{}'});toast('Station activated');closeModal();renderStations();};}
-
-async function renderPlanning(){const year=new Date().getFullYear();content.innerHTML=`<div class="enterprise-toolbar"><button class="tool primary" id="saveBudget">Save</button><button class="tool" id="refreshBudget">Refresh</button><span class="toolbar-spacer"></span><select class="toolbar-filter" id="planYear"><option>${year-1}</option><option selected>${year}</option><option>${year+1}</option></select><select class="toolbar-filter" id="planDepartment"><option value="">All Departments</option></select></div><div id="planningWorkbench"></div>`;$('#refreshBudget').onclick=loadPlanningWorkbench;$('#saveBudget').onclick=savePlanningCells;$('#planYear').onchange=loadPlanningWorkbench;$('#planDepartment').onchange=loadPlanningWorkbench;await loadPlanningWorkbench();}
-async function loadPlanningWorkbench(){const year=Number($('#planYear').value);const dept=$('#planDepartment').value;const d=await api(`/planning/workbench?year=${year}&department=${encodeURIComponent(dept)}`);const deptSelect=$('#planDepartment');if(deptSelect.options.length===1){d.departments.forEach(x=>deptSelect.insertAdjacentHTML('beforeend',`<option value="${esc(x)}">${esc(x)}</option>`));deptSelect.value=dept;}const totals=d.rows.reduce((a,r)=>{a.budget+=r.fyBudget;a.actual+=r.actual;a.forecast+=r.forecast;return a;},{budget:0,actual:0,forecast:0});const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];const header=`<thead><tr><th>Department</th><th>Cost Center</th><th>Account Title</th><th>Class</th>${months.map(x=>`<th class="num">${x}</th>`).join('')}<th class="num">FY Budget</th><th class="num">Actual</th><th class="num">Forecast</th><th class="num">Variance</th><th class="num">Variance %</th></tr></thead>`;const body=d.rows.map((r,i)=>`<tr data-plan-row="${i}"><td>${esc(r.department)}</td><td>${esc(r.costCenter)}</td><td>${esc(r.accountTitle)}</td><td>${esc(r.capexOpex)}</td>${r.months.map((v,m)=>`<td class="num editable-cell"><input class="budget-cell" data-month="${m+1}" value="${Number(v||0).toFixed(2)}"></td>`).join('')}<td class="num total-cell">${money(r.fyBudget)}</td><td class="num">${money(r.actual)}</td><td class="num">${money(r.forecast)}</td><td class="num ${r.variance<0?'negative':''}">${money(r.variance)}</td><td class="num ${r.variancePct<0?'negative':''}">${Number(r.variancePct||0).toFixed(1)}%</td></tr>`).join('');$('#planningWorkbench').innerHTML=`<div class="summary-strip">${summaryCell('Approved Budget',money(totals.budget))}${summaryCell('Actual',money(totals.actual))}${summaryCell('Forecast',money(totals.forecast))}${summaryCell('Variance',money(totals.forecast-totals.budget))}</div><section class="panel"><div class="panel-head"><h3>Budget and Forecast Workbench</h3><div class="unit-label">PHP</div></div><div class="panel-body no-pad"><div class="table-wrap planning-table"><table class="data-table">${header}<tbody>${body||'<tr><td colspan="21">No records found.</td></tr>'}</tbody></table></div></div></section>`;state.planningRows=d.rows;document.querySelectorAll('.budget-cell').forEach(x=>x.onchange=e=>{e.target.dataset.changed='1';recalcPlanningRow(e.target.closest('tr'));});}
-function recalcPlanningRow(tr){let total=0;tr.querySelectorAll('.budget-cell').forEach(x=>total+=Number(x.value||0));tr.querySelector('.total-cell').textContent=money(total);}
-async function savePlanningCells(){const cells=[];document.querySelectorAll('.budget-cell[data-changed="1"]').forEach(input=>{const tr=input.closest('tr'),r=state.planningRows[Number(tr.dataset.planRow)];cells.push({year:Number($('#planYear').value),month:Number(input.dataset.month),department:r.department,costCenter:r.costCenter,accountTitle:r.accountTitle,capexOpex:r.capexOpex,amount:Number(input.value||0)});});if(!cells.length)return toast('No budget changes to save.','error');const d=await api('/planning/budget-cells',{method:'POST',body:JSON.stringify({year:Number($('#planYear').value),cells})});toast(`${d.saved} budget cell(s) saved`);await loadPlanningWorkbench();}
-
-async function renderAdmin(){
-  const [u,d]=await Promise.all([api('/admin/users'),api('/admin/diagnostics')]);
-  content.innerHTML=`<div class="page-actions"><button class="button" id="newUser">Add authorized user</button></div>
-    <div class="kpi-grid">${Object.entries(d.counts).slice(0,8).map(([k,v])=>kpi(k.replace('erp_','').replaceAll('_',' '),v,'Loaded records','','')).join('')}</div>
-    <div class="panel-grid">${panel('Users',table(u.users,[{key:'email',label:'Email'},{key:'display_name',label:'Name'},{key:'role_code',label:'Role',render:badge},{key:'department',label:'Department'},{key:'module_count',label:'Modules',align:'right'},{key:'activated',label:'Login',render:v=>v?badge('ACTIVATED'):badge('PENDING')},{key:'live_access',label:'Live',render:v=>v?'Yes':'No'},{key:'active',label:'Active',render:v=>v?'Yes':'No'}],'admin-user'))}${panel('Integrity checks',detailGrid(d.invariants,Object.keys(d.invariants).map(k=>[k,k.replaceAll('_',' '),v=>Number(v)===0?badge('PASS'):badge(v)])))}</div>`;
-  $('#newUser').onclick=()=>openUserForm(null,u.roles,u.modules);
-  bindRows('admin-user',u.users,row=>openUserForm(row,u.roles,u.modules));
+function openUserForm(data,user=null){
+  const selected=new Set(user?.allowed_workspace_modules||[]);
+  const accessGroups=[
+    ...state.catalog.groups,
+    {title:'Enterprise Tools',items:state.catalog.tools},
+    {title:'Enterprise Add-ons',items:state.catalog.addons},
+  ];
+  const groups=accessGroups.map(group=>`<fieldset class="access-group"><legend>${esc(group.title)}</legend>${group.items.map(item=>`<label><input type="checkbox" name="workspaceModules" value="${esc(item.code)}" ${selected.has(item.code)?'checked':''}><span>${esc(item.label)}</span></label>`).join('')}</fieldset>`).join('');
+  modal(user?'Edit User':'New User',`<form id="userForm">
+    <div class="record-fields">
+      ${recordField('Corporate Email','email','email',user?.email||'','required')}
+      ${recordField('Display Name','displayName','text',user?.display_name||'','required')}
+      ${recordField('Department','department','text',user?.department||'')}
+      <label class="record-field"><span>Role</span><select name="roleCode">${data.roles.map(role=>`<option value="${esc(role.code)}" ${role.code===(user?.role_code||'STAFF')?'selected':''}>${esc(role.name)}</option>`).join('')}</select></label>
+      <label class="record-check"><input type="checkbox" name="liveAccess" ${user?.live_access!==0?'checked':''}><span>Live access</span></label>
+      <label class="record-check"><input type="checkbox" name="active" ${user?.active!==0?'checked':''}><span>Active</span></label>
+    </div>
+    <div class="access-selector">${groups}</div>
+    <div class="modal-actions">${user?`<button type="button" class="command" id="issueCredential">${user.activated?'Reset Password':'Issue Activation'}</button>`:''}<button class="command primary">Save User</button></div>
+  </form>`,'Module access');
+  $('#userForm').onsubmit=async event=>{
+    event.preventDefault();
+    const body=formDataObject(event.currentTarget);
+    body.liveAccess=event.currentTarget.elements.liveAccess.checked;
+    body.active=event.currentTarget.elements.active.checked;
+    body.workspaceModules=$$('#userForm [name="workspaceModules"]:checked').map(input=>input.value);
+    const permissions=new Set(body.workspaceModules.map(code=>moduleByCode(code)?.permission).filter(Boolean));
+    body.modules=[...permissions];
+    try{
+      const result=await api('/admin/users',{method:'POST',body:JSON.stringify(body)});
+      closeModal();
+      toast(user?'User updated':'User created');
+      await renderAccessAdmin();
+      if(result.activationLink)showCredentialLink('Account activation',result.activationLink);
+    }catch(error){toast(error.message,'error');}
+  };
+  if($('#issueCredential'))$('#issueCredential').onclick=async()=>{
+    try{
+      const result=await api(`/admin/users/${user.id}/${user.activated?'reset':'activation'}`,{method:'POST',body:'{}'});
+      showCredentialLink(user.activated?'Password reset':'Account activation',result.resetLink||result.activationLink);
+    }catch(error){toast(error.message,'error');}
+  };
+}
+function showCredentialLink(title,link){
+  modal(title,`<div class="credential-link"><input value="${esc(link)}" readonly><button class="command primary" id="copyCredential">Copy Link</button></div>`);
+  $('#copyCredential').onclick=async()=>{await navigator.clipboard.writeText(link);toast('Link copied');};
 }
 
-function showAuthLink(title,link){
-  modal(title,`<p class="auth-link-note">Send this one-time link only to the named user. The administrator cannot see or set the user's password.</p><div class="copy-row"><input id="issuedAuthLink" value="${esc(link)}" readonly><button class="button" id="copyAuthLink">Copy link</button></div>`);
-  $('#copyAuthLink').onclick=async()=>{await navigator.clipboard.writeText($('#issuedAuthLink').value);toast('Link copied');};
+async function logout(){
+  try{await api('/auth/logout',{method:'POST',body:'{}'});}
+  finally{showAuth('login');}
+}
+function closeMobile(){
+  $('#sidebar').classList.remove('open');
+  $('#mobileOverlay').classList.remove('open');
 }
 
-const MODULE_LABELS={DASHBOARD:'Dashboard',PROCUREMENT:'Purchase Orders',SHIPMENTS:'Shipments and ATLAS',RECEIVING:'Receiving',INVENTORY:'Inventory and Stock Movement',RETURNS:'Returns and Reconciliation',REQUISITIONS:'Requisitions',DELIVERIES:'Deliveries and Pre-release',SALES:'Sales and Lease',CUSTOMERS:'Customers and Credit',STATIONS:'Swapping Station Projects',PLANNING:'Budget and Forecast',ADMIN:'Users and Diagnostics'};
-function openUserForm(user,roles,modules){
-  const roleOptions=(roles||[]).map(role=>({value:role.code,label:role.name}));
-  const selected=new Set(user?.allowed_modules||['DASHBOARD']);
-  const moduleBoxes=(modules||[]).map(module=>`<label class="module-access-option"><input type="checkbox" name="modules" value="${esc(module)}" ${selected.has(module)||user?.role_code==='ADMIN'?'checked':''}><span>${esc(MODULE_LABELS[module]||module)}</span></label>`).join('');
-  modal(user?'Authorized user':'Add authorized user',`<form id="adminUserForm"><div class="form-grid">
-    ${formField('Corporate email','email','email',user?.email||'',null,user?'readonly':'placeholder="name@nrdev.ph" required')}
-    ${formField('Display name','displayName','text',user?.display_name||'')}
-    ${formField('Role','roleCode','select',user?.role_code||'STAFF',roleOptions)}
-    ${formField('Department','department','text',user?.department||'')}
-    <label class="check-field"><input type="checkbox" name="liveAccess" ${!user||user.live_access?'checked':''}><span>Allow LIVE access</span></label>
-    <label class="check-field"><input type="checkbox" name="active" ${user?.active!==0?'checked':''}><span>Account active</span></label>
-    <fieldset class="module-access-field"><legend>Module access</legend><div class="module-access-grid">${moduleBoxes}</div></fieldset>
-    </div><div class="form-actions">${user?`<button type="button" class="button secondary" id="issueCredential">${user.activated?'Issue password-reset link':'Issue activation link'}</button>`:''}<button class="button">Save user</button></div></form>`);
-  const syncAdminAccess=()=>{const admin=$('#adminUserForm').elements.roleCode.value==='ADMIN';document.querySelectorAll('#adminUserForm [name="modules"]').forEach(box=>{if(admin)box.checked=true;box.disabled=admin;});};
-  $('#adminUserForm').elements.roleCode.onchange=syncAdminAccess;syncAdminAccess();
-  $('#adminUserForm').onsubmit=async event=>{event.preventDefault();const data=formDataObject(event.currentTarget);data.liveAccess=event.currentTarget.elements.liveAccess.checked;data.active=event.currentTarget.elements.active.checked;data.modules=[...event.currentTarget.querySelectorAll('[name="modules"]:checked')].map(box=>box.value);const result=await api('/admin/users',{method:'POST',body:JSON.stringify(data)});closeModal();toast(user?'User updated':'Authorized user added');await renderAdmin();if(result.activationLink)showAuthLink('Account activation link',result.activationLink);};
-  if($('#issueCredential'))$('#issueCredential').onclick=async()=>{const result=await api(`/admin/users/${user.id}/${user.activated?'reset':'activation'}`,{method:'POST',body:'{}'});showAuthLink(user.activated?'Password-reset link':'Account activation link',result.resetLink||result.activationLink);};
-}
-
-async function ensureLookups(){if(!state.lookups)state.lookups=await api('/masters/lookups');return state.lookups;}
-function bindRows(name,rows,handler){document.querySelectorAll(`[data-click="${name}"]`).forEach(tr=>tr.onclick=()=>handler(rows[Number(tr.dataset.row)]));}
-async function openQrModal(){modal('Scan QR or barcode',`<div class="scan-box"><div class="file-drop"><label><strong>Upload QR image</strong><small>Use a clear, cropped image from the unit label.</small><input id="globalQr" type="file" accept="image/*" capture="environment"></label></div><div class="scan-result" id="globalQrResult">Waiting for image…</div></div><div class="form-grid" style="margin-top:14px">${formField('Or enter serial manually','manualSerial')}</div><div class="form-actions"><button class="button" id="manualLookup">Find serial</button></div>`);$('#globalQr').onchange=e=>scanQrFile(e.target.files[0],lookupSerial);$('#manualLookup').onclick=()=>lookupSerial(document.querySelector('[name=manualSerial]').value);}
-async function lookupSerial(serial){const d=await api('/inventory/qr-lookup?serial='+encodeURIComponent(serial));$('#globalQrResult').innerHTML=d.found?`<b class="code">${esc(d.serial)}</b><br>${d.asset?`${esc(d.asset.item_name)} · ${badge(d.asset.current_status)}`:`Expected in ${esc(d.expected.shipment_no)} · ${badge(d.expected.shipment_status)}`}`:`<b>No serial match.</b><br><small>${esc(d.serial)} can be reviewed as an unplanned receipt.</small>`;}
-async function scanQrFile(file,callback){if(!file)return;const img=await createImageBitmap(file);const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0);const data=ctx.getImageData(0,0,canvas.width,canvas.height);let value='';if(window.jsQR){const code=window.jsQR(data.data,data.width,data.height,{inversionAttempts:'attemptBoth'});value=code?.data||'';}if(!value&&'BarcodeDetector'in window){try{const list=await new BarcodeDetector({formats:['qr_code','code_128','data_matrix']}).detect(canvas);value=list[0]?.rawValue||'';}catch{}}if(!value){toast('No readable QR or barcode was detected. Enter the serial manually.','error');return;}callback(value.trim());}
-
-const renderers={launchpad:renderLaunchpad,dashboard:renderDashboard,atlas:renderAtlas,procurement:renderProcurement,shipments:renderShipments,receiving:renderReceiving,inventory:()=>renderInventory(),movement:renderMovement,returns:renderReturns,requisitions:renderRequisitions,checklists:renderChecklists,deliveries:renderDeliveries,sales:renderSales,customers:renderCustomers,stations:renderStations,planning:renderPlanning,admin:renderAdmin};
-$('#modalClose').onclick=closeModal;$('#modal').onclick=e=>{if(e.target===$('#modal'))closeModal();};$('#refreshBtn').onclick=()=>openModule(state.module);$('#themeToggle').onclick=()=>{state.theme=state.theme==='light'?'dark':'light';document.documentElement.dataset.theme=state.theme;localStorage.setItem('e88-theme',state.theme);};$('#mobileMenu').onclick=()=>{$('#sidebar').classList.add('open');$('#mobileOverlay').classList.add('open');};$('#mobileOverlay').onclick=closeMobile;$('#quickActions').onchange=e=>{const v=e.target.value;e.target.value='';if(v==='atlas')openModule('atlas');if(v==='qr')openQrModal();if(v==='diagnostics')openModule('admin');};
-$('#logoutBtn').onclick=async()=>{try{await api('/auth/logout',{method:'POST',body:'{}'});}finally{showAuth('login');}};
-$('.brand').onclick=()=>openModule('launchpad');
+$('#modalClose').onclick=closeModal;
+$('#modal').onclick=event=>{if(event.target===$('#modal'))closeModal();};
+$('#refreshBtn').onclick=()=>state.section==='admin'?renderAccessAdmin():(state.module?openSection(state.section):renderLaunchpad());
+$('#modulesBtn').onclick=renderLaunchpad;
+$('#accessBtn').onclick=renderAccessAdmin;
+$('#logoutBtn').onclick=logout;
+$('#themeToggle').onclick=()=>{
+  state.theme=state.theme==='light'?'dark':'light';
+  document.documentElement.dataset.theme=state.theme;
+  localStorage.setItem('e88-theme',state.theme);
+};
+$('#mobileMenu').onclick=()=>{$('#sidebar').classList.add('open');$('#mobileOverlay').classList.add('open');};
+$('#mobileOverlay').onclick=closeMobile;
+$('.brand').onclick=renderLaunchpad;
 init();

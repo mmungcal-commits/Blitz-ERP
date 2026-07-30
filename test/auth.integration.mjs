@@ -37,6 +37,7 @@ try {
   await applySql('migrations/0008_connected_erp.sql');
   await applySql('migrations/0014_application_auth.sql');
   await applySql('migrations/0015_user_access_station_connections.sql');
+  await applySql('migrations/0016_clean_module_workspace.sql');
   await db.prepare(
     `INSERT INTO erp_users(email,display_name,role_code,department,live_access,active)
      VALUES(?,?,?,?,1,1)`,
@@ -64,6 +65,56 @@ try {
   const sessionBody = JSON.parse(sessionText);
   assert.equal(sessionBody.user.email, 'mmungcal@nrdev.ph');
   assert.equal(sessionBody.user.role, 'ADMIN');
+  assert.equal(sessionBody.workspaceCatalog.groups.length, 11);
+  assert.ok(sessionBody.workspaceAccess.includes('fa-general-accounting'));
+  assert.ok(sessionBody.workspaceAccess.includes('sd-lease-contract-management'));
+
+  const createWorkspaceRecord = await mf.dispatchFetch('https://e88.test/api/workspace/modules/fa-general-accounting/records', {
+    method: 'POST',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recordType: 'Journal Entry',
+      transactionDate: '2026-07-30',
+      entityName: 'E88 Ventures Inc.',
+      department: 'Finance and Accounting',
+      description: 'Clean workspace integration test',
+      amount: 1250,
+      status: 'DRAFT',
+    }),
+  });
+  const workspaceRecordBody = await createWorkspaceRecord.json();
+  assert.equal(createWorkspaceRecord.status, 201, JSON.stringify(workspaceRecordBody));
+  assert.match(workspaceRecordBody.record.record_no, /^FA-/);
+
+  const listWorkspaceRecords = await mf.dispatchFetch('https://e88.test/api/workspace/modules/fa-general-accounting/records', { headers: { Cookie: cookie } });
+  const listWorkspaceBody = await listWorkspaceRecords.json();
+  assert.equal(listWorkspaceRecords.status, 200, JSON.stringify(listWorkspaceBody));
+  assert.equal(listWorkspaceBody.rows.length, 1);
+
+  const createLeaseContract = await mf.dispatchFetch('https://e88.test/api/workspace/modules/sd-lease-contract-management/records', {
+    method: 'POST',
+    headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recordType: 'Lease Contract',
+      transactionDate: '2026-07-30',
+      entityName: 'B2B Customer',
+      department: 'Sales',
+      businessChannel: 'B2B',
+      contractEndDate: '2029-07-29',
+      billingFrequency: 'MONTHLY',
+      unitCount: 25,
+      description: 'Connected lease contract test',
+      amount: 250000,
+      status: 'DRAFT',
+    }),
+  });
+  const leaseContractBody = await createLeaseContract.json();
+  assert.equal(createLeaseContract.status, 201, JSON.stringify(leaseContractBody));
+  const leaseContracts = await mf.dispatchFetch('https://e88.test/api/workspace/modules/sd-lease-contract-management/records?channel=B2B', { headers: { Cookie: cookie } });
+  const leaseContractsBody = await leaseContracts.json();
+  assert.equal(leaseContracts.status, 200, JSON.stringify(leaseContractsBody));
+  assert.equal(leaseContractsBody.rows.length, 1);
+  assert.equal(leaseContractsBody.rows[0].business_channel, 'B2B');
 
   const users = await mf.dispatchFetch('https://e88.test/api/admin/users', { headers: { Cookie: cookie } });
   const usersText = await users.text();
@@ -109,6 +160,13 @@ try {
   assert.equal(staffSessionBody.user.email, 'staff@nrdev.ph');
   assert.equal(staffSessionBody.permissions.find(row => row.module === 'INVENTORY').can_view, 1);
   assert.equal(staffSessionBody.permissions.find(row => row.module === 'DASHBOARD').can_view, 0);
+  assert.ok(staffSessionBody.workspaceAccess.includes('ip-warehouse-management'));
+  assert.ok(!staffSessionBody.workspaceAccess.includes('sd-crm'));
+
+  const staffWorkspace = await mf.dispatchFetch('https://e88.test/api/workspace/modules/ip-warehouse-management/summary', { headers: { Cookie: staffCookie } });
+  assert.equal(staffWorkspace.status, 200, await staffWorkspace.text());
+  const deniedWorkspace = await mf.dispatchFetch('https://e88.test/api/workspace/modules/sd-crm/summary', { headers: { Cookie: staffCookie } });
+  assert.equal(deniedWorkspace.status, 403);
 
   const staffInventory = await mf.dispatchFetch('https://e88.test/api/masters/items', { headers: { Cookie: staffCookie } });
   assert.equal(staffInventory.status, 200, await staffInventory.text());

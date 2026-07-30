@@ -19,6 +19,7 @@ import { stationRoutes } from './routes/stations.js';
 import { adminRoutes } from './routes/admin.js';
 import { checklistRoutes } from './routes/checklists.js';
 import { planningRoutes } from './routes/planning.js';
+import { workspaceRoutes } from './routes/workspace.js';
 
 const app = new Hono();
 
@@ -47,6 +48,7 @@ app.route('/api/stations',stationRoutes);
 app.route('/api/admin',adminRoutes);
 app.route('/api/checklists',checklistRoutes);
 app.route('/api/planning',planningRoutes);
+app.route('/api/workspace',workspaceRoutes);
 app.all('/api/*',c=>fail(c,'Unknown endpoint',404));
 
 app.onError((err,c)=>{
