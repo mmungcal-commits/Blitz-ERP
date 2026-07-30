@@ -1,13 +1,12 @@
 import { Hono } from 'hono';
 import { all, first, run } from '../lib/db.js';
 import { ok, fail, jsonBody } from '../lib/http.js';
-import { requirePermission } from '../lib/auth.js';
+import { ERP_MODULES, requirePermission } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { normalizeText, nextCode, normalizeSerial } from '../lib/codes.js';
 import { randomToken, sha256 } from '../lib/crypto.js';
 
 export const adminRoutes = new Hono();
-const MODULES=['DASHBOARD','PROCUREMENT','SHIPMENTS','RECEIVING','INVENTORY','RETURNS','REQUISITIONS','DELIVERIES','SALES','CUSTOMERS','STATIONS','PLANNING','ADMIN'];
 
 function userColumns() {
   return `u.id,u.email,u.display_name,u.role_code,u.department,u.live_access,u.active,u.last_login_at,u.created_at,
@@ -33,7 +32,23 @@ adminRoutes.get('/users', requirePermission('ADMIN','MANAGE'), async c=>{
   const users=await all(c.env.DB,`SELECT ${userColumns()} FROM erp_users u LEFT JOIN erp_user_credentials cr ON cr.user_id=u.id ORDER BY u.active DESC,u.email`);
   const roles=await all(c.env.DB,`SELECT * FROM erp_roles ORDER BY name`);
   const permissions=await all(c.env.DB,`SELECT * FROM erp_role_permissions ORDER BY role_code,module`);
-  return ok(c,{users,roles,permissions,modules:MODULES});
+  const userAccess=await all(c.env.DB,`SELECT user_id,module,allowed FROM erp_user_module_access ORDER BY user_id,module`);
+  const roleMap=new Map();
+  for(const permission of permissions){
+    if(!roleMap.has(permission.role_code))roleMap.set(permission.role_code,[]);
+    if(permission.can_view)roleMap.get(permission.role_code).push(permission.module);
+  }
+  const accessMap=new Map();
+  for(const access of userAccess){
+    if(!accessMap.has(access.user_id))accessMap.set(access.user_id,[]);
+    if(access.allowed)accessMap.get(access.user_id).push(access.module);
+  }
+  for(const user of users){
+    const explicit=userAccess.some(access=>access.user_id===user.id);
+    user.allowed_modules=user.role_code==='ADMIN'?[...ERP_MODULES]:(explicit?(accessMap.get(user.id)||[]):(roleMap.get(user.role_code)||[]));
+    user.module_count=user.allowed_modules.length;
+  }
+  return ok(c,{users,roles,permissions,modules:ERP_MODULES});
 });
 
 adminRoutes.post('/users', requirePermission('ADMIN','MANAGE'), async c=>{
@@ -48,10 +63,20 @@ adminRoutes.post('/users', requirePermission('ADMIN','MANAGE'), async c=>{
   }
   const after=await first(c.env.DB,`SELECT * FROM erp_users WHERE email=?`,[email]);
   await run(c.env.DB,`INSERT OR IGNORE INTO erp_user_credentials(user_id) VALUES(?)`,[after.id]);
+  const modulesProvided=Array.isArray(b.modules);
+  const requestedModules=modulesProvided?b.modules.map(value=>normalizeText(value).toUpperCase()).filter(value=>ERP_MODULES.includes(value)):[];
+  const allowedModules=after.role_code==='ADMIN'?ERP_MODULES:(modulesProvided?requestedModules:(!before?['DASHBOARD']:null));
+  if(allowedModules){
+    for(const module of ERP_MODULES){
+      await run(c.env.DB,`INSERT INTO erp_user_module_access(user_id,module,allowed,updated_at,updated_by) VALUES(?,?,?,datetime('now'),?) ON CONFLICT(user_id,module) DO UPDATE SET allowed=excluded.allowed,updated_at=excluded.updated_at,updated_by=excluded.updated_by`,[after.id,module,allowedModules.includes(module)?1:0,c.get('erpUser').email]);
+    }
+  }
   const credential=await first(c.env.DB,`SELECT activated_at,password_hash FROM erp_user_credentials WHERE user_id=?`,[after.id]);
   const activationLink=!credential?.activated_at||!credential?.password_hash?await issueAuthLink(c,after,'activate'):null;
-  await audit(c,{action:before?'UPDATE_USER':'CREATE_USER',module:'ADMIN',recordType:'USER',recordId:after.id,recordNo:email,before,after});
-  return ok(c,{user:after,activationLink});
+  const savedAccess=await all(c.env.DB,`SELECT module FROM erp_user_module_access WHERE user_id=? AND allowed=1 ORDER BY module`,[after.id]);
+  const effectiveAllowed=after.role_code==='ADMIN'?ERP_MODULES:savedAccess.map(row=>row.module);
+  await audit(c,{action:before?'UPDATE_USER':'CREATE_USER',module:'ADMIN',recordType:'USER',recordId:after.id,recordNo:email,before,after:{...after,allowedModules:effectiveAllowed}});
+  return ok(c,{user:{...after,allowed_modules:effectiveAllowed},activationLink});
 });
 
 adminRoutes.post('/users/:id/activation', requirePermission('ADMIN','MANAGE'), async c=>{
@@ -71,7 +96,7 @@ adminRoutes.post('/users/:id/reset', requirePermission('ADMIN','MANAGE'), async 
   return ok(c,{resetLink});
 });
 
-adminRoutes.post('/permissions/:role', requirePermission('ADMIN','MANAGE'), async c=>{const role=normalizeText(c.req.param('role')).toUpperCase();const b=await jsonBody(c);const rows=Array.isArray(b.permissions)?b.permissions:[];for(const p of rows){if(!MODULES.includes(p.module))continue;await run(c.env.DB,`INSERT INTO erp_role_permissions(role_code,module,can_view,can_create,can_edit,can_approve,can_post,can_export,can_manage) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(role_code,module) DO UPDATE SET can_view=excluded.can_view,can_create=excluded.can_create,can_edit=excluded.can_edit,can_approve=excluded.can_approve,can_post=excluded.can_post,can_export=excluded.can_export,can_manage=excluded.can_manage`,[role,p.module,p.canView?1:0,p.canCreate?1:0,p.canEdit?1:0,p.canApprove?1:0,p.canPost?1:0,p.canExport?1:0,p.canManage?1:0]);}await audit(c,{action:'UPDATE_PERMISSIONS',module:'ADMIN',recordType:'ROLE',recordNo:role,after:{permissions:rows}});return ok(c,{updated:rows.length});});
+adminRoutes.post('/permissions/:role', requirePermission('ADMIN','MANAGE'), async c=>{const role=normalizeText(c.req.param('role')).toUpperCase();const b=await jsonBody(c);const rows=Array.isArray(b.permissions)?b.permissions:[];for(const p of rows){if(!ERP_MODULES.includes(p.module))continue;await run(c.env.DB,`INSERT INTO erp_role_permissions(role_code,module,can_view,can_create,can_edit,can_approve,can_post,can_export,can_manage) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(role_code,module) DO UPDATE SET can_view=excluded.can_view,can_create=excluded.can_create,can_edit=excluded.can_edit,can_approve=excluded.can_approve,can_post=excluded.can_post,can_export=excluded.can_export,can_manage=excluded.can_manage`,[role,p.module,p.canView?1:0,p.canCreate?1:0,p.canEdit?1:0,p.canApprove?1:0,p.canPost?1:0,p.canExport?1:0,p.canManage?1:0]);}await audit(c,{action:'UPDATE_PERMISSIONS',module:'ADMIN',recordType:'ROLE',recordNo:role,after:{permissions:rows}});return ok(c,{updated:rows.length});});
 
 adminRoutes.get('/diagnostics', requirePermission('ADMIN','MANAGE'), async c=>{const tables=['erp_items','erp_partners','erp_shipments','erp_expected_assets','erp_receipts','erp_assets','erp_stock_ledger','erp_requisitions','erp_sales_orders','erp_deliveries','erp_reconciliation_cases','erp_serial_exceptions'];const counts={};for(const table of tables){counts[table]=(await first(c.env.DB,`SELECT COUNT(*) n FROM ${table}`))?.n||0;}const invariants={duplicateAssets:(await first(c.env.DB,`SELECT COUNT(*) n FROM (SELECT serial_no FROM erp_assets GROUP BY serial_no HAVING COUNT(*)>1)`))?.n||0,orphanMovements:(await first(c.env.DB,`SELECT COUNT(*) n FROM erp_stock_ledger l LEFT JOIN erp_assets a ON a.id=l.asset_id WHERE l.asset_id IS NOT NULL AND a.id IS NULL`))?.n||0,unreconciled:(await first(c.env.DB,`SELECT COUNT(*) n FROM erp_reconciliation_cases WHERE status='UNRECONCILED'`))?.n||0,availableOnHold:(await first(c.env.DB,`SELECT COUNT(*) n FROM erp_assets WHERE current_status IN ('AVAILABLE','IN_STOCK') AND reconciliation_status!='CLEAR'`))?.n||0};return ok(c,{counts,invariants,healthy:invariants.duplicateAssets===0&&invariants.orphanMovements===0});});
 

@@ -36,6 +36,7 @@ try {
   };
   await applySql('migrations/0008_connected_erp.sql');
   await applySql('migrations/0014_application_auth.sql');
+  await applySql('migrations/0015_user_access_station_connections.sql');
   await db.prepare(
     `INSERT INTO erp_users(email,display_name,role_code,department,live_access,active)
      VALUES(?,?,?,?,1,1)`,
@@ -79,6 +80,7 @@ try {
       department: 'Supply Chain',
       liveAccess: true,
       active: true,
+      modules: ['INVENTORY'],
     }),
   });
   const createUserBody = await createUser.json();
@@ -105,6 +107,51 @@ try {
   const staffSessionBody = await staffSession.json();
   assert.equal(staffSession.status, 200, JSON.stringify(staffSessionBody));
   assert.equal(staffSessionBody.user.email, 'staff@nrdev.ph');
+  assert.equal(staffSessionBody.permissions.find(row => row.module === 'INVENTORY').can_view, 1);
+  assert.equal(staffSessionBody.permissions.find(row => row.module === 'DASHBOARD').can_view, 0);
+
+  const staffInventory = await mf.dispatchFetch('https://e88.test/api/masters/items', { headers: { Cookie: staffCookie } });
+  assert.equal(staffInventory.status, 200, await staffInventory.text());
+  const staffDashboard = await mf.dispatchFetch('https://e88.test/api/dashboard', { headers: { Cookie: staffCookie } });
+  assert.equal(staffDashboard.status, 403);
+  const staffStations = await mf.dispatchFetch('https://e88.test/api/stations', { headers: { Cookie: staffCookie } });
+  assert.equal(staffStations.status, 403);
+
+  const stationInsert = await db.prepare(
+    `INSERT INTO erp_station_projects(project_no,site_name,planned_location,progress_pct,status)
+     VALUES('BSSP-TEST-0001','Alpha Station','Santa Rosa',100,'ACTIVE')`,
+  ).run();
+  const stationId = stationInsert.meta.last_row_id;
+  const connectedAssetInsert = await db.prepare(
+    `INSERT INTO erp_assets(asset_no,serial_no,serial_type,item_code,item_name,category,current_status,current_holder_type,current_holder_id,current_holder_name,reconciliation_status)
+     VALUES('AST-TEST-0001','BAT-TEST-CONNECTED','BAT','BAT-TEST','Battery','BAT','ASSIGNED_TO_STATION','STATION_PROJECT',?,'Alpha Station','CLEAR')`,
+  ).bind(stationId).run();
+  const disconnectedAssetInsert = await db.prepare(
+    `INSERT INTO erp_assets(asset_no,serial_no,serial_type,item_code,item_name,category,current_status,current_holder_type,current_holder_name,reconciliation_status)
+     VALUES('AST-TEST-0002','BAT-TEST-SOLD','BAT','BAT-TEST','Battery','BAT','SOLD','CUSTOMER','Customer','CLEAR')`,
+  ).run();
+  await db.prepare(
+    `INSERT INTO erp_station_project_assets(project_id,asset_id,serial_no,asset_role,status)
+     VALUES(?,?,?,'BATTERY','CONNECTED'),(?,?,?,'BATTERY','DISCONNECTED')`,
+  ).bind(
+    stationId, connectedAssetInsert.meta.last_row_id, 'BAT-TEST-CONNECTED',
+    stationId, disconnectedAssetInsert.meta.last_row_id, 'BAT-TEST-SOLD',
+  ).run();
+
+  const stationSearch = await mf.dispatchFetch('https://e88.test/api/stations?q=Alpha', { headers: { Cookie: cookie } });
+  const stationSearchBody = await stationSearch.json();
+  assert.equal(stationSearch.status, 200, JSON.stringify(stationSearchBody));
+  assert.equal(stationSearchBody.rows.length, 1);
+  assert.equal(stationSearchBody.rows[0].connected_asset_count, 1);
+  assert.equal(stationSearchBody.rows[0].disconnected_asset_count, 1);
+
+  const stationDetail = await mf.dispatchFetch(`https://e88.test/api/stations/${stationId}`, { headers: { Cookie: cookie } });
+  const stationDetailBody = await stationDetail.json();
+  assert.equal(stationDetail.status, 200, JSON.stringify(stationDetailBody));
+  assert.equal(stationDetailBody.summary.connected, 1);
+  assert.equal(stationDetailBody.summary.disconnected, 1);
+  assert.equal(stationDetailBody.connectedAssets[0].serial_no, 'BAT-TEST-CONNECTED');
+  assert.equal(stationDetailBody.disconnectedAssets[0].serial_no, 'BAT-TEST-SOLD');
 
   const logout = await mf.dispatchFetch('https://e88.test/api/auth/logout', {
     method: 'POST',

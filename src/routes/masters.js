@@ -1,13 +1,13 @@
 import { Hono } from 'hono';
 import { all, first, run } from '../lib/db.js';
 import { ok, fail, jsonBody, pageParams } from '../lib/http.js';
-import { requirePermission } from '../lib/auth.js';
+import { requireAnyPermission, requirePermission } from '../lib/auth.js';
 import { ensureItem, ensureLocation, ensurePartner, normalizeText } from '../lib/codes.js';
 import { audit } from '../lib/audit.js';
 
 export const masterRoutes = new Hono();
 
-masterRoutes.get('/lookups', requirePermission('INVENTORY','VIEW'), async (c) => {
+masterRoutes.get('/lookups', requireAnyPermission(['INVENTORY','PROCUREMENT','SALES','CUSTOMERS','RECEIVING','STATIONS'],'VIEW'), async (c) => {
   const [items, locations, customers, vendors, employees] = await Promise.all([
     all(c.env.DB, `SELECT id,item_code,item_name,category,serialized,standard_cost FROM erp_items WHERE active=1 ORDER BY category,item_name`),
     all(c.env.DB, `SELECT id,code,name,location_type,partner_name FROM erp_locations WHERE active=1 ORDER BY name`),
@@ -38,7 +38,7 @@ masterRoutes.post('/items', requirePermission('INVENTORY','CREATE'), async (c) =
   return ok(c,{item},201);
 });
 
-masterRoutes.get('/partners', requirePermission('SALES','VIEW'), async (c) => {
+masterRoutes.get('/partners', requirePermission('CUSTOMERS','VIEW'), async (c) => {
   const { page,size,offset }=pageParams(c); const type=normalizeText(c.req.query('type'));
   const q=`%${normalizeText(c.req.query('q'))}%`; const args=[]; const where=['active=1'];
   if(type){where.push('partner_type=?');args.push(type);} if(q!=='%%'){where.push('(partner_code LIKE ? OR name LIKE ?)');args.push(q,q);}
@@ -47,7 +47,7 @@ masterRoutes.get('/partners', requirePermission('SALES','VIEW'), async (c) => {
   return ok(c,{rows,page,size,total:total?.n||0});
 });
 
-masterRoutes.post('/partners', requirePermission('SALES','CREATE'), async(c)=>{
+masterRoutes.post('/partners', requirePermission('CUSTOMERS','CREATE'), async(c)=>{
   const b=await jsonBody(c); if(!b.name)return fail(c,'Name is required');
   const partner=await ensurePartner(c.env.DB,{...b,type:b.partnerType||'CUSTOMER',sourceSystem:'E88_FINSYS'});
   await audit(c,{action:'CREATE',module:'SALES',recordType:'PARTNER',recordId:partner.id,recordNo:partner.partner_code,after:partner});
@@ -61,7 +61,7 @@ masterRoutes.post('/locations', requirePermission('INVENTORY','CREATE'), async(c
   return ok(c,{location},201);
 });
 
-masterRoutes.post('/partners/:id/credit', requirePermission('SALES','APPROVE'), async(c)=>{
+masterRoutes.post('/partners/:id/credit', requirePermission('CUSTOMERS','APPROVE'), async(c)=>{
   const id=Number(c.req.param('id')); const b=await jsonBody(c); const before=await first(c.env.DB,`SELECT * FROM erp_partners WHERE id=?`,[id]);
   if(!before)return fail(c,'Partner not found',404);
   const status=b.creditStatus||before.credit_status;
