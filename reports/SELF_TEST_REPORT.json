@@ -1,6 +1,6 @@
 {
-  "passed": 29,
-  "total": 29,
+  "passed": 32,
+  "total": 32,
   "tests": [
     {
       "name": "All opening SQL chunks execute",
@@ -26,6 +26,21 @@
       "name": "Canonical assets loaded",
       "passed": true,
       "detail": "8650"
+    },
+    {
+      "name": "Asset quality classification covers all assets",
+      "passed": true,
+      "detail": "8650"
+    },
+    {
+      "name": "Dashboard canonical view excludes non-physical and duplicate rows",
+      "passed": true,
+      "detail": "2885"
+    },
+    {
+      "name": "ATLAS receiving match control installed",
+      "passed": true,
+      "detail": ""
     },
     {
       "name": "No duplicate canonical asset serials",

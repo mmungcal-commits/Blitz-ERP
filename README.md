@@ -1,74 +1,54 @@
-# E88 FinSys v7.1 — Connected Supply Chain and Sales ERP
+# E88 FinSys v8.1 — Ramco-Style Connected ERP
 
 **Copyright © 2026 AM. All rights reserved.**
 
-E88 FinSys is a Cloudflare Workers + D1 application rebuilt around one connected operational transaction engine. It replaces repeated encoding across ATLAS, STELLAR, STAR, STAKU, SATURN, warehouse documents, requisitions, checklists, sales monitoring, procurement monitoring, budgets, and planning files.
+E88 FinSys is a Cloudflare Workers and D1 enterprise application for E88 supply chain, inventory, logistics, sales, lease, project planning, budgeting, and finance controls.
 
-## Connected operating flow
+## Core transaction flow
 
-`ATLAS supplier upload → shipment → expected serials → PO/landed cost → receiving → canonical inventory → location/custody movement → requisition/pre-release → delivery → sale/lease → return → reconciliation`
+`ATLAS supplier upload → expected shipment → receiving workbench → actual serial validation → inventory / quarantine → stock movement → requisition / sale / lease → delivery → return → reconciliation`
 
-The same serial record is reused throughout the process. A transaction creates the relevant downstream records instead of requiring staff to encode the same information in separate trackers.
+ATLAS is the basis of what E88 expects to receive. Inventory is created only from the actual receipt posted by Receiving.
 
-## Critical controls
+## v8.1 controls
 
-- One canonical asset for every normalized motorcycle, battery, swapping-station, charger, or serialized part.
-- Duplicate serial occurrences are retained as exception evidence; they are not silently deleted.
-- Battery swaps during return are accepted into quarantine and opened as `UNRECONCILED` cases.
-- ATLAS Excel upload creates shipments, shipment lines, and expected serials.
-- Receiving is performed against the expected shipment and creates inventory only when posted.
-- QR/barcode image reading supports serial review before posting.
-- New item descriptions automatically receive category-based codes: `MC-`, `BAT-`, `BSS-`, `SP-`, `CHG-`, or `OTH-`.
-- Sales, lease, delivery, employee custody, pilot test, repair, return, and location transfer use the same stock ledger.
-- Role/action permissions remain enforced in the backend.
-- Access is restricted to authorized `@nrdev.ph` users through Cloudflare Access.
-- KPI cards drill into the underlying transactions and serials.
+- Receiving must select an expected shipment reference.
+- Expected and actual serials are stored separately.
+- Same item with a different actual serial is classified as `SERIAL_SUBSTITUTED`.
+- Substituted, unplanned, excess, or unexpected receipts are accepted into quarantine and remain unreconciled.
+- Exact matches become available inventory.
+- QR or barcode images can populate actual serials before validation.
+- Expected quantities, prior receipts, current receipts, total receipts, and remaining quantities are visible in one workbench.
+- Dashboard counts use classified physical assets, not all raw imported rows.
+- Obvious suffixed duplicates are excluded from operational KPI counts while source evidence remains retained.
+- Budget and Forecast uses an Excel-style monthly grid with editable cells and consistent corporate number formatting.
 
-## Data-loaded opening database
+See `DELIVERY_NOTES_V8_1.md` for the complete release scope.
 
-The deployment package includes all 14 shared workbooks in `source_data/` and generated opening-data SQL in `migrations/opening/`.
-The deployable pre-release workbook copy preserves all operational data but redacts 208 readable credential cells; credentials are not ERP opening data and are not committed to GitHub.
-
-Key loaded counts:
-
-- 24,118 source rows archived with traceability
-- 761 item masters
-- 8,650 canonical assets
-- 6,697 duplicate/serial exception records
-- 28 shipments
-- 2,015 ATLAS expected assets and receiving lines
-- 5,807 stock movements
-- 264 sales/lease assignments
-- 1,115 delivery-asset records
-- 46 returns and 323 unreconciled battery-swap cases
-- 1,261 procurement and payment register entries
-- 133 approved-budget rows
-- 4,096 planning-driver rows
-
-See `reports/DATA_LOAD_REPORT.md` and `reports/SELF_TEST_REPORT.md`.
-
-## Local verification
-
-Requirements: Node.js 20+, Python 3.11+, and `openpyxl`.
+## Verification
 
 ```bash
 npm install
 python -m pip install openpyxl
 npm run build
-npm run db:bootstrap:local
-npm run dev
 ```
 
-## Production deployment
+Current automated result: **207 structure checks passed, 5 unit tests passed, and 32 data-integrity tests passed.**
 
-Do not bootstrap the opening data into the current live D1 database without a backup. The safest cutover is:
+## Upgrade the existing live database
 
-1. Export the current live D1 database.
-2. Create a new D1 database for v7.1.
-3. update the D1 `database_id` in `wrangler.toml`.
-4. Run the guarded remote bootstrap.
-5. Deploy the Worker.
-6. Perform live UAT.
-7. Retain the previous Worker/D1 for rollback.
+The live database is configured as:
 
-Read `DEPLOYMENT.md` and `GO_LIVE_CHECKLIST.md` before deployment.
+- Binding: `DB`
+- Database: `e88-v7`
+- Database ID: `37da8de0-9574-43d0-8bde-69719342cbbd`
+
+Use GitHub Actions:
+
+1. Open **Actions**.
+2. Select **Upgrade E88 FinSys v8.1 and Deploy**.
+3. Click **Run workflow** on branch `main`.
+4. Enter `E88_UPGRADE_V81`.
+5. Run the workflow.
+
+This applies only the non-destructive v8.1 migrations and deploys the Worker. Do not run the opening-data bootstrap again.

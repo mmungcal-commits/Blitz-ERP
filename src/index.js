@@ -28,7 +28,7 @@ app.use('/api/*', async (c,next)=>{
 });
 app.use('/api/*', requireUser);
 
-app.get('/api/health', c=>ok(c,{service:'E88 FinSys',version:'7.1.0',time:new Date().toISOString()}));
+app.get('/api/health', c=>ok(c,{service:'E88 FinSys',version:'8.1.0',time:new Date().toISOString()}));
 app.route('/api/session',sessionRoutes);
 app.route('/api/dashboard',dashboardRoutes);
 app.route('/api/masters',masterRoutes);

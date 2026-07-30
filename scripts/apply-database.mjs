@@ -25,14 +25,18 @@ if (remote && !confirmed) {
   process.exit(2);
 }
 
-const coreFiles = [
+const preLoadFiles = [
   'schema.sql','schema2.sql','schema4.sql','schema7.sql','alter_users.sql','data.sql',
   'migrations/0008_connected_erp.sql',
   'migrations/0010_procurement_sales_controls.sql',
   'migrations/0011_finance_planning_registers.sql'
 ];
+const postLoadFiles = [
+  'migrations/0012_ramco_enterprise.sql',
+  'migrations/0013_atlas_receiving_workbench.sql'
+];
 const manifest = JSON.parse(await readFile(join(ROOT, 'migrations/opening/manifest.json'), 'utf8'));
-const files = [...coreFiles, ...(manifest.files || []).map(f => `migrations/opening/${f}`)];
+const files = [...preLoadFiles, ...(manifest.files || []).map(f => `migrations/opening/${f}`), ...postLoadFiles];
 
 for (const rel of files) {
   const full = join(ROOT, rel);

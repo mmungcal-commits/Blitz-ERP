@@ -1,13 +1,16 @@
-# E88 FinSys v7.1 Self-Test Report
+# E88 FinSys v8.1 Self-Test Report
 
-Generated: 2026-07-29T21:16:56
-**Result: 29/29 tests passed.**
+Generated: 2026-07-30T00:59:12
+**Result: 32/32 tests passed.**
 
 - [x] **All opening SQL chunks execute** — 13 chunks
 - [x] **No foreign-key violations** — 0 violations
 - [x] **Actual source workbooks embedded** — 14
 - [x] **Source rows archived** — 24118
 - [x] **Canonical assets loaded** — 8650
+- [x] **Asset quality classification covers all assets** — 8650
+- [x] **Dashboard canonical view excludes non-physical and duplicate rows** — 2885
+- [x] **ATLAS receiving match control installed** — 
 - [x] **No duplicate canonical asset serials** — 
 - [x] **Duplicate serial evidence preserved** — 6697
 - [x] **Shipments created from STELLAR/ATLAS** — 28

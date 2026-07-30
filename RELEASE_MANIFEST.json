@@ -1,8 +1,8 @@
 {
-  "release": "E88 FinSys v7.1.0 Connected ERP",
-  "generated_at": "2026-07-30T00:21:00+08:00",
-  "file_count": 98,
-  "total_bytes": 47704542,
+  "release": "E88 FinSys v8.1.0 Ramco ATLAS Receiving",
+  "generated_at": "2026-07-30T08:08:43+08:00",
+  "file_count": 105,
+  "total_bytes": 47785360,
   "files": [
     {
       "path": ".dev.vars.example",
@@ -25,6 +25,11 @@
       "sha256": "b243bee8398b2f4c7ce10ed773e41e192e11ed00426f8f50d6bac3abe6358f00"
     },
     {
+      "path": ".github/workflows/upgrade-v81-and-deploy.yml",
+      "bytes": 1629,
+      "sha256": "5277e3dc8806419f7316e231f18ca70ed0aec6d8d0271f78eb1a76a22ec66e79"
+    },
+    {
       "path": ".gitignore",
       "bytes": 91,
       "sha256": "6a191fd4b8f95e26f2e2ef02be8bf4f0e7f98eeec89cf252721953d45c0cc93e"
@@ -36,13 +41,18 @@
     },
     {
       "path": "CHANGELOG.md",
-      "bytes": 1188,
-      "sha256": "18974ff66bdb630df5c608eeb07f71e5f7d3553caa76f3c5196360f990b3a4cc"
+      "bytes": 1884,
+      "sha256": "54610726024bc727d352a377c41ee7b49831905c042b14f0431cb329d5910928"
     },
     {
       "path": "COPYRIGHT_NOTICE.md",
       "bytes": 688,
       "sha256": "b440ee30006cd1c0d40b7c6b318a03df7aa4b06f16a5003531facf3aced3d881"
+    },
+    {
+      "path": "DELIVERY_NOTES_V8_1.md",
+      "bytes": 2964,
+      "sha256": "b8f5b1a3adeac0b3583a11fa7dc768491c61a9fca3116bb76bd2a3a5d9042e61"
     },
     {
       "path": "DEPLOYMENT.md",
@@ -61,8 +71,8 @@
     },
     {
       "path": "README.md",
-      "bytes": 3409,
-      "sha256": "0c28bef99ada283eca875bb88793b4dcbdd992c5b5fafd704829ba1ff4e8db59"
+      "bytes": 2255,
+      "sha256": "78f5963297531ab69dca8ed38094637d5e80070c810fd45802470450a9c52680"
     },
     {
       "path": "alter_users.sql",
@@ -93,6 +103,16 @@
       "path": "migrations/0011_finance_planning_registers.sql",
       "bytes": 5508,
       "sha256": "f4443aa951f64c0ad64f51157cdd1d436ba38ce4036a42dbbd837b11e9c426e2"
+    },
+    {
+      "path": "migrations/0012_ramco_enterprise.sql",
+      "bytes": 11546,
+      "sha256": "0e711122ab2b16401e3561f2a4697db8041d558130999b5e14fee8b4cf432c8e"
+    },
+    {
+      "path": "migrations/0013_atlas_receiving_workbench.sql",
+      "bytes": 3408,
+      "sha256": "364692a53c051f641ab1143b08b4547d7bb385a51ce236770797d108e21a0ce0"
     },
     {
       "path": "migrations/opening/0001_opening_data.sql",
@@ -166,28 +186,28 @@
     },
     {
       "path": "package.json",
-      "bytes": 1019,
-      "sha256": "cd4626443074608dd7db03d4a42f208024e97a54ed256ca3c30f9a2b434402de"
+      "bytes": 1040,
+      "sha256": "3d118c51fb1746ce613765a5849fa20abbc9389ee391b1eaa606e1118c36b380"
     },
     {
       "path": "public/app.css",
-      "bytes": 10304,
-      "sha256": "8e237abf362f321784a077d7dfd84b92cb47774fd78daca77da5793263a01418"
+      "bytes": 15532,
+      "sha256": "494ec017c3c60a2aea23c8b728c377053667e9fdbb098c292a7c2d4203e06b1b"
     },
     {
       "path": "public/app.js",
-      "bytes": 46284,
-      "sha256": "21d97c23e99a305f8c28f97749e6e4a1b06f2cc24cf7029c06b7e56a8cb69efb"
+      "bytes": 55037,
+      "sha256": "8b56dd24df2fede31ee0277a847ced9c6d4c4b128e77b5cd49a0535453dd8628"
     },
     {
       "path": "public/index.html",
-      "bytes": 2318,
-      "sha256": "34c245be8e895ddf58731ee7537e3eb44f146d378765f558117c9225b86774e9"
+      "bytes": 2267,
+      "sha256": "c75bbcba8e3092c16f971da4f31768c296caea0a7469e8eba8c6a0e2b391ec66"
     },
     {
       "path": "public/logo.png",
-      "bytes": 7683,
-      "sha256": "31493c1b8bcd958deb0d3d95b16fd0d7bec8fd37ed29a6cdbd95a6a0796b8807"
+      "bytes": 8450,
+      "sha256": "1a15d9b86d6e4d7db36eaee8dd5f558392f7b0c457c261189e300c7184708619"
     },
     {
       "path": "reports/BUILD_VALIDATION.md",
@@ -202,7 +222,7 @@
     {
       "path": "reports/DATA_LOAD_REPORT.md",
       "bytes": 1488,
-      "sha256": "f853de925cfc741df18e44c651f6498bc8bb5c28de574d31e82afbbd995b7e22"
+      "sha256": "f729e22542babaa0bcc7ed5c5d83b7ece6d0482cf3cbb27386f8a2082e50ca1d"
     },
     {
       "path": "reports/DATA_SELF_TEST.log",
@@ -216,13 +236,13 @@
     },
     {
       "path": "reports/SELF_TEST_REPORT.json",
-      "bytes": 5928,
-      "sha256": "0f1f92d412f863bfab05082c70628ec820caf2438f54e2e4e16f51240dbb542e"
+      "bytes": 6302,
+      "sha256": "eb4dc7a390396d032fb4a4af91e78f8e84ab7af44f5ba96117e5afa945908b91"
     },
     {
       "path": "reports/SELF_TEST_REPORT.md",
-      "bytes": 4763,
-      "sha256": "0faecfbbc4ded77369cd4ff838c68c3b9ae294b52353fd7fa71bf2da63370022"
+      "bytes": 4969,
+      "sha256": "7f9eb3c502ef3b9661247fe25006e4673a51e61f11e938bde5c165cccf957441"
     },
     {
       "path": "reports/SOURCE_SECURITY_REPORT.md",
@@ -240,14 +260,19 @@
       "sha256": "46eec4e623929173ce6cc1f082b380b229a3208473612b0a8bfd02355f208397"
     },
     {
+      "path": "reports/validation.db-journal",
+      "bytes": 25136,
+      "sha256": "2cb1db4e7ff73f9d7147652de8dec8faaf71f8dbcb79105eaa17e9cfc0376797"
+    },
+    {
       "path": "schema.sql",
       "bytes": 5570,
       "sha256": "4acc7ff967c8d8923d3f4fec84f1d4a021a30d94ad88dff747826b3a2171ca24"
     },
     {
       "path": "schema2.sql",
-      "bytes": 5095,
-      "sha256": "07d1de5d76391f7ee3f245580e9e0de4b2665f7ddec9656032a7843f7c68741b"
+      "bytes": 5625,
+      "sha256": "571bf91af4e9be23f3836730e2e2f0d7517d52c6e8eda2ce26c7660f7b6c4958"
     },
     {
       "path": "schema4.sql",
@@ -261,13 +286,13 @@
     },
     {
       "path": "scripts/apply-database.mjs",
-      "bytes": 2588,
-      "sha256": "a42a70822cfd0ac38db31fa7f307105b447405374a9d206948a62d5e02bc5e05"
+      "bytes": 2730,
+      "sha256": "08c31c0b4a258962e940b59d5ce8c393c4585550d99b51210b719b24dda797cd"
     },
     {
       "path": "scripts/check-structure.mjs",
-      "bytes": 4398,
-      "sha256": "ef1aaabd76845d60930a1b2a7295bd32cd860e6fa14ec1153a1dcbb7956b38da"
+      "bytes": 4572,
+      "sha256": "299f88a418c17f7c54777c9a3ab19fd2fb583e26632db5ca171ab9e230d12cd5"
     },
     {
       "path": "scripts/generate_opening_data.py",
@@ -281,8 +306,8 @@
     },
     {
       "path": "scripts/self_test.py",
-      "bytes": 11315,
-      "sha256": "2d5d27a9b63af1217492668e1f4faa7a0c0fb858793583cbca3cd9c150db5c57"
+      "bytes": 12134,
+      "sha256": "7394e5b9994f12385b85b90cd6bb3f552ea232636eb23dae92aa76c5338313d1"
     },
     {
       "path": "scripts/smoke-test.mjs",
@@ -367,7 +392,7 @@
     {
       "path": "src/index.js",
       "bytes": 2645,
-      "sha256": "6b9cf4fadb08f5c4f7f73054600571a5eab7ac962e69e191f2df9f1d0545daad"
+      "sha256": "50e80c4d2a3fc67d7500caab0ef10214d8d91e175644fdc980b279efbc1b17f9"
     },
     {
       "path": "src/lib/atlas.js",
@@ -405,14 +430,19 @@
       "sha256": "7c3c0c8f96bcc481aa344fb374cd4694dda7bf0979d2ef342c7c68fe7c6e0a2a"
     },
     {
+      "path": "src/lib/receiving.js",
+      "bytes": 8089,
+      "sha256": "0441c9353115ec358692d0e804423935c5e162186a2beb686b1f2b2dba640cde"
+    },
+    {
       "path": "src/routes/admin.js",
       "bytes": 5533,
       "sha256": "5527ee789ab4f2ba8cbae33796d3c0b965d0abee8b95e21db02af39546215955"
     },
     {
       "path": "src/routes/atlas.js",
-      "bytes": 8750,
-      "sha256": "b41637e32b481e5784c4a414d042b140217fc7fa02b1a5ccdcde1c4ddba3416c"
+      "bytes": 8893,
+      "sha256": "0fcc1204e23c6b89a1a0a3489c7f7d923765515c69e0a65eb506655a07eb47e5"
     },
     {
       "path": "src/routes/checklists.js",
@@ -421,8 +451,8 @@
     },
     {
       "path": "src/routes/dashboard.js",
-      "bytes": 4187,
-      "sha256": "11ee8dd97f5043025c6a32fcbb3b49c33894afab81e72c8172c3e2158aa5ce9a"
+      "bytes": 4253,
+      "sha256": "5c0a4b9a2912fecbf12d44e2657b8261921395e3af4c59a1175df757a87023de"
     },
     {
       "path": "src/routes/deliveries.js",
@@ -431,8 +461,8 @@
     },
     {
       "path": "src/routes/inventory.js",
-      "bytes": 5649,
-      "sha256": "33a2c5d30f48ee28cf82d24fdb4a8f7d6d16e43db1861138a69e3c20673c7d86"
+      "bytes": 5888,
+      "sha256": "77b7076ba57aa360568166b0ca1a42a06c0477a04dd7503689c1f2b0ddd7b5ad"
     },
     {
       "path": "src/routes/masters.js",
@@ -441,8 +471,8 @@
     },
     {
       "path": "src/routes/planning.js",
-      "bytes": 2038,
-      "sha256": "f27e5cf6d0ed100a2fde4ff0d4d523031dcbe67467279e7dd1cdaee47a8f2039"
+      "bytes": 7243,
+      "sha256": "016d0fbadf4c97fbf04eb19e5e48268351255f6643a62dec0d39b35502c52d20"
     },
     {
       "path": "src/routes/procurement.js",
@@ -451,8 +481,8 @@
     },
     {
       "path": "src/routes/receiving.js",
-      "bytes": 7825,
-      "sha256": "33e0ece5715b070a7b4e6fd1e53da79e876b2f114e6562599623476c90a75246"
+      "bytes": 12241,
+      "sha256": "9fa570f7b7e0292503ea393d6b9ddbf1e87f9b181c2dffde71d8748ce59e001e"
     },
     {
       "path": "src/routes/requisitions.js",
@@ -476,8 +506,8 @@
     },
     {
       "path": "src/routes/shipments.js",
-      "bytes": 4536,
-      "sha256": "320a116803b563370bd02c6a1854fd724172362222260eafd381cd3175276c43"
+      "bytes": 5083,
+      "sha256": "63eb7ee0606a58c75888c4f9c11b17f6e84980c1b2e1b6e2baa2cb196f2b689c"
     },
     {
       "path": "src/routes/stations.js",
@@ -490,9 +520,14 @@
       "sha256": "cb3c47e6177eddc41b9e1120a58e020180533c7a5cf34ffed0b505ce3587b3f4"
     },
     {
+      "path": "test/receiving.test.mjs",
+      "bytes": 922,
+      "sha256": "8d7d8e78695954544602a1ebd518b363b636d6ddfd39f9549d01cff29f217610"
+    },
+    {
       "path": "wrangler.toml",
-      "bytes": 719,
-      "sha256": "d0c0709720644b1d65a3a8cafb2f3cfe2193614c5aeb84f35449a783a447166e"
+      "bytes": 722,
+      "sha256": "0135dfaec181f7b58b16efe519d63af574d6df63140dda4b5c62073e2356b464"
     }
   ]
 }

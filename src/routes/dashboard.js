@@ -9,8 +9,8 @@ dashboardRoutes.use('*', requirePermission('DASHBOARD','VIEW'));
 dashboardRoutes.get('/', async (c) => {
   const db = c.env.DB;
   const [assetRows, shipmentRows, salesRows, recentRows] = await Promise.all([
-    all(db, `SELECT category,current_status status,COUNT(*) qty
-             FROM erp_assets WHERE active=1 GROUP BY category,current_status ORDER BY category,current_status`),
+    all(db, `SELECT kpi_category category,current_status status,COUNT(*) qty
+             FROM vw_erp_serialized_assets GROUP BY kpi_category,current_status ORDER BY kpi_category,current_status`),
     all(db, `SELECT status,COUNT(*) qty FROM erp_shipments GROUP BY status`),
     all(db, `SELECT transaction_type,status,COUNT(*) qty,COALESCE(SUM(gross_amount),0) amount
              FROM erp_sales_orders GROUP BY transaction_type,status`),
@@ -28,7 +28,7 @@ dashboardRoutes.get('/', async (c) => {
     first(db, `SELECT COUNT(*) n FROM erp_reconciliation_cases WHERE status='UNRECONCILED'`),
     first(db, `SELECT COUNT(*) n FROM erp_requisitions WHERE status NOT IN ('CLOSED','CANCELLED','DONE')`),
     first(db, `SELECT COUNT(*) n FROM erp_deliveries WHERE status NOT IN ('DELIVERED','CANCELLED')`),
-    first(db, `SELECT COUNT(*) n FROM erp_assets WHERE active=1 AND current_status IN ('AVAILABLE','IN_STOCK') AND reconciliation_status='CLEAR'`),
+    first(db, `SELECT COUNT(*) n FROM vw_erp_serialized_assets WHERE current_status IN ('AVAILABLE','IN_STOCK') AND reconciliation_status='CLEAR'`),
     first(db, `SELECT COUNT(*) n FROM erp_serial_exceptions WHERE status='OPEN'`),
   ]);
 
@@ -51,14 +51,14 @@ dashboardRoutes.get('/detail/:metric', async (c) => {
   const db = c.env.DB;
   const metric = c.req.param('metric');
   let rows = [];
-  if (metric === 'available-assets') rows = await all(db, `SELECT serial_no,item_code,item_name,category,current_status,current_location_code FROM erp_assets WHERE active=1 AND current_status IN ('AVAILABLE','IN_STOCK') AND reconciliation_status='CLEAR' ORDER BY category,item_code LIMIT 500`);
+  if (metric === 'available-assets') rows = await all(db, `SELECT serial_no,item_code,item_name,kpi_category category,current_status,current_location_code FROM vw_erp_serialized_assets WHERE current_status IN ('AVAILABLE','IN_STOCK') AND reconciliation_status='CLEAR' ORDER BY category,item_code LIMIT 500`);
   else if (metric === 'unreconciled') rows = await all(db, `SELECT case_no,case_type,expected_serial,actual_serial,related_motorcycle_serial,current_location_code,status,opened_at FROM erp_reconciliation_cases WHERE status='UNRECONCILED' ORDER BY opened_at DESC LIMIT 500`);
   else if (metric === 'requisitions') rows = await all(db, `SELECT requisition_no,request_date,requestor_name,department,purpose,destination,status FROM erp_requisitions WHERE status NOT IN ('CLOSED','CANCELLED','DONE') ORDER BY request_date DESC LIMIT 500`);
   else if (metric === 'deliveries') rows = await all(db, `SELECT delivery_no,scheduled_date,destination,recipient_name,status,source_system,source_key FROM erp_deliveries WHERE status NOT IN ('DELIVERED','CANCELLED') ORDER BY scheduled_date LIMIT 500`);
   else if (metric === 'serial-exceptions') rows = await all(db, `SELECT exception_no,serial_no,exception_type,source_system,source_sheet,source_row,status,created_at FROM erp_serial_exceptions WHERE status='OPEN' ORDER BY created_at DESC LIMIT 500`);
   else if (metric.startsWith('inventory-')) {
     const [, category, status] = metric.split('-');
-    rows = await all(db, `SELECT serial_no,item_code,item_name,category,current_status,current_location_code,current_holder_name,reconciliation_status FROM erp_assets WHERE category=? AND current_status=? ORDER BY item_name,serial_no LIMIT 1000`, [category.toUpperCase(), status.toUpperCase()]);
+    rows = await all(db, `SELECT serial_no,item_code,item_name,kpi_category category,current_status,current_location_code,current_holder_name,reconciliation_status FROM vw_erp_serialized_assets WHERE kpi_category=? AND current_status=? ORDER BY item_name,serial_no LIMIT 1000`, [category.toUpperCase(), status.toUpperCase()]);
   }
   return ok(c, { metric, rows });
 });

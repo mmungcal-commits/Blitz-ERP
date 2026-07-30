@@ -1,5 +1,17 @@
 # Changelog
 
+## 8.1.0
+- Added ATLAS expected-shipment policy.
+- Added shipment-based Receiving Workbench with expected and actual serial controls.
+- Added receiving validation, serial substitution, over-receipt, unplanned serial, duplicate serial, and unexpected item classifications.
+- Added expected-to-actual match and receiving variance tables.
+- Added QR population for actual receiving rows.
+- Added canonical physical-asset KPI view and suffix-duplicate exclusion.
+- Rebuilt Budget and Forecast as an Excel-style editable monthly grid.
+- Reworked the UI toward a dense Ramco-style enterprise workbench.
+- Added transparent official E88 logo asset.
+- Added safe v8.1 upgrade-and-deploy GitHub workflow.
+
 ## 7.1.0 — Connected ERP rebuild
 
 - Replaced isolated file-style workflows with one serial-level Supply Chain and Sales transaction engine.

@@ -11,20 +11,22 @@ export const inventoryRoutes = new Hono();
 inventoryRoutes.get('/', requirePermission('INVENTORY','VIEW'), async(c)=>{
   const {page,size,offset}=pageParams(c);
   const q=`%${normalizeText(c.req.query('q'))}%`; const category=normalizeText(c.req.query('category')); const status=normalizeText(c.req.query('status')); const location=normalizeText(c.req.query('location')); const recon=normalizeText(c.req.query('reconciliation'));
+  const includeExceptions=String(c.req.query('includeExceptions')||'').toLowerCase()==='true';
+  const source=includeExceptions?'erp_assets':'vw_erp_serialized_assets';
   const where=['a.active=1']; const args=[];
   if(q!=='%%'){where.push('(a.serial_no LIKE ? OR a.secondary_serial LIKE ? OR a.item_code LIKE ? OR a.item_name LIKE ? OR a.current_holder_name LIKE ?)');args.push(q,q,q,q,q);}
-  if(category){where.push('a.category=?');args.push(category);}
+  if(category){where.push(includeExceptions?'a.category=?':'a.kpi_category=?');args.push(category);}
   if(status){where.push('a.current_status=?');args.push(status);}
   if(location){where.push('a.current_location_code=?');args.push(location);}
   if(recon){where.push('a.reconciliation_status=?');args.push(recon);}
   const sqlWhere=where.join(' AND ');
-  const rows=await all(c.env.DB,`SELECT a.* FROM erp_assets a WHERE ${sqlWhere} ORDER BY a.category,a.item_name,a.serial_no LIMIT ? OFFSET ?`,[...args,size,offset]);
-  const total=await first(c.env.DB,`SELECT COUNT(*) n FROM erp_assets a WHERE ${sqlWhere}`,args);
+  const rows=await all(c.env.DB,`SELECT a.* FROM ${source} a WHERE ${sqlWhere} ORDER BY a.category,a.item_name,a.serial_no LIMIT ? OFFSET ?`,[...args,size,offset]);
+  const total=await first(c.env.DB,`SELECT COUNT(*) n FROM ${source} a WHERE ${sqlWhere}`,args);
   return ok(c,{rows,page,size,total:total?.n||0});
 });
 
 inventoryRoutes.get('/summary', requirePermission('INVENTORY','VIEW'), async(c)=>{
-  const rows=await all(c.env.DB,`SELECT category,current_status,reconciliation_status,current_location_code,COUNT(*) qty FROM erp_assets WHERE active=1 GROUP BY category,current_status,reconciliation_status,current_location_code ORDER BY category,current_location_code,current_status`);
+  const rows=await all(c.env.DB,`SELECT kpi_category category,current_status,reconciliation_status,current_location_code,COUNT(*) qty FROM vw_erp_serialized_assets WHERE active=1 GROUP BY kpi_category,current_status,reconciliation_status,current_location_code ORDER BY kpi_category,current_location_code,current_status`);
   return ok(c,{rows});
 });
 

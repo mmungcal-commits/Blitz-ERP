@@ -7,6 +7,7 @@ from openpyxl import load_workbook
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 REPORTS=ROOT/'reports'
 SCHEMA_FILES=['schema.sql','schema2.sql','schema4.sql','schema7.sql','alter_users.sql','data.sql','migrations/0008_connected_erp.sql','migrations/0010_procurement_sales_controls.sql','migrations/0011_finance_planning_registers.sql']
+POST_LOAD_FILES=['migrations/0012_ramco_enterprise.sql','migrations/0013_atlas_receiving_workbench.sql']
 
 def scalar(db,sql,args=()): return db.execute(sql,args).fetchone()[0]
 
@@ -20,6 +21,7 @@ def main():
         db.executescript((ROOT/f).read_text(encoding='utf-8',errors='ignore'))
     chunks=sorted((ROOT/'migrations/opening').glob('*_opening_data.sql'))
     for f in chunks: db.executescript(f.read_text(encoding='utf-8'))
+    for f in POST_LOAD_FILES: db.executescript((ROOT/f).read_text(encoding='utf-8',errors='ignore'))
     db.execute('PRAGMA foreign_keys=ON')
 
     fk=db.execute('PRAGMA foreign_key_check').fetchall()
@@ -28,6 +30,10 @@ def main():
     test('Actual source workbooks embedded',scalar(db,'select count(*) from erp_opening_data_control')==14,scalar(db,'select count(*) from erp_opening_data_control'))
     test('Source rows archived',scalar(db,'select count(*) from erp_import_rows')>=20000,scalar(db,'select count(*) from erp_import_rows'))
     test('Canonical assets loaded',scalar(db,'select count(*) from erp_assets')>=8000,scalar(db,'select count(*) from erp_assets'))
+    test('Asset quality classification covers all assets',scalar(db,'select count(*) from erp_asset_quality')==scalar(db,'select count(*) from erp_assets'),scalar(db,'select count(*) from erp_asset_quality'))
+    test('Dashboard canonical view excludes non-physical and duplicate rows',scalar(db,'select count(*) from vw_erp_serialized_assets')<scalar(db,'select count(*) from erp_assets'),scalar(db,'select count(*) from vw_erp_serialized_assets'))
+    test('ATLAS receiving match control installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_expected_receipt_matches'")==1)
+
     test('No duplicate canonical asset serials',scalar(db,'select count(*) from (select serial_no from erp_assets group by serial_no having count(*)>1)')==0)
     test('Duplicate serial evidence preserved',scalar(db,"select count(*) from erp_serial_exceptions where exception_type='DUPLICATE_MASTER_SERIAL'")>0,scalar(db,'select count(*) from erp_serial_exceptions'))
     test('Shipments created from STELLAR/ATLAS',scalar(db,'select count(*) from erp_shipments')>=20,scalar(db,'select count(*) from erp_shipments'))
@@ -99,7 +105,7 @@ def main():
 
     passed=sum(1 for _,ok,_ in tests if ok); total=len(tests)
     REPORTS.mkdir(exist_ok=True)
-    lines=['# E88 FinSys v7.1 Self-Test Report','',f'Generated: {datetime.now().isoformat(timespec="seconds")}',f'**Result: {passed}/{total} tests passed.**','']
+    lines=['# E88 FinSys v8.1 Self-Test Report','',f'Generated: {datetime.now().isoformat(timespec="seconds")}',f'**Result: {passed}/{total} tests passed.**','']
     for name,ok,detail in tests:
         lines.append(f'- [{"x" if ok else " "}] **{name}** — {detail}')
     lines += ['','## Loaded operational counts','', '| Table | Rows |','|---|---:|']+[f'| `{k}` | {v:,} |' for k,v in counts.items()]
@@ -108,7 +114,7 @@ def main():
     lines += ['','## Test boundary','', 'The package was tested locally against SQLite using the complete schema, legacy opening data, connected ERP migrations, and all generated opening-data chunks. Live Cloudflare Access, R2 uploads, D1 concurrency, and the production Workers deployment must still be smoke-tested after deployment because those services are not available in the local container.']
     (REPORTS/'SELF_TEST_REPORT.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
 
-    dl=['# E88 FinSys v7.1 Data Load Report','',f'Generated: {datetime.now().isoformat(timespec="seconds")}', '', '## Actual source workbooks', '', '| Source | Archived operational rows |','|---|---:|']
+    dl=['# E88 FinSys v8.1 Data Load Report','',f'Generated: {datetime.now().isoformat(timespec="seconds")}', '', '## Actual source workbooks', '', '| Source | Archived operational rows |','|---|---:|']
     dl += [f'| {k} | {v:,} |' for k,v in source_rows.items()]
     dl += ['','## Canonicalization policy','', '- One canonical asset is retained for each normalized serial number.', '- Duplicate master occurrences are preserved as open serial exceptions; they are not deleted.', '- Operational references across STAR, STAKU, SATURN, ATLAS, requisitions, checklists, and warehouse documents link back to the canonical asset.', '- Battery serial swaps on return are accepted into quarantine and remain `UNRECONCILED` until reviewed.', '- Missing item descriptions automatically receive category-based item codes. Runtime sequences are advanced past every migrated code.', '- Legacy password columns are redacted from both the database source archive and the deployable workbook copy. All non-credential operational fields remain included.']
     (REPORTS/'DATA_LOAD_REPORT.md').write_text('\n'.join(dl)+'\n',encoding='utf-8')

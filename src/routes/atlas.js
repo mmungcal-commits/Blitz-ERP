@@ -109,19 +109,20 @@ atlasRoutes.post('/:id/commit', requirePermission('SHIPMENTS','POST'), async(c)=
         const existingAsset=await first(c.env.DB,`SELECT id,serial_no FROM erp_assets WHERE serial_no=?`,[row.serialNo]);
         const existingExpected=await first(c.env.DB,`SELECT id FROM erp_expected_assets WHERE shipment_id=? AND serial_no=?`,[shipment.id,row.serialNo]);
         if(existingExpected)continue;
+        let expectedStatus='EXPECTED';
         if(existingAsset){
+          expectedStatus='EXPECTED_EXCEPTION';
           const exNo=await nextCode(c.env.DB,'EXCEPTION','EXC',6);
           await run(c.env.DB,
             `INSERT INTO erp_serial_exceptions(exception_no,serial_no,exception_type,source_system,source_sheet,source_row,canonical_asset_id,payload_json)
              VALUES(?,?,'DUPLICATE_ATLAS_SERIAL','ATLAS',?,?,?,?)`,
-            [exNo,row.serialNo,row.sourceSheet,row.sourceRow,existingAsset.id,JSON.stringify(row)]);
-          await run(c.env.DB,`UPDATE erp_import_rows SET validation_status='EXCEPTION',validation_message=?,posted_record_type='SERIAL_EXCEPTION' WHERE id=?`,[`Serial already exists as asset ${existingAsset.id}`,row.importRowId]);
-          continue;
+            [exNo,row.serialNo,row.sourceSheet,row.sourceRow,existingAsset.id,JSON.stringify({shipmentNo:shipment.shipment_no,...row})]);
+          await run(c.env.DB,`UPDATE erp_import_rows SET validation_status='EXCEPTION',validation_message=? WHERE id=?`,[`Serial already exists as asset ${existingAsset.id}; retained as shipment expectation for review`,row.importRowId]);
         }
         const er=await run(c.env.DB,
-          `INSERT INTO erp_expected_assets(shipment_id,shipment_line_id,serial_no,serial_type,item_id,item_code,manufacturer,model,color,secondary_serial,batch_code,source_sheet,source_row)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [shipment.id,line.id,row.serialNo,row.serialType,item.id,item.item_code,row.manufacturer,row.model,row.color,row.secondarySerial,row.batchCode,row.sourceSheet,row.sourceRow]);
+          `INSERT INTO erp_expected_assets(shipment_id,shipment_line_id,serial_no,serial_type,item_id,item_code,manufacturer,model,color,secondary_serial,batch_code,expected_status,source_sheet,source_row)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [shipment.id,line.id,row.serialNo,row.serialType,item.id,item.item_code,row.manufacturer,row.model,row.color,row.secondarySerial,row.batchCode,expectedStatus,row.sourceSheet,row.sourceRow]);
         await run(c.env.DB,`UPDATE erp_import_rows SET posted_record_type='EXPECTED_ASSET',posted_record_id=? WHERE id=?`,[er.meta.last_row_id,row.importRowId]);
       }
     }
