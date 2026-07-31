@@ -26,6 +26,11 @@ inventoryRoutes.get('/', requirePermission('INVENTORY','VIEW'), async(c)=>{
   return ok(c,{rows,page,size,total:total?.n||0});
 });
 
+inventoryRoutes.get('/by-class', requirePermission('INVENTORY','VIEW'), async(c)=>{
+  const rows=await all(c.env.DB,`SELECT COALESCE(NULLIF(i.category,''),'OTH') cls, COUNT(*) total, SUM(CASE WHEN a.current_status IN ('AVAILABLE','IN_STOCK') THEN 1 ELSE 0 END) available FROM erp_assets a LEFT JOIN erp_items i ON i.id=a.item_id WHERE a.active=1 GROUP BY cls ORDER BY total DESC`);
+  return ok(c,{rows});
+});
+
 inventoryRoutes.get('/summary', requirePermission('INVENTORY','VIEW'), async(c)=>{
   const rows=await all(c.env.DB,`SELECT kpi_category category,current_status,reconciliation_status,current_location_code,COUNT(*) qty FROM vw_erp_serialized_assets WHERE active=1 GROUP BY kpi_category,current_status,reconciliation_status,current_location_code ORDER BY kpi_category,current_location_code,current_status`);
   return ok(c,{rows});

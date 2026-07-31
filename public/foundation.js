@@ -338,8 +338,19 @@ async function openSection(section){
   if(state.module.code==='sd-outbound-logistics')return renderOutboundWorkspace(section);
   if(state.module.code==='sd-order-management')return renderSalesOrderWorkspace(section);
   if(state.module.code==='ip-sourcing-purchasing')return renderSourcingWorkspace(section);
+  if(state.module.code==='qm-inspection-sampling')return renderQualityWorkspace(section);
   return renderConnectedModuleWorkspace(section);
 }
+async function renderQualityWorkspace(section){
+  content.innerHTML='<div class="workspace-loading">Loading quality inspections...</div>';
+  try{
+    let __all=[];for(let __p=1;__p<=8;__p++){const __rg=await api('/checklists?size=250&page='+__p);const __rr=(__rg.rows||[]);__all=__all.concat(__rr);if(__rr.length<250)break;}
+    const rows=__all.map(r=>`<tr><td><b>${esc(r.checklist_no)}</b></td><td>${esc((r.serial_no||'').slice(0,48))}</td><td>${statusBadge(r.result)}</td><td>${esc(r.approved_by||'-')}</td><td>${esc((r.created_at||'').slice(0,10))}</td></tr>`);
+    const body=`<section class="workspace-card"><header><div><h2>Inspection & Sampling - Pre-release Register</h2><span>All ${__all.length} inspection records (actuals).</span></div></header>${operationalTable(['Checklist #','Serial / Unit','Result','Approved By','Recorded'],rows)}</section>`;
+    content.innerHTML=workbenchShell(body,section);
+  }catch(error){showWorkspaceError(error);}
+}
+
 function kpi(label,value){
   return `<article class="workspace-kpi"><span>${esc(label)}</span><strong>${esc(value)}</strong></article>`;
 }
@@ -1602,7 +1613,7 @@ async function renderPreRelease(){
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],1)}
       <section class="workspace-card"><header><div><h2>Pre-release Checklist Worklist</h2><span>Motorcycles require a passed inspection before goods issuance.</span></div></header>
         ${operationalTable(['Requisition','Serial','Unit','Location','Result','Checked','Action'],rows)}</section>`;
-    content.innerHTML=workbenchShell(body,'approvals');bindOperationalShell();
+    let __regRows=[];try{let __all=[];for(let __p=1;__p<=8;__p++){const __rg=await api('/checklists?size=250&page='+__p);const __rr=(__rg.rows||[]);__all=__all.concat(__rr);if(__rr.length<250)break;}__regRows=__all.map(r=>`<tr><td><b>${esc(r.checklist_no)}</b></td><td>${esc((r.serial_no||'').slice(0,48))}</td><td>${statusBadge(r.result)}</td><td>${esc(r.approved_by||'-')}</td><td>${esc((r.created_at||'').slice(0,10))}</td></tr>`);}catch(e){}const __regBody=`<section class="workspace-card"><header><div><h2>Pre-release Checklist Register</h2><span>All ${__regRows.length} inspection records (actuals).</span></div></header>${operationalTable(['Checklist #','Serial / Unit','Result','Approved By','Recorded'],__regRows)}</section>`;content.innerHTML=workbenchShell(body+__regBody,'approvals');bindOperationalShell();
     $$('[data-precheck]').forEach(button=>button.onclick=async()=>{
       const failed=button.dataset.result==='FAILED';
       const defects=failed?prompt('Enter the detected defects. The unit will not be released.'):'';
@@ -1727,6 +1738,7 @@ async function renderWarehouseOverview(){
     content.innerHTML=workbenchShell(body,'center');
     bindOperationalShell();
     $$('[data-location-filter]').forEach(row=>row.onclick=()=>renderWarehouseVisibility(row.dataset.locationFilter));
+    try{const __bc=await api('/inventory/by-class');const __agg={};(__bc.rows||[]).forEach(r=>{const k=r.cls||'OTH';__agg[k]={t:(r.total||0),a:(r.available||0)};});const __nm={MC:'Motorcycle',BAT:'Battery',BSS:'Battery Station',CHG:'Charger',SP:'Spare Parts',OTH:'Other'};const __rows=Object.keys(__agg).sort((x,y)=>__agg[y].t-__agg[x].t).map(k=>`<tr><td><b>${esc(__nm[k]||k)}</b></td><td>${__agg[k].t}</td><td>${__agg[k].a}</td></tr>`);const __sec=document.createElement('section');__sec.className='workspace-card';__sec.innerHTML=`<header><div><h2>Stock by Class</h2><span>Serialized units grouped by class.</span></div></header>${operationalTable(['Class','Total Units','Available'],__rows)}`;__sec.id='stock-by-class-panel';const __canvas=document.querySelector('.workbench-canvas');if(__canvas&&!__canvas.querySelector('#stock-by-class-panel'))__canvas.insertBefore(__sec,__canvas.firstChild);}catch(e){}
   }catch(error){showWorkspaceError(error);}
 }
 

@@ -22,6 +22,3 @@ APP_ADMIN_EMAIL = "mmungcal@nrdev.ph"
 APP_TIMEZONE = "Asia/Manila"
 
 # Controlled document storage for lease contracts and ERP supporting files.
-[[r2_buckets]]
-binding = "DOCS"
-bucket_name = "e88-finsys-documents"

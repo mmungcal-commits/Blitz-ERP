@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-29T17:31:09.864469",
+  "generated_at": "2026-07-31T02:32:52.328112",
   "source_files": [
     "ATLAS - Asset Manifest (1).xlsx",
     "STELLAR _ Shipment.xlsx",
@@ -25,8 +25,8 @@
     "erp_locations": 566,
     "erp_partners": 552,
     "erp_items": 761,
-    "erp_import_batches": 14,
-    "erp_import_rows": 24118,
+    "erp_import_batches": 0,
+    "erp_import_rows": 0,
     "erp_purchase_orders": 20,
     "erp_purchase_order_lines": 20,
     "erp_landed_cost_headers": 8,
@@ -63,7 +63,7 @@
     "erp_payment_register": 1261,
     "erp_budget_plan": 133,
     "erp_planning_drivers": 4096,
-    "erp_opening_data_control": 14
+    "erp_opening_data_control": 0
   },
   "chunks": [
     "0001_opening_data.sql",
@@ -74,11 +74,7 @@
     "0006_opening_data.sql",
     "0007_opening_data.sql",
     "0008_opening_data.sql",
-    "0009_opening_data.sql",
-    "0010_opening_data.sql",
-    "0011_opening_data.sql",
-    "0012_opening_data.sql",
-    "0013_opening_data.sql"
+    "0009_opening_data.sql"
   ],
-  "statements": 64471
+  "statements": 40325
 }
