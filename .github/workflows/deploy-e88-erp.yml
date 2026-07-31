@@ -1,0 +1,176 @@
+name: Deploy E88 ERP with D1 and R2
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type E88_ROLLOUT_DEPLOY to continue
+        required: true
+        type: string
+      database_mode:
+        description: Choose how the configured D1 database will be prepared
+        required: true
+        default: upgrade_existing
+        type: choice
+        options:
+          - upgrade_existing
+          - bootstrap_empty_database
+      ensure_r2_bucket:
+        description: Create or verify the e88-erp-documents R2 bucket
+        required: true
+        default: true
+        type: boolean
+      run_smoke_test:
+        description: Verify the Worker, D1 binding, R2 binding, and build after deployment
+        required: true
+        default: true
+        type: boolean
+      deployment_url:
+        description: Live Worker URL used for the smoke test
+        required: true
+        default: https://e88-finsys.nrd-e88.workers.dev
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  E88_BUILD: E88-ROLLOUT-ERP-20260731-R13.1
+  R2_BUCKET: e88-erp-documents
+
+jobs:
+  deploy:
+    if: ${{ inputs.confirmation == 'E88_ROLLOUT_DEPLOY' }}
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 40
+
+    steps:
+      - name: Check out rollout source
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Validate deployment inputs and secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.confirmation }}" = "E88_ROLLOUT_DEPLOY"
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "Missing CLOUDFLARE_API_TOKEN secret"; exit 1; }
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo "Missing CLOUDFLARE_ACCOUNT_ID secret"; exit 1; }
+          grep -q 'binding = "DB"' wrangler.toml
+          grep -q 'binding = "DOCS"' wrangler.toml
+          grep -q 'bucket_name = "e88-erp-documents"' wrangler.toml
+
+      - name: Install and validate the complete build
+        run: |
+          npm ci
+          python3 -m pip install --disable-pip-version-check openpyxl
+          npm run check
+          npm run test:unit
+          npm run test:data
+          npm run test:integration
+
+      - name: Confirm Cloudflare authentication
+        run: npx wrangler whoami
+
+      - name: Ensure exact R2 document bucket
+        if: ${{ inputs.ensure_r2_bucket }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          OUTPUT=$(npx wrangler r2 bucket create "$R2_BUCKET" 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          if [ "$STATUS" -ne 0 ] && ! echo "$OUTPUT" | grep -Eqi 'already exists|already been taken'; then
+            echo "Unable to create or verify R2 bucket $R2_BUCKET"
+            exit "$STATUS"
+          fi
+          echo "R2 bucket ready: $R2_BUCKET"
+
+      - name: Verify existing D1 prerequisite
+        if: ${{ inputs.database_mode == 'upgrade_existing' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute DB --remote --command="SELECT acquisition_cost,valuation_status FROM erp_assets LIMIT 1;"
+          echo "Existing connected schema detected. Applying rollout-safe v13 and v13.1 extensions."
+
+      - name: Upgrade existing D1 without replacing records
+        if: ${{ inputs.database_mode == 'upgrade_existing' }}
+        run: |
+          npx wrangler d1 execute DB --remote --file=migrations/0021_rollout_specialist_engines.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0022_inventory_class_r2_rollout.sql
+
+      - name: Confirm D1 is empty before bootstrap
+        if: ${{ inputs.database_mode == 'bootstrap_empty_database' }}
+        run: node scripts/verify-empty-d1.mjs
+
+      - name: Bootstrap empty D1 with approved opening records
+        if: ${{ inputs.database_mode == 'bootstrap_empty_database' }}
+        env:
+          E88_BOOTSTRAP_CONFIRM: E88_NEW_DATABASE
+        run: node scripts/apply-database.mjs --remote --confirm=E88_NEW_DATABASE
+
+      - name: Show D1 record counts before deployment
+        shell: bash
+        run: |
+          npx wrangler d1 execute DB --remote --command="SELECT 'items' record_type,COUNT(*) records FROM erp_items UNION ALL SELECT 'serialized_assets',COUNT(*) FROM erp_assets UNION ALL SELECT 'stock_movements',COUNT(*) FROM erp_stock_ledger UNION ALL SELECT 'enterprise_records',COUNT(*) FROM erp_enterprise_records;"
+
+      - name: Deploy Worker with D1 and R2 bindings
+        uses: cloudflare/wrangler-action@v3
+        env:
+          E88_DEPLOY_CONFIRM: CONNECTED_SCHEMA_INSTALLED
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
+      - name: Verify live Worker, D1, and R2
+        if: ${{ inputs.run_smoke_test }}
+        shell: bash
+        env:
+          DEPLOYMENT_URL: ${{ inputs.deployment_url }}
+        run: |
+          set -euo pipefail
+          BASE="${DEPLOYMENT_URL%/}"
+          for attempt in $(seq 1 12); do
+            HEALTH=$(curl -fsS --max-time 25 -H 'Cache-Control: no-cache' "$BASE/api/health" || true)
+            echo "Attempt $attempt: $HEALTH"
+            if echo "$HEALTH" | grep -q "$E88_BUILD" \
+              && echo "$HEALTH" | grep -q '"d1Bound":true' \
+              && echo "$HEALTH" | grep -q '"r2Bound":true' \
+              && echo "$HEALTH" | grep -q '"d1Ready":true' \
+              && echo "$HEALTH" | grep -q '"r2Ready":true'; then
+              INDEX=$(curl -fsS --max-time 25 -H 'Cache-Control: no-cache' "$BASE/")
+              echo "$INDEX" | grep -q 'foundation.js?v=1310-rollout'
+              echo "Live rollout verification passed. D1 and R2 are bound."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Live verification failed. Check the deployment URL, Cloudflare Access policy, Worker logs, and bindings."
+          exit 1
+
+      - name: Deployment summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## E88 ERP deployment"
+            echo "- Build: $E88_BUILD"
+            echo "- Database mode: ${{ inputs.database_mode }}"
+            echo "- D1 binding: DB"
+            echo "- R2 binding: DOCS"
+            echo "- R2 bucket: $R2_BUCKET"
+            echo "- Deployment URL: ${{ inputs.deployment_url }}"
+            echo "- Inventory policy: motorcycles, batteries, lockers/BSS, chargers, spare parts, and other inventory remain separate"
+          } >> "$GITHUB_STEP_SUMMARY"
