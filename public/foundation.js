@@ -3221,7 +3221,28 @@ init();
   const read=()=>{try{return JSON.parse(localStorage.getItem(LS))||{};}catch(e){return {};}};
   const write=s=>localStorage.setItem(LS,JSON.stringify(s));
   const S=Object.assign({branding:{},groups:{},items:{},order:{},added:{groups:[],items:{}},tables:{}},read());
+
   const persist=()=>write(S);
+  // --- Generic clickable-row record inspector (makes every table row open its details) ---
+  (function(){const st=document.createElement('style');st.textContent='.cz-inspectable{cursor:pointer}.cz-inspectable:hover>td{background:#eef7fc!important}';document.head.appendChild(st);})();
+  function czOpenRowDetail(headers,tr){
+    const cells=[...tr.children];
+    const first=(cells[0]?cells[0].textContent.trim():'')||'Record';
+    const fields=headers.map((h,i)=>({label:h||('Column '+(i+1)),value:cells[i]?cells[i].textContent.replace(/\s+/g,' ').trim():''})).filter(f=>f.value!=='');
+    const body='<div class="inventory-detail-grid">'+fields.map(f=>'<div><small>'+esc2(f.label)+'</small><b>'+esc2(f.value)+'</b></div>').join('')+'</div>';
+    try{modal('Record \u00b7 '+first,body,'Full details for this row');}catch(e){}
+  }
+  function czWireRowInspector(table){
+    if(table.__czRowWired)return; table.__czRowWired=true;
+    const headers=[...table.querySelectorAll('thead th')].map(th=>th.textContent.replace(/[\u25b2\u25bc]/g,'').trim());
+    table.querySelectorAll('tbody tr').forEach(tr=>{
+      if(tr.classList.contains('clickable-row'))return;
+      if(![...tr.children].some(td=>(td.textContent||'').trim()))return;
+      if(tr.querySelector('[colspan]'))return;
+      tr.classList.add('cz-inspectable');
+      tr.addEventListener('click',ev=>{ if(ev.target.closest('button,a,input,select,textarea,label'))return; czOpenRowDetail(headers,tr); });
+    });
+  }
   const esc2=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
   /* ---------- catalog overrides (data level, re-applied every render) ---------- */
@@ -3450,8 +3471,10 @@ init();
       th.addEventListener('contextmenu',ev=>{ev.preventDefault();columnMenu(wrap,i,ev.clientX,ev.clientY);});
     });
   }
-  function applyAllTables(){$$('.record-table-wrap[data-table-key]').forEach(w=>{wireTable(w);applyTable(w);});}
-  const obs=new MutationObserver(()=>{applyAllTables();});
+  function applyAllTables(){$$('.record-table-wrap[data-table-key]').forEach(w=>{wireTable(w);applyTable(w);});$$('table.record-table').forEach(czWireRowInspector);}
+  let _czTimer=null;
+  function scheduleApply(){ if(_czTimer)return; _czTimer=setTimeout(()=>{_czTimer=null;try{applyAllTables();}catch(e){}},200); }
+  const obs=new MutationObserver(muts=>{ if(muts.some(m=>m.addedNodes&&m.addedNodes.length))scheduleApply(); });
   obs.observe(document.body,{childList:true,subtree:true});
 
   // expose for debugging / advanced use
