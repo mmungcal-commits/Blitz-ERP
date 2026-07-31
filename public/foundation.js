@@ -299,6 +299,7 @@ function renderLaunchpad(){
   state.module=null;
   state.definition=null;
   state.section='center';
+  if(localStorage.getItem('e88-expanded-groups')===null){state.catalog.groups.forEach(group=>state.expandedGroups.add(group.code));}
   document.body.classList.remove('workbench-view');
   document.body.classList.add('launchpad-view');
   content.innerHTML=`<section class="enterprise-launchpad">
@@ -1398,17 +1399,31 @@ async function renderExpectedShipments(){
   }catch(error){showWorkspaceError(error);}
 }
 
+async function loadJsQR(){
+  if(window.jsQR)return window.jsQR;
+  const tryLoad=src=>new Promise((res,rej)=>{const el=document.createElement('script');el.src=src;el.onload=()=>res(window.jsQR);el.onerror=rej;document.head.appendChild(el);});
+  try{return await tryLoad('https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js');}
+  catch(e){try{return await tryLoad('https://unpkg.com/jsqr@1.4.0/dist/jsQR.js');}catch(e2){return null;}}
+}
 async function scanQrWithCamera(onScan){
-  if(!navigator.mediaDevices?.getUserMedia||!('BarcodeDetector' in window)){
-    toast('Camera QR detection is not supported on this browser. Use manual serial entry.','error');
+  if(!navigator.mediaDevices?.getUserMedia){
+    toast('Camera is not available on this device. Use manual serial entry.','error');
+    return;
+  }
+  const hasDetector=('BarcodeDetector' in window);
+  let jsqr=null;
+  if(!hasDetector){jsqr=await loadJsQR();}
+  if(!hasDetector&&!jsqr){
+    toast('QR scanning needs a connection on this browser (Android scans offline). Use manual entry.','error');
     return;
   }
   let stream;
   let stopped=false;
-  modal('Scan QR / serial',`<div class="scanner"><video id="qrVideo" playsinline autoplay></video><p>Point the camera at the unit QR code.</p><button class="command" id="stopScanner">Close scanner</button></div>`);
+  modal('Scan QR / serial',`<div class="scanner"><video id="qrVideo" playsinline autoplay muted></video><canvas id="qrCanvas" hidden></canvas><p>Point the camera at the unit QR code. Works on Android and iOS.</p><button class="command" id="stopScanner">Close scanner</button></div>`);
   const stop=()=>{
     stopped=true;
     stream?.getTracks().forEach(track=>track.stop());
+    state.scannerStream=null;
     closeModal();
   };
   $('#stopScanner').onclick=stop;
@@ -1416,21 +1431,34 @@ async function scanQrWithCamera(onScan){
     stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}});
     state.scannerStream=stream;
     const video=$('#qrVideo');video.srcObject=stream;
-    const detector=new BarcodeDetector({formats:['qr_code','code_128','data_matrix']});
-    const detect=async()=>{
+    try{await video.play();}catch(e){}
+    const detector=hasDetector?new BarcodeDetector({formats:['qr_code','code_128','data_matrix']}):null;
+    const canvas=$('#qrCanvas');const ctx=canvas.getContext('2d',{willReadFrequently:true});
+    const tick=async()=>{
       if(stopped)return;
       try{
-        const codes=await detector.detect(video);
-        if(codes[0]?.rawValue){
-          const value=serialFromQrPayload(codes[0].rawValue);
+        let raw=null;
+        if(detector){
+          const codes=await detector.detect(video);
+          if(codes[0]?.rawValue)raw=codes[0].rawValue;
+        }else if(jsqr&&video.readyState>=2&&video.videoWidth){
+          canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+          ctx.drawImage(video,0,0,canvas.width,canvas.height);
+          const frame=ctx.getImageData(0,0,canvas.width,canvas.height);
+          const result=jsqr(frame.data,frame.width,frame.height,{inversionAttempts:'attemptBoth'});
+          if(result&&result.data)raw=result.data;
+        }
+        if(raw){
+          const value=serialFromQrPayload(raw);
           stop();
           await onScan(value);
           return;
         }
-      }catch{}
-      requestAnimationFrame(detect);
+      }catch(e){}
+      requestAnimationFrame(tick);
     };
-    video.onloadeddata=detect;
+    video.onloadeddata=tick;
+    if(video.readyState>=2)tick();
   }catch(error){
     stop();
     toast(`Camera unavailable: ${error.message}`,'error');
@@ -3178,3 +3206,254 @@ $('#mobileMenu').onclick=()=>{$('#sidebar').classList.add('open');$('#mobileOver
 $('#mobileOverlay').onclick=closeMobile;
 $('.brand').onclick=renderLaunchpad;
 init();
+
+/* =====================================================================
+   E88 Live Customization Layer  (additive, client-side, presentation-safe)
+   - Launchpad: add / rename / reorder / hide module columns & buttons
+   - Branding : app title, footer text, theme, logo
+   - Tables   : show / hide / reorder columns per grid (right-click a header)
+   All changes persist in localStorage and survive reloads.
+   This block only wraps renderLaunchpad and observes the DOM; it does not
+   modify any existing function body.
+   ===================================================================== */
+(function(){
+  const LS='e88-customize-v1';
+  const read=()=>{try{return JSON.parse(localStorage.getItem(LS))||{};}catch(e){return {};}};
+  const write=s=>localStorage.setItem(LS,JSON.stringify(s));
+  const S=Object.assign({branding:{},groups:{},items:{},order:{},added:{groups:[],items:{}},tables:{}},read());
+  const persist=()=>write(S);
+  const esc2=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  /* ---------- catalog overrides (data level, re-applied every render) ---------- */
+  let BASE=null;
+  function snapshotBase(){
+    if(BASE)return;
+    if(state.catalog&&state.catalog.groups&&state.catalog.groups.length){
+      BASE=JSON.parse(JSON.stringify(state.catalog));
+    }
+  }
+  function buildCatalog(){
+    snapshotBase();
+    if(!BASE)return;
+    const groups=[];
+    // existing groups (respect hide/rename/reorder + custom items)
+    BASE.groups.forEach(g=>{
+      const go=S.groups[g.code]||{};
+      if(go.hidden)return;
+      const items=[];
+      (g.items||[]).forEach(it=>{
+        const io=S.items[it.code]||{};
+        if(io.hidden)return;
+        items.push(Object.assign({},it,io.label?{label:io.label}:{}));
+      });
+      // custom items added into this group
+      (S.added.items[g.code]||[]).forEach(ci=>{if(!ci.hidden)items.push(Object.assign({custom:true},ci));});
+      // per-group item order
+      const iord=(S.order.items||{})[g.code];
+      if(iord)items.sort((a,b)=>(iord.indexOf(a.code)+1||999)-(iord.indexOf(b.code)+1||999));
+      groups.push(Object.assign({},g,go.title?{title:go.title}:{},{items}));
+    });
+    // custom groups
+    (S.added.groups||[]).forEach(cg=>{
+      if((S.groups[cg.code]||{}).hidden)return;
+      const items=(S.added.items[cg.code]||[]).filter(ci=>!ci.hidden).map(ci=>Object.assign({custom:true},ci));
+      groups.push({code:cg.code,title:(S.groups[cg.code]||{}).title||cg.title,items,custom:true});
+    });
+    // group order
+    if(S.order.groups)groups.sort((a,b)=>(S.order.groups.indexOf(a.code)+1||999)-(S.order.groups.indexOf(b.code)+1||999));
+    state.catalog=Object.assign({},BASE,{groups});
+  }
+
+  /* ---------- branding ---------- */
+  function applyBranding(){
+    const b=S.branding||{};
+    if(b.theme){document.documentElement.dataset.theme=b.theme;}
+    const title=$('.launchpad-controls div:first-child span');
+    if(title&&b.appTitle)title.textContent=b.appTitle;
+    if(b.appTitle)document.title=b.appTitle;
+    const foot=$('.enterprise-brand-secondary');
+    if(foot&&b.footer)foot.textContent=b.footer;
+    const primary=$('.enterprise-brand-primary');
+    if(primary&&b.brandMark)primary.textContent=b.brandMark;
+    if(b.logo){document.querySelectorAll('img[src*="logo"],.launchpad-controls img,.brand img').forEach(i=>{i.src=b.logo;});}
+  }
+
+  /* ---------- launchpad decoration (buttons + custom wiring + column count) ---------- */
+  function decorateLaunchpad(){
+    const controls=$('.launchpad-controls div:last-child');
+    if(controls&&!controls.querySelector('#e88CustomizeBtn')){
+      const s=document.createElement('button');s.id='e88SettingsBtn';s.textContent='⚙ Settings';
+      const c=document.createElement('button');c.id='e88CustomizeBtn';c.textContent='✎ Customize';
+      controls.insertBefore(c,controls.firstChild);controls.insertBefore(s,controls.firstChild);
+      c.onclick=openCustomizer;s.onclick=openSettings;
+    }
+    // keep the module columns on a single row regardless of count
+    const cols=$('.enterprise-columns');
+    if(cols){const n=cols.children.length||11;cols.style.gridTemplateColumns=`repeat(${n},minmax(0,1fr))`;}
+    // custom buttons -> friendly action instead of openWorkspace error
+    $$('.enterprise-module-button[data-workspace^="custom-"]').forEach(btn=>{
+      btn.onclick=()=>toast(`“${btn.textContent}” is a customized module (demo placeholder).`);
+    });
+    applyBranding();
+  }
+
+  /* ---------- wrap renderLaunchpad (same-module binding reassignment) ---------- */
+  const _origRender=renderLaunchpad;
+  renderLaunchpad=function(){
+    buildCatalog();
+    const r=_origRender.apply(this,arguments);
+    try{decorateLaunchpad();}catch(e){console.warn('customize decorate',e);}
+    return r;
+  };
+
+  /* ---------- customizer modal (launchpad editor) ---------- */
+  function gTitle(code,fallback){return (S.groups[code]||{}).title||fallback;}
+  function openCustomizer(){
+    buildCatalog();
+    const groups=state.catalog.groups;
+    const rows=groups.map((g,i)=>`
+      <div class="cz-row" data-g="${esc2(g.code)}">
+        <div class="cz-move"><button data-mv="up" ${i===0?'disabled':''}>▲</button><button data-mv="down" ${i===groups.length-1?'disabled':''}>▼</button></div>
+        <input class="cz-title" value="${esc2(g.title)}" data-g="${esc2(g.code)}">
+        <span class="cz-count">${g.items.length} modules</span>
+        <button class="cz-add" data-g="${esc2(g.code)}">+ module</button>
+        <button class="cz-hide" data-g="${esc2(g.code)}">Hide</button>
+      </div>`).join('');
+    const hidden=[]
+      .concat(BASE.groups.filter(g=>(S.groups[g.code]||{}).hidden).map(g=>['group',g.code,g.title]))
+      .concat(BASE.groups.flatMap(g=>(g.items||[]).filter(it=>(S.items[it.code]||{}).hidden).map(it=>['item',it.code,it.label])));
+    const hiddenHtml=hidden.length?`<div class="cz-hidden"><b>Hidden</b>${hidden.map(([t,code,label])=>`<button class="cz-show" data-t="${t}" data-code="${esc2(code)}">＋ ${esc2(label)}</button>`).join('')}</div>`:'';
+    modal('Customize Enterprise Modules',`
+      <style>
+      .cz-toolbar{display:flex;gap:8px;margin-bottom:10px}.cz-toolbar input{flex:1;padding:7px;border:1px solid var(--line)}
+      .cz-row{display:flex;align-items:center;gap:8px;padding:6px;border-bottom:1px solid var(--line)}
+      .cz-row .cz-title{flex:1;padding:6px;border:1px solid var(--line)}
+      .cz-move button,.cz-add,.cz-hide,.cz-show{border:1px solid var(--line);background:var(--panel);padding:4px 8px;border-radius:3px}
+      .cz-count{color:var(--muted);font-size:11px;min-width:80px}
+      .cz-hidden{margin-top:12px;padding:10px;background:var(--panel-2);border:1px solid var(--line)}
+      .cz-hidden b{display:block;margin-bottom:6px;color:var(--muted);font-size:11px}
+      .cz-show{margin:3px;color:#1669a7}
+      </style>
+      <div class="cz-toolbar"><input id="czNewGroup" placeholder="New column name (e.g. Treasury)"><button class="button" id="czAddGroup">Add column</button></div>
+      <div id="czRows">${rows}</div>${hiddenHtml}
+      <p style="color:var(--muted);font-size:11px;margin-top:10px">Changes save instantly and persist for your presentation.</p>
+    `,'Add, rename, reorder, hide columns and modules');
+    wireCustomizer();
+  }
+  function reopen(){openCustomizer();}
+  function wireCustomizer(){
+    const root=$('#modalBody');if(!root)return;
+    root.querySelector('#czAddGroup').onclick=()=>{
+      const v=root.querySelector('#czNewGroup').value.trim();if(!v)return;
+      const code='custom-col-'+Date.now();
+      S.added.groups.push({code,title:v});persist();renderLaunchpad();reopen();
+    };
+    root.querySelectorAll('.cz-title').forEach(inp=>{inp.onchange=()=>{
+      const code=inp.dataset.g;S.groups[code]=Object.assign({},S.groups[code],{title:inp.value.trim()});persist();renderLaunchpad();
+    };});
+    root.querySelectorAll('.cz-hide').forEach(b=>{b.onclick=()=>{
+      const code=b.dataset.g;S.groups[code]=Object.assign({},S.groups[code],{hidden:true});persist();renderLaunchpad();reopen();
+    };});
+    root.querySelectorAll('.cz-show').forEach(b=>{b.onclick=()=>{
+      const {t,code}=b.dataset;
+      if(t==='group')S.groups[code]=Object.assign({},S.groups[code],{hidden:false});
+      else S.items[code]=Object.assign({},S.items[code],{hidden:false});
+      persist();renderLaunchpad();reopen();
+    };});
+    root.querySelectorAll('.cz-add').forEach(b=>{b.onclick=()=>{
+      const g=b.dataset.g;const name=prompt('New module button label:');if(!name)return;
+      (S.added.items[g]=S.added.items[g]||[]).push({code:'custom-'+Date.now(),label:name});persist();renderLaunchpad();reopen();
+    };});
+    root.querySelectorAll('[data-mv]').forEach(b=>{b.onclick=()=>{
+      const code=b.closest('.cz-row').dataset.g;const dir=b.dataset.mv;
+      const order=(S.order.groups&&S.order.groups.length)?S.order.groups.slice():state.catalog.groups.map(g=>g.code);
+      const i=order.indexOf(code);const j=dir==='up'?i-1:i+1;
+      if(j<0||j>=order.length)return;order.splice(i,1);order.splice(j,0,code);
+      S.order.groups=order;persist();renderLaunchpad();reopen();
+    };});
+  }
+
+  /* ---------- settings / branding modal ---------- */
+  function openSettings(){
+    const b=S.branding||{};
+    modal('Settings & Branding',`
+      <div class="record-fields">
+        <label class="record-field"><span>Application title</span><input id="stTitle" value="${esc2(b.appTitle||'Enterprise Modules')}"></label>
+        <label class="record-field"><span>Footer text</span><input id="stFoot" value="${esc2(b.footer||'Enterprise System · © 2026 AL23')}"></label>
+        <label class="record-field"><span>Brand mark</span><input id="stMark" value="${esc2(b.brandMark||'E88')}"></label>
+        <label class="record-field"><span>Theme</span><select id="stTheme"><option value="light" ${b.theme==='light'?'selected':''}>Light</option><option value="dark" ${b.theme==='dark'?'selected':''}>Dark</option></select></label>
+        <label class="record-field full"><span>Logo URL (optional)</span><input id="stLogo" value="${esc2(b.logo||'')}" placeholder="/logo.png or https://…"></label>
+      </div>
+      <div class="modal-actions"><button class="button secondary" id="stReset">Reset all customization</button><button class="button" id="stSave">Save</button></div>
+    `,'Applies live across the system');
+    const r=$('#modalBody');
+    r.querySelector('#stSave').onclick=()=>{
+      S.branding={appTitle:r.querySelector('#stTitle').value.trim(),footer:r.querySelector('#stFoot').value.trim(),brandMark:r.querySelector('#stMark').value.trim(),theme:r.querySelector('#stTheme').value,logo:r.querySelector('#stLogo').value.trim()};
+      if(S.branding.theme){localStorage.setItem('e88-theme',S.branding.theme);state.theme=S.branding.theme;}
+      persist();$('#modal').classList.add('hidden');renderLaunchpad();toast('Settings saved');
+    };
+    r.querySelector('#stReset').onclick=()=>{
+      if(!confirm('Reset all customization (columns, modules, branding, table columns)?'))return;
+      localStorage.removeItem(LS);location.reload();
+    };
+  }
+
+  /* ---------- table column customization (right-click a header) ---------- */
+  function tableState(key){return S.tables[key]=S.tables[key]||{hidden:[],order:[]};}
+  function applyTable(wrap){
+    const key=wrap.getAttribute('data-table-key');if(!key)return;
+    const st=S.tables[key];if(!st)return;
+    const table=wrap.querySelector('table');if(!table)return;
+    const ths=[...table.querySelectorAll('thead th')];
+    const total=ths.length;
+    // hide
+    const setHidden=new Set(st.hidden||[]);
+    function cells(tr){return [...tr.children];}
+    [...table.querySelectorAll('tr')].forEach(tr=>{
+      cells(tr).forEach((c,i)=>{c.style.display=setHidden.has(i)?'none':'';});
+    });
+    // reorder
+    if(st.order&&st.order.length===total){
+      [...table.querySelectorAll('tr')].forEach(tr=>{
+        const cs=cells(tr);st.order.forEach(idx=>{if(cs[idx])tr.appendChild(cs[idx]);});
+      });
+    }
+  }
+  function columnMenu(wrap,thIndex,x,y){
+    const key=wrap.getAttribute('data-table-key');const st=tableState(key);
+    const ths=[...wrap.querySelectorAll('thead th')];
+    document.querySelectorAll('.cz-colmenu').forEach(m=>m.remove());
+    const menu=document.createElement('div');menu.className='cz-colmenu';
+    menu.style.cssText=`position:fixed;left:${x}px;top:${y}px;z-index:200;background:var(--panel);border:1px solid var(--line);box-shadow:0 12px 30px rgba(0,0,0,.25);border-radius:5px;padding:8px;min-width:220px;max-height:60vh;overflow:auto;font-size:12px`;
+    menu.innerHTML=`<b style="display:block;margin-bottom:6px">Columns</b>`+ths.map((th,i)=>`
+      <label style="display:flex;align-items:center;gap:6px;padding:3px"><input type="checkbox" data-ci="${i}" ${(st.hidden||[]).includes(i)?'':'checked'}> ${esc2(th.textContent.replace(/[▲▼]/g,'').trim()||('Col '+(i+1)))}</label>`).join('')+
+      `<div style="display:flex;gap:6px;margin-top:8px"><button data-mv="left" style="flex:1">◀ Move</button><button data-mv="right" style="flex:1">Move ▶</button></div>
+       <button data-reset style="width:100%;margin-top:6px">Reset columns</button>`;
+    document.body.appendChild(menu);
+    menu.querySelectorAll('input[data-ci]').forEach(cb=>{cb.onchange=()=>{
+      const i=+cb.dataset.ci;const h=new Set(st.hidden||[]);cb.checked?h.delete(i):h.add(i);st.hidden=[...h];persist();applyAllTables();
+    };});
+    menu.querySelector('[data-reset]').onclick=()=>{delete S.tables[key];persist();menu.remove();location.reload();};
+    menu.querySelectorAll('[data-mv]').forEach(b=>{b.onclick=()=>{
+      const order=(st.order&&st.order.length===ths.length)?st.order.slice():ths.map((_,i)=>i);
+      const pos=order.indexOf(thIndex);const j=b.dataset.mv==='left'?pos-1:pos+1;
+      if(j<0||j>=order.length)return;order.splice(pos,1);order.splice(j,0,thIndex);
+      st.order=order;persist();menu.remove();applyAllTables();
+    };});
+    const close=e=>{if(!menu.contains(e.target)){menu.remove();document.removeEventListener('mousedown',close);}};
+    setTimeout(()=>document.addEventListener('mousedown',close),0);
+  }
+  function wireTable(wrap){
+    if(wrap.__czWired)return;wrap.__czWired=true;
+    wrap.querySelectorAll('thead th').forEach((th,i)=>{
+      th.title='Right-click to hide / reorder columns';
+      th.addEventListener('contextmenu',ev=>{ev.preventDefault();columnMenu(wrap,i,ev.clientX,ev.clientY);});
+    });
+  }
+  function applyAllTables(){$$('.record-table-wrap[data-table-key]').forEach(w=>{wireTable(w);applyTable(w);});}
+  const obs=new MutationObserver(()=>{applyAllTables();});
+  obs.observe(document.body,{childList:true,subtree:true});
+
+  // expose for debugging / advanced use
+  window.E88Custom={state:S,rebuild:buildCatalog,reset:()=>{localStorage.removeItem(LS);location.reload();}};
+})();
