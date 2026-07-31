@@ -147,13 +147,31 @@ WHERE h.journal_no='JE-INVENTORY-CLASS-RECLASS-V13-1' AND x.amount>0
 DROP VIEW IF EXISTS vw_erp_inventory_by_item_class;
 CREATE VIEW vw_erp_inventory_by_item_class AS
 SELECT
-  i.category class_code,
-  CASE i.category
-    WHEN 'MC' THEN 'Motorcycles'
-    WHEN 'BAT' THEN 'Batteries'
-    WHEN 'BSS' THEN 'Lockers / BSS'
-    WHEN 'SP' THEN 'Spare Parts'
-    WHEN 'CHG' THEN 'Chargers'
+  CASE
+    WHEN upper(i.item_code) LIKE 'MC-%' AND upper(i.item_name) LIKE '%D400%' THEN 'D400'
+    WHEN upper(i.item_code) LIKE 'MC-%' AND upper(i.item_name) LIKE '%SPORT%' THEN 'RSPORT'
+    WHEN upper(i.item_code) LIKE 'MC-%' AND upper(i.item_name) LIKE '%R280%' THEN 'R280'
+    WHEN upper(i.item_code) LIKE 'MC-%' THEN 'R280'
+    WHEN upper(i.item_name) LIKE '%LOCKER%' THEN 'BSS'
+    WHEN upper(i.item_name) LIKE '%CHARGER%' THEN 'CHG'
+    WHEN upper(i.item_name) LIKE '%AMPACE%'
+      OR (upper(i.item_name) LIKE '%BATTERY%'
+          AND upper(i.item_name) NOT LIKE '%BOX%' AND upper(i.item_name) NOT LIKE '%LOCK%'
+          AND upper(i.item_name) NOT LIKE '%CONNECTOR%' AND upper(i.item_name) NOT LIKE '%CHARGER%'
+          AND upper(i.item_name) NOT LIKE '%HOLDER%' AND upper(i.item_name) NOT LIKE '%CABLE%') THEN 'BAT'
+    WHEN upper(i.item_code) LIKE 'BAT-%' OR upper(i.item_code) LIKE 'BAT0%' THEN 'BAT'
+    WHEN upper(i.item_code) LIKE 'BSS%' THEN 'BSS'
+    WHEN upper(i.item_code) LIKE 'CHG%' OR upper(i.item_code) LIKE 'BATCH%' THEN 'CHG'
+    WHEN upper(i.item_code) LIKE 'ESP%' OR upper(i.item_code) LIKE 'SP%' OR upper(i.item_code) LIKE 'PAR%' THEN 'SP'
+    ELSE 'OTH' END class_code,
+  CASE
+    WHEN upper(i.item_code) LIKE 'MC-%' AND upper(i.item_name) LIKE '%D400%' THEN 'Motorcycle D400'
+    WHEN upper(i.item_code) LIKE 'MC-%' AND upper(i.item_name) LIKE '%SPORT%' THEN 'Motorcycle R280 Sport'
+    WHEN upper(i.item_code) LIKE 'MC-%' THEN 'Motorcycle R280'
+    WHEN upper(i.item_name) LIKE '%LOCKER%' OR upper(i.item_code) LIKE 'BSS%' THEN 'Lockers / BSS'
+    WHEN upper(i.item_name) LIKE '%CHARGER%' OR upper(i.item_code) LIKE 'CHG%' OR upper(i.item_code) LIKE 'BATCH%' THEN 'Chargers'
+    WHEN upper(i.item_name) LIKE '%AMPACE%' OR upper(i.item_code) LIKE 'BAT-%' OR upper(i.item_code) LIKE 'BAT0%' THEN 'Batteries'
+    WHEN upper(i.item_code) LIKE 'ESP%' OR upper(i.item_code) LIKE 'SP%' OR upper(i.item_code) LIKE 'PAR%' THEN 'Spare Parts'
     ELSE 'Other Inventory' END class_name,
   i.id item_id,i.item_code,i.item_name,
   l.id location_id,COALESCE(l.code,'UNASSIGNED') location_code,COALESCE(l.name,'Unassigned') location_name,
@@ -168,7 +186,7 @@ FROM erp_items i
 LEFT JOIN erp_assets a ON a.item_id=i.id AND a.active=1 AND a.current_status NOT IN ('SOLD','WRITTEN_OFF')
 LEFT JOIN erp_locations l ON l.id=a.current_location_id
 WHERE i.active=1
-GROUP BY i.category,i.id,l.id,a.current_status;
+GROUP BY i.id,l.id,a.current_status;
 
 DROP VIEW IF EXISTS vw_erp_inventory_class_reconciliation;
 CREATE VIEW vw_erp_inventory_class_reconciliation AS
