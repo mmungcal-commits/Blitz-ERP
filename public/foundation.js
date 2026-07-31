@@ -3233,12 +3233,13 @@ init();
     try{modal('Record \u00b7 '+first,body,'Full details for this row');}catch(e){}
   }
   function czWireRowInspector(table){
-    if(table.__czRowWired)return; table.__czRowWired=true;
     const headers=[...table.querySelectorAll('thead th')].map(th=>th.textContent.replace(/[\u25b2\u25bc]/g,'').trim());
     table.querySelectorAll('tbody tr').forEach(tr=>{
+      if(tr.__czRow)return;
       if(tr.classList.contains('clickable-row'))return;
       if(![...tr.children].some(td=>(td.textContent||'').trim()))return;
       if(tr.querySelector('[colspan]'))return;
+      tr.__czRow=true;
       tr.classList.add('cz-inspectable');
       tr.addEventListener('click',ev=>{ if(ev.target.closest('button,a,input,select,textarea,label'))return; czOpenRowDetail(headers,tr); });
     });

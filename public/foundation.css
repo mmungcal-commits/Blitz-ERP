@@ -8,7 +8,7 @@
   --bg:#091723;--panel:#0e2130;--panel-2:#112a3b;--text:#edf4f8;--muted:#a7bac8;--line:#2a4355;
 }
 *{box-sizing:border-box}
-html,body{margin:0;min-height:100%;font-family:Arial,Helvetica,sans-serif;background:var(--bg);color:var(--text)}
+html,body{margin:0;min-height:100%;font-family:Arial,Helvetica,sans-serif;font-size:13px;background:var(--bg);color:var(--text)}
 button,input,select,textarea{font:inherit}
 button{cursor:pointer}
 .hidden{display:none!important}
@@ -89,7 +89,7 @@ button{cursor:pointer}
 .line-editor-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}.line-editor-head button{padding:5px 9px;border:1px solid #8bacbf;border-radius:2px;background:#fff;color:#176d9d}.line-editor{display:flex;flex-direction:column;gap:5px}.line-editor-row{display:grid;grid-template-columns:2fr 2fr .7fr .8fr 30px;gap:5px}.plan-line{grid-template-columns:2fr .7fr .7fr .8fr .8fr 1.5fr 30px}.line-editor-row input,.line-editor-row select{min-width:0;height:31px;padding:4px 6px;border:1px solid #acc0cc;background:#fff}.remove-line{border:1px solid #d5a09b;background:#fff3f2;color:#b52218}
 .atlas-upload-card .operational-form{border-bottom:1px solid #b8ccd8}.upload-preview{display:flex;align-items:center;justify-content:space-between;padding:12px}.upload-preview>div{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:8px;flex:1;margin-right:12px}.upload-preview .workspace-kpi{min-height:62px}
 .workspace-commandbar .inline-control{display:flex;align-items:center;gap:6px;color:#435d6e;font-size:10px;font-weight:700}.workspace-commandbar .inline-control select{min-width:260px}.receiving-layout{grid-template-columns:minmax(0,1fr) 245px}.scan-entry{display:flex;gap:6px;padding:10px;border-bottom:1px solid #c7d5df;background:#eff6fa}.scan-entry input{flex:1;min-width:150px;height:36px;padding:6px 9px;border:1px solid #8fafc2;border-radius:3px;font-size:13px}.scan-entry select{min-width:260px;padding:6px;border:1px solid #8fafc2;border-radius:3px}.scan-entry button{min-height:36px}.scan-camera:before{content:"▣ "}.scan-summary{display:grid;grid-template-columns:repeat(5,minmax(90px,1fr));gap:6px;padding:9px;background:#f8fafb}.scan-summary .workspace-kpi{min-height:58px;padding:9px}.scan-summary .workspace-kpi strong{font-size:17px}.receipt-post{display:grid;grid-template-columns:1fr 1fr auto;align-items:end;gap:8px;padding:12px;border-top:1px solid #bdcfd9;background:#f5f8fa}.receipt-post label{display:flex;flex-direction:column;gap:4px;color:#405a6c;font-size:9px;font-weight:700}.receipt-post input{height:32px;padding:5px 7px;border:1px solid #a9bfcd}.scanner video{display:block;width:min(100%,560px);min-height:260px;margin:auto;background:#07131c;border-radius:5px}.scanner p{text-align:center}.scanner button{display:block;margin:auto}.trace-result{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;padding:1px;background:#c1d1db}.trace-result>div{min-height:72px;padding:12px;background:#fff}.trace-result small{display:block;margin-bottom:5px;color:#6a7d89}.trace-result b{color:#173b52}
-.setup-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.setup-steps{margin:0;padding:20px 20px 20px 40px}.setup-steps li{padding:7px;line-height:1.45}.definition-list{padding:10px}.definition-list>div{display:grid;grid-template-columns:150px 1fr;gap:10px;padding:9px;border-bottom:1px solid #d4e0e7}.definition-list>div:last-child{border-bottom:0}.definition-list b{color:#174b69}.definition-list span{color:#536b79}
+.setup-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.setup-steps{margin:0;padding:20px 20px 20px 40px}.setup-steps li{padding:7px;line-height:1.45}.definition-list{padding:10px}.definition-list>div{display:grid;grid-template-columns:130px 1fr;gap:8px;padding:7px 9px;border-bottom:1px solid #d4e0e7}.definition-list>div:last-child{border-bottom:0}.definition-list b{color:#174b69;font-size:11px}.definition-list span{color:#536b79;font-size:10px;line-height:1.4}
 
 @media(max-width:760px){
   .workbench-view .erp-workbench{min-width:0}.workbench-systembar small,.workbench-module-chip{display:none}.workbench-modulebar{padding:7px 9px}.workbench-tabs{overflow-x:auto;padding-left:5px}.workbench-tabs button{flex:0 0 auto;padding:0 10px}
@@ -178,3 +178,7 @@ button{cursor:pointer}
 
 @media(max-width:1250px){.inventory-class-kpis{grid-template-columns:repeat(3,minmax(130px,1fr))}}
 @media(max-width:760px){.inventory-class-kpis{grid-template-columns:repeat(2,minmax(120px,1fr))}.inventory-detail-grid{grid-template-columns:1fr}.record-table-wrap{max-height:58vh}}
+
+/* v13.1 compact typography — apply small, consistent fonts across all modules */
+.operational-form input,.operational-form select,.operational-form textarea,.record-field input,.record-field select,.record-field textarea,.requisition-line input,.requisition-line select,.workspace-commandbar input,.workspace-commandbar select,.inline-control input,.inline-control select,.finance-lines input{font-size:12px}
+.record-fields .record-field span{font-size:11px}
