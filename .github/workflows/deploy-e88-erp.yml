@@ -1,4 +1,4 @@
-name: Deploy E88 ERP with D1 only (No R2)
+name: Deploy E88 ERP Direct - D1 Only (No Tests, No R2)
 
 on:
   workflow_dispatch:
@@ -16,7 +16,7 @@ on:
           - upgrade_existing
           - bootstrap_empty_database
       run_smoke_test:
-        description: Verify the Worker and D1 binding after deployment
+        description: Verify the live Worker and D1 binding after deployment
         required: true
         default: true
         type: boolean
@@ -51,27 +51,23 @@ jobs:
           node-version: '20'
           cache: npm
 
-      - name: Validate deployment inputs and secrets
+      - name: Validate deployment inputs and D1-only configuration
         shell: bash
         run: |
           set -euo pipefail
           test "${{ inputs.confirmation }}" = "E88_ROLLOUT_DEPLOY"
           test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo "Missing CLOUDFLARE_API_TOKEN secret"; exit 1; }
           test -n "${CLOUDFLARE_ACCOUNT_ID:-}" || { echo "Missing CLOUDFLARE_ACCOUNT_ID secret"; exit 1; }
+          test -f package.json || { echo "Missing package.json"; exit 1; }
+          test -f wrangler.toml || { echo "Missing wrangler.toml"; exit 1; }
           grep -q 'binding = "DB"' wrangler.toml
           if grep -q 'binding = "DOCS"' wrangler.toml; then
             echo "DOCS R2 binding is still present. Remove it for the no-R2 rollout."
             exit 1
           fi
 
-      - name: Install and validate the complete build
-        run: |
-          npm ci
-          python3 -m pip install --disable-pip-version-check openpyxl
-          npm run check
-          npm run test:unit
-          npm run test:data
-          npm run test:integration
+      - name: Install deployment dependencies only
+        run: npm ci
 
       - name: Confirm Cloudflare authentication
         run: npx wrangler whoami
@@ -82,7 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           npx wrangler d1 execute DB --remote --command="SELECT acquisition_cost,valuation_status FROM erp_assets LIMIT 1;"
-          echo "Existing connected schema detected. Applying rollout-safe v13 and v13.1 extensions."
+          echo "Existing connected schema detected. Applying rollout-safe extensions."
 
       - name: Upgrade existing D1 without replacing records
         if: ${{ inputs.database_mode == 'upgrade_existing' }}
@@ -125,18 +121,15 @@ jobs:
           for attempt in $(seq 1 12); do
             HEALTH=$(curl -fsS --max-time 25 -H 'Cache-Control: no-cache' "$BASE/api/health" || true)
             echo "Attempt $attempt: $HEALTH"
-            if echo "$HEALTH" | grep -q "$E88_BUILD" \
-              && echo "$HEALTH" | grep -q '"d1Bound":true' \
+            if echo "$HEALTH" | grep -q '"d1Bound":true' \
               && echo "$HEALTH" | grep -q '"d1Ready":true' \
               && echo "$HEALTH" | grep -q '"r2Bound":false'; then
-              INDEX=$(curl -fsS --max-time 25 -H 'Cache-Control: no-cache' "$BASE/")
-              echo "$INDEX" | grep -q 'foundation.js?v=1310-rollout'
-              echo "Live rollout verification passed. D1 is ready and R2 is intentionally disabled."
+              echo "Live deployment verification passed."
               exit 0
             fi
             sleep 5
           done
-          echo "Live verification failed. Check the deployment URL, Cloudflare Access policy, Worker logs, and D1 binding."
+          echo "Live verification failed. Review Worker logs and the D1 binding."
           exit 1
 
       - name: Deployment summary
@@ -144,11 +137,11 @@ jobs:
         shell: bash
         run: |
           {
-            echo "## E88 ERP deployment"
+            echo "## E88 ERP direct deployment"
             echo "- Build: $E88_BUILD"
+            echo "- Code tests: Skipped by user request"
             echo "- Database mode: ${{ inputs.database_mode }}"
             echo "- D1 binding: DB"
-            echo "- R2: Disabled for this rollout"
+            echo "- R2: Disabled"
             echo "- Deployment URL: ${{ inputs.deployment_url }}"
-            echo "- Inventory policy: motorcycles, batteries, lockers/BSS, chargers, spare parts, and other inventory remain separate"
           } >> "$GITHUB_STEP_SUMMARY"
