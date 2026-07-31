@@ -5,6 +5,7 @@ import { requirePermission } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { ensurePartner, ensureItem, nextCode, normalizeText, normalizeSerial } from '../lib/codes.js';
 import { getAsset, isAvailable } from '../lib/inventory.js';
+import { decideCoreWorkflowApproval } from '../lib/specialist-engine.js';
 
 export const salesRoutes = new Hono();
 
@@ -59,9 +60,19 @@ salesRoutes.get('/:id', requirePermission('SALES','VIEW'), async c => {
 
 salesRoutes.post('/:id/approve', requirePermission('SALES','APPROVE'), async c => {
   const id=Number(c.req.param('id'));const before=await first(c.env.DB,`SELECT s.*,p.name customer_name,p.credit_status,p.hold_reason FROM erp_sales_orders s JOIN erp_partners p ON p.id=s.customer_id WHERE s.id=?`,[id]);if(!before)return fail(c,'Sales order not found',404);if(before.status!=='DRAFT')return fail(c,'Only draft orders can be approved',409);if(before.credit_status==='BLOCKED')return fail(c,`Customer is blocked: ${before.hold_reason||'overdue account'}`,409);
+  const body=await jsonBody(c);let approvalDecision;
+  try{approvalDecision=await decideCoreWorkflowApproval(c.env.DB,'sd-order-management',{
+    sourceType:'SALES_ORDER',sourceId:id,sourceNo:before.sales_order_no,recordType:before.transaction_type,
+    department:'Sales & Distribution',amount:before.gross_amount,createdBy:before.created_by,
+  },c.get('erpUser'),body.decision||'APPROVE',body.notes||'');}catch(error){return fail(c,error.message,409);}
+  if(approvalDecision.rejected)return fail(c,'The sales order approval was rejected.',409);
+  if(!approvalDecision.completed){
+    await audit(c,{action:'APPROVAL_STEP',module:'SALES',recordType:'SALES_ORDER',recordId:id,recordNo:before.sales_order_no,before,after:{approvalDecision}});
+    return ok(c,{approved:false,pendingApproval:true,approvalDecision});
+  }
   const lines=await all(c.env.DB,`SELECT l.*,a.current_status,a.reconciliation_status FROM erp_sales_lines l LEFT JOIN erp_assets a ON a.id=l.asset_id WHERE l.sales_order_id=?`,[id]);for(const line of lines.filter(x=>x.serial_no)){if(!['AVAILABLE','IN_STOCK'].includes(line.current_status)||line.reconciliation_status!=='CLEAR')return fail(c,`Serial ${line.serial_no} is no longer available`,409);}
   let assignmentId=null,assignmentNo='';if(before.transaction_type!=='SALE'){assignmentNo=await nextCode(c.env.DB,'ASSIGNMENT','ASG',6);const ar=await run(c.env.DB,`INSERT INTO erp_assignments(assignment_no,assignment_type,partner_id,holder_name,start_date,expected_return_date,status,purpose,source_request_no,created_by,approved_by,approved_at) VALUES(?,?,?,?,?,?,'APPROVED',?,?,?,?,datetime('now'))`,[assignmentNo,before.transaction_type,before.customer_id,before.customer_name,before.contract_start||before.order_date,before.contract_end||'',before.transaction_type,before.sales_order_no,c.get('erpUser').email,c.get('erpUser').email]);assignmentId=ar.meta.last_row_id;for(const line of lines.filter(x=>x.serial_no))await run(c.env.DB,`INSERT INTO erp_assignment_assets(assignment_id,asset_id,serial_no,role_code) VALUES(?,?,?,?)`,[assignmentId,line.asset_id,line.serial_no,line.line_role]);}
   for(const line of lines.filter(x=>x.serial_no))await run(c.env.DB,`UPDATE erp_assets SET current_status=?,current_holder_type='CUSTOMER',current_holder_id=?,current_holder_name=?,updated_at=datetime('now') WHERE id=? AND current_status IN ('AVAILABLE','IN_STOCK') AND reconciliation_status='CLEAR'`,[before.transaction_type==='SALE'?'RESERVED_FOR_SALE':'RESERVED_FOR_ASSIGNMENT',before.customer_id,before.customer_name,line.asset_id]);
   const deliveryNo=await nextCode(c.env.DB,'DELIVERY','DLV',6);const dr=await run(c.env.DB,`INSERT INTO erp_deliveries(delivery_no,assignment_id,sales_order_id,requested_date,scheduled_date,destination,recipient_name,status,source_system,source_key,created_by) VALUES(?,?,?,?,?,?,?,'PLANNED','SALES',?,?)`,[deliveryNo,assignmentId,id,before.order_date,before.order_date,before.delivery_address,before.customer_name,before.sales_order_no,c.get('erpUser').email]);for(const line of lines)await run(c.env.DB,`INSERT OR IGNORE INTO erp_delivery_assets(delivery_id,asset_id,serial_no,item_code,qty) VALUES(?,?,?,?,?)`,[dr.meta.last_row_id,line.asset_id,line.serial_no,line.item_code,line.qty]);
-  await run(c.env.DB,`UPDATE erp_sales_orders SET status='APPROVED' WHERE id=?`,[id]);await audit(c,{action:'APPROVE',module:'SALES',recordType:'SALES_ORDER',recordId:id,recordNo:before.sales_order_no,before,after:{status:'APPROVED',assignmentNo,deliveryNo}});return ok(c,{approved:true,assignmentId,assignmentNo,deliveryId:dr.meta.last_row_id,deliveryNo});
+  await run(c.env.DB,`UPDATE erp_sales_orders SET status='APPROVED' WHERE id=?`,[id]);await audit(c,{action:'APPROVE',module:'SALES',recordType:'SALES_ORDER',recordId:id,recordNo:before.sales_order_no,before,after:{status:'APPROVED',assignmentNo,deliveryNo}});return ok(c,{approved:true,approvalDecision,assignmentId,assignmentNo,deliveryId:dr.meta.last_row_id,deliveryNo});
 });

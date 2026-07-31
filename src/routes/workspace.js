@@ -6,6 +6,10 @@ import { effectiveWorkspaceAccess, workspaceModule } from '../lib/workspace.js';
 import { definitionFor } from '../lib/module-definitions.js';
 import { normalizeText, nextCode, ensurePartner, ensureItem } from '../lib/codes.js';
 import { audit } from '../lib/audit.js';
+import {
+  syncSpecialistRecord, specialistConnected, validateSpecialistAction, afterSpecialistAction, reverseSpecialistRecord,
+  ensureWorkflowApprovals, decideWorkflowApproval, assertWorkflowApprovalsComplete,
+} from '../lib/specialist-engine.js';
 
 export const workspaceRoutes = new Hono();
 
@@ -48,6 +52,22 @@ function fieldPayload(definition,body,existing={}){
     else payload[field.key]=normalizeText(body[field.key]);
   }
   return payload;
+}
+
+
+async function connectedDefinition(db,module){
+  const definition=definitionFor(module);
+  let submodules=await all(db,`SELECT submodule_code,submodule_name,sequence_no,record_type,
+    connected_module_code,posting_event_type FROM erp_module_submodules
+    WHERE module_code=? AND active=1 ORDER BY sequence_no,submodule_name`,[module.code]);
+  if(!submodules.length){
+    submodules=(definition.recordTypes||[]).map((recordType,index)=>({
+      submodule_code:normalizeText(recordType).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''),
+      submodule_name:recordType,sequence_no:(index+1)*10,record_type:recordType,
+      connected_module_code:'',posting_event_type:'',
+    }));
+  }
+  return {...definition,submodules};
 }
 
 async function syncConnectedRecord(db,moduleCode,record,payload,userEmail){
@@ -143,19 +163,20 @@ async function syncConnectedRecord(db,moduleCode,record,payload,userEmail){
       sourceKey:record.record_no,
     });
   }
+  await syncSpecialistRecord(db,moduleCode,record,payload,userEmail);
 }
 
 workspaceRoutes.get('/modules/:code/definition', async c => {
   const access=await requireWorkspaceAccess(c,c.req.param('code'));
   if(access.error)return access.error;
-  return ok(c,{definition:definitionFor(access.module)});
+  return ok(c,{definition:await connectedDefinition(c.env.DB,access.module)});
 });
 
 workspaceRoutes.get('/modules/:code/summary', async c => {
   const access = await requireWorkspaceAccess(c, c.req.param('code'));
   if (access.error) return access.error;
   const code = access.module.code;
-  const definition=definitionFor(access.module);
+  const definition=await connectedDefinition(c.env.DB,access.module);
   const counts = await first(c.env.DB,
     `SELECT COUNT(*) total,
             SUM(CASE WHEN status='DRAFT' THEN 1 ELSE 0 END) drafts,
@@ -241,7 +262,8 @@ workspaceRoutes.get('/modules/:code/records/:id', async c => {
       ORDER BY a.category,a.item_name,a.serial_no LIMIT 2000`);
     connected={lease,units,availableAssets};
   }
-  return ok(c, { record,documents,definition:definitionFor(access.module),connected });
+  connected={...connected,specialist:await specialistConnected(c.env.DB,access.module.code,record.id)};
+  return ok(c, { record,documents,definition:await connectedDefinition(c.env.DB,access.module),connected });
 });
 
 workspaceRoutes.post('/modules/:code/records', async c => {
@@ -314,15 +336,29 @@ workspaceRoutes.post('/modules/:code/records/:id/action', async c => {
   const before=await first(c.env.DB,`SELECT * FROM erp_module_records WHERE module_code=? AND id=?`,[module.code,id]);
   if(!before)return fail(c,'Record not found.',404);
   if(!action.from.includes(before.status))return fail(c,`${action.label} is not allowed while the record is ${before.status}.`,409);
+  let beforePayload={};try{beforePayload=JSON.parse(before.payload_json||'{}');}catch{}
+  try{await validateSpecialistAction(c.env.DB,module.code,before,beforePayload,action);}catch(error){return fail(c,error.message,409);}
+  let approvalDecision=null;
+  let targetStatus=action.to;
+  try{
+    if(action.permission==='APPROVE'){
+      approvalDecision=await decideWorkflowApproval(c.env.DB,module.code,before,access.user,b.decision||'APPROVE',b.notes||'');
+      if(approvalDecision.rejected)targetStatus='DRAFT';
+      else if(!approvalDecision.completed)targetStatus=before.status;
+    }else if(action.permission==='POST')await assertWorkflowApprovalsComplete(c.env.DB,before.id);
+  }catch(error){return fail(c,error.message,409);}
   await run(c.env.DB,`
     UPDATE erp_module_records SET status=?,updated_by=?,updated_at=datetime('now') WHERE id=?`,
-    [action.to,access.user.email,id]);
+    [targetStatus,access.user.email,id]);
   const after=await first(c.env.DB,`SELECT * FROM erp_module_records WHERE id=?`,[id]);
   let payload={};try{payload=JSON.parse(after.payload_json||'{}');}catch{}
+  if(['FOR_APPROVAL','SUBMITTED','BASELINE'].includes(targetStatus))await ensureWorkflowApprovals(c.env.DB,module.code,after,access.user.email);
   await syncConnectedRecord(c.env.DB,module.code,after,payload,access.user.email);
+  const effectiveAction={...action,to:targetStatus};
+  const financeEvent=targetStatus===action.to?await afterSpecialistAction(c.env.DB,module.code,after,payload,effectiveAction,access.user.email):null;
   await audit(c,{action:`WORKSPACE_${action.code}`,module:module.permission,recordType:module.code,
-    recordId:id,recordNo:after.record_no,before,after});
-  return ok(c,{record:after,action});
+    recordId:id,recordNo:after.record_no,before,after,metadata:{approvalDecision}});
+  return ok(c,{record:after,action:effectiveAction,approvalDecision,financeEvent});
 });
 
 workspaceRoutes.get('/modules/:code/change-requests', async c => {
@@ -402,6 +438,7 @@ workspaceRoutes.post('/modules/:code/change-requests/:requestId/decision', async
   const after=await first(c.env.DB,`SELECT * FROM erp_module_records WHERE id=?`,[before.id]);
   let payload={};try{payload=JSON.parse(after.payload_json||'{}');}catch{}
   await syncConnectedRecord(c.env.DB,access.module.code,after,payload,access.user.email);
+  if(request.action_type==='REVERSE')await reverseSpecialistRecord(c.env.DB,access.module.code,after,access.user.email,request.request_no);
   await audit(c,{action:`APPROVE_${request.action_type}`,module:access.module.permission,
     recordType:access.module.code,recordId:before.id,recordNo:before.record_no,before,after});
   return ok(c,{status:'EXECUTED',record:after});
@@ -422,8 +459,9 @@ workspaceRoutes.post('/modules/:code/records/:id/documents', async c => {
   const allowed=[
     'application/pdf','image/png','image/jpeg','image/webp',
     'application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','text/csv',
   ];
-  if(file.type&&!allowed.includes(file.type))return fail(c,'Upload a PDF, image, DOC, or DOCX file.');
+  if(file.type&&!allowed.includes(file.type))return fail(c,'Upload a PDF, image, Word, Excel, or CSV file.');
   const buffer=await file.arrayBuffer();
   const documentNo=await nextCode(c.env.DB,'DOCUMENT','DOC',8);
   const safeName=file.name.replace(/[^A-Za-z0-9._-]+/g,'_');

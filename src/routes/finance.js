@@ -4,6 +4,7 @@ import { ok, fail, jsonBody, numberValue } from '../lib/http.js';
 import { permissionFor, requirePermission } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { nextCode, normalizeText } from '../lib/codes.js';
+import { fixedAssetAccountsForCategory, inventoryAccountForCategory } from '../lib/transaction-rules.js';
 import {
   approveJournal,
   calculateAgingBucket,
@@ -15,6 +16,7 @@ import {
   postJournal,
   postSubledgerDocument,
   retryFinanceEvent,
+  registerPendingFixedAsset,
   reversePostedJournal,
   submitJournal,
 } from '../lib/finance.js';
@@ -401,6 +403,11 @@ financeRoutes.post('/sync-operational', requirePermission('FINANCE', 'MANAGE'), 
     LEFT JOIN erp_assets a ON a.id=da.asset_id
     WHERE d.status='DELIVERED' AND d.created_at>=? GROUP BY d.id`, [cutover]);
   for (const row of deliveries) {
+    const alreadyConnected = await first(c.env.DB,`SELECT COUNT(*) n FROM erp_finance_source_events
+      WHERE source_type='DELIVERY' AND source_id=? AND event_type IN (
+        'CUSTOMER_INVOICE','SALE_COGS','CAPITALIZATION','INVENTORY_CONSUMPTION','WARRANTY_ISSUE','DONATION_ISSUE'
+      )`,[row.id]);
+    if(Number(alreadyConnected?.n||0)>0)continue;
     if (row.transaction_type === 'SALE') {
       await process({
         eventKey:`DELIVERY_REVENUE:${row.id}`, eventType:'CUSTOMER_INVOICE', sourceModule:'SALES',
@@ -565,26 +572,27 @@ financeRoutes.post('/payment-requests', requirePermission('FINANCE','CREATE'), a
   const entity=await entityByCode(c.env.DB,b.entityCode||'E88');
   if(!entity)return fail(c,'Entity not found.',404);
   const po=b.purchaseOrderId?await first(c.env.DB,`SELECT * FROM erp_purchase_orders WHERE id=?`,[Number(b.purchaseOrderId)]):null;
+  const landedCost=b.landedCostId?await first(c.env.DB,`SELECT * FROM erp_landed_cost_headers WHERE id=?`,[Number(b.landedCostId)]):null;
   const partner=b.payeePartnerId?await first(c.env.DB,`SELECT * FROM erp_partners WHERE id=?`,[Number(b.payeePartnerId)]):
     po?.vendor_id?await first(c.env.DB,`SELECT * FROM erp_partners WHERE id=?`,[po.vendor_id]):null;
   const payee=normalizeText(b.payeeName||partner?.name||po?.vendor_name);
   if(!payee||!b.department||!b.purpose)return fail(c,'Payee, department and purpose are required.');
-  const gross=numberValue(b.grossAmount,po?.total_amount||0);
-  const vat=numberValue(b.vatAmount,po?.tax_amount||0);
+  const gross=numberValue(b.grossAmount,landedCost?.invoice_total||po?.total_amount||0);
+  const vat=numberValue(b.vatAmount,landedCost?.input_vat_amount||po?.tax_amount||0);
   const withholding=numberValue(b.withholdingAmount);
   const net=round(gross-withholding);
   if(gross<=0)return fail(c,'Gross amount must be greater than zero.');
   const requestNo=await nextCode(c.env.DB,'PAYMENT_REQUEST','RFP',8);
   const inserted=await run(c.env.DB,`INSERT INTO erp_payment_requests(
     request_no,entity_id,request_date,requestor_email,payee_partner_id,payee_name,department,
-    cost_center,project_code,purpose,request_type,purchase_order_id,purchase_order_no,
+    cost_center,project_code,purpose,request_type,purchase_order_id,purchase_order_no,landed_cost_id,
     supplier_invoice_no,invoice_date,gross_amount,vat_amount,withholding_amount,net_payable,
     due_date,payment_method,status)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'DRAFT')`,[
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'DRAFT')`,[
     requestNo,entity.id,b.requestDate||new Date().toISOString().slice(0,10),c.get('erpUser').email,
     partner?.id||null,payee,normalizeText(b.department),normalizeText(b.costCenter),
     normalizeText(b.projectCode),normalizeText(b.purpose),normalizeText(b.requestType||'SUPPLIER_PAYMENT'),
-    po?.id||null,po?.purchase_order_no||normalizeText(b.purchaseOrderNo),
+    po?.id||null,po?.purchase_order_no||normalizeText(b.purchaseOrderNo),landedCost?.id||null,
     normalizeText(b.supplierInvoiceNo),b.invoiceDate||'',gross,vat,withholding,net,
     b.dueDate||'',normalizeText(b.paymentMethod),
   ]);
@@ -623,6 +631,31 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
         throw new Error('Final approval must be performed by a different authorized user.');
       }
       let billId=request.supplier_bill_id;
+      const advanceRequest=/ADVANCE|PREPAYMENT/.test(normalizeText(request.request_type).toUpperCase());
+      if(!advanceRequest&&!normalizeText(request.supplier_invoice_no)){
+        throw new Error('Supplier invoice number is required before final approval.');
+      }
+      if(normalizeText(request.supplier_invoice_no)){
+        const duplicate=await first(c.env.DB,`SELECT id,request_no FROM erp_payment_requests
+          WHERE id<>? AND payee_partner_id=? AND supplier_invoice_no=?
+            AND status NOT IN ('REJECTED','CANCELLED','REVERSED') LIMIT 1`,[
+          id,request.payee_partner_id,normalizeText(request.supplier_invoice_no),
+        ]);
+        if(duplicate)throw new Error(`Supplier invoice is already recorded in ${duplicate.request_no}.`);
+      }
+      let debitAccount=normalizeText(b.accountCode)||'6990';
+      if(request.landed_cost_id)debitAccount='2060';
+      else if(request.purchase_order_id){
+        if(advanceRequest)debitAccount='1250';
+        else{
+          const received=await first(c.env.DB,`SELECT COUNT(*) n FROM erp_receipts r
+            JOIN erp_shipments s ON s.id=r.shipment_id
+            JOIN erp_purchase_orders p ON p.purchase_order_no=s.purchase_order_ref
+            WHERE p.id=?`,[request.purchase_order_id]);
+          if(Number(received?.n||0)===0)throw new Error('Goods receipt is required before clearing the supplier invoice against GRNI. Use an advance request for prepayment.');
+          debitAccount='2050';
+        }
+      }
       if(!billId&&request.payee_partner_id){
         const bill=await createSubledgerDocument(c.env.DB,{
           entityCode:request.entity_code,documentType:'SUPPLIER_BILL',partnerId:request.payee_partner_id,
@@ -633,7 +666,7 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
           sourceType:'PAYMENT_REQUEST',sourceId:id,sourceNo:request.request_no,
         },user);
         billId=bill.id;
-        await postSubledgerDocument(c.env.DB,bill.id,{accountCode:normalizeText(b.accountCode)||'6990'},user);
+        await postSubledgerDocument(c.env.DB,bill.id,{accountCode:debitAccount},user);
       }
       await run(c.env.DB,`UPDATE erp_payment_requests SET status='APPROVED',
         final_approved_by=?,final_approved_at=datetime('now'),supplier_bill_id=?,
@@ -932,53 +965,36 @@ financeRoutes.get('/fixed-assets', requirePermission('FINANCE', 'VIEW'), async c
 financeRoutes.post('/fixed-assets/capitalize', requirePermission('FINANCE', 'POST'), async c => {
   const b = await jsonBody(c);
   const entity = await entityByCode(c.env.DB, b.entityCode || 'E88');
-  const asset = await first(c.env.DB, `SELECT * FROM erp_assets WHERE id=?`, [Number(b.assetId)]);
+  const asset = await first(c.env.DB, `SELECT * FROM erp_assets WHERE id=? AND active=1`, [Number(b.assetId)]);
   if (!entity || !asset) return fail(c, 'Entity or inventory asset not found.', 404);
+  const existing=await first(c.env.DB,`SELECT * FROM erp_fixed_asset_books WHERE asset_id=? AND status<>'REVERSED'`,[asset.id]);
+  if(existing)return fail(c,`Asset is already registered in fixed assets with status ${existing.status}.`,409);
   const cost = numberValue(b.acquisitionCost, asset.unit_cost);
-  const life = Number(b.usefulLifeMonths || 36);
-  if (cost <= 0 || life <= 0) return fail(c, 'Cost and useful life must be greater than zero.');
-  const assetAccountCode = b.assetAccountCode || (/BAT|BSS/.test(asset.category) ? '1320' : '1310');
-  const capitalized = await run(c.env.DB,
-    `INSERT INTO erp_fixed_asset_books(
-      asset_id,entity_id,asset_class,capitalization_date,acquisition_cost,residual_value,
-      useful_life_months,depreciation_method,net_book_value,asset_account_code,
-      accumulated_depreciation_account_code,depreciation_expense_account_code,created_by
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [asset.id, entity.id, b.assetClass || asset.category, b.capitalizationDate || new Date().toISOString().slice(0, 10),
-      cost, numberValue(b.residualValue), life, b.depreciationMethod || 'STRAIGHT_LINE', cost,
-      assetAccountCode,
-      b.accumulatedDepreciationAccountCode || '1390', b.depreciationExpenseAccountCode || '6800',
-      c.get('erpUser').email]);
-  const bookId = capitalized.meta.last_row_id;
+  const life = Number(b.usefulLifeMonths || (asset.category==='BSS'?60:36));
+  if (cost <= 0 || life <= 0) return fail(c, 'An approved cost and useful life are required before capitalization.');
+  const classAccounts=fixedAssetAccountsForCategory(asset.category);
+  const assetAccountCode = b.assetAccountCode || classAccounts.assetAccountCode;
+  const date=b.capitalizationDate || new Date().toISOString().slice(0, 10);
   const event = await captureFinanceEvent(c.env.DB, {
-    eventKey:`FIXED_ASSET_CAPITALIZATION:${bookId}`,
-    eventType:'CAPITALIZATION',
-    sourceModule:'FIXED_ASSETS',
-    sourceType:'FIXED_ASSET_BOOK',
-    sourceId:bookId,
-    sourceNo:asset.asset_no,
-    eventDate:b.capitalizationDate || new Date().toISOString().slice(0, 10),
-    entityCode:entity.entity_code,
-    department:b.department || '',
-    costCenter:b.costCenter || '',
-    businessLine:b.businessLine || 'LEASE',
-    amount:cost,
-    description:`Capitalize ${asset.asset_no} / ${asset.serial_no}`,
-    payload:{
-      costAmount:cost,
-      assetAccountCode,
-      inventoryAccountCode:/BAT|BSS/.test(asset.category) ? '1220' : '1200',
-      assetId:asset.id,
-      serialNo:asset.serial_no,
-      itemId:asset.item_id,
-      category:asset.category,
-    },
+    eventKey:`FIXED_ASSET_CAPITALIZATION:${asset.id}:${date}`,
+    eventType:'CAPITALIZATION',sourceModule:'FIXED_ASSETS',sourceType:'ASSET',sourceId:asset.id,
+    sourceNo:asset.asset_no,eventDate:date,entityCode:entity.entity_code,
+    department:b.department || '',costCenter:b.costCenter || '',businessLine:b.businessLine || 'LEASE',
+    amount:cost,description:`Capitalize ${asset.asset_no} / ${asset.serial_no}`,
+    payload:{costAmount:cost,assetAccountCode,
+      inventoryAccountCode:inventoryAccountForCategory(asset.category),
+      assetId:asset.id,serialNo:asset.serial_no,itemId:asset.item_id,category:asset.category},
   }, c.get('erpUser').email);
-  if (event.status === 'ERROR') {
-    await run(c.env.DB, `DELETE FROM erp_fixed_asset_books WHERE id=?`, [bookId]);
-    return fail(c, event.error_message, 409);
-  }
-  return ok(c, { capitalized:true, bookId, journalId:event.journal_id }, 201);
+  if (event.status === 'ERROR') return fail(c, event.error_message, 409);
+  const book=await registerPendingFixedAsset(c.env.DB,{
+    assetId:asset.id,entityCode:entity.entity_code,assetClass:b.assetClass||classAccounts.assetClass,
+    capitalizationDate:date,acquisitionCost:cost,residualValue:numberValue(b.residualValue),
+    usefulLifeMonths:life,depreciationMethod:b.depreciationMethod||'STRAIGHT_LINE',assetAccountCode,
+    accumulatedDepreciationAccountCode:b.accumulatedDepreciationAccountCode||classAccounts.accumulatedDepreciationAccountCode,
+    depreciationExpenseAccountCode:b.depreciationExpenseAccountCode||classAccounts.depreciationExpenseAccountCode,
+    capitalizationEventId:event.id,capitalizationJournalId:event.journal_id,
+  },c.get('erpUser').email);
+  return ok(c,{capitalized:false,pendingApproval:true,bookId:book.id,journalId:event.journal_id},201);
 });
 
 financeRoutes.post('/depreciation-runs', requirePermission('FINANCE', 'CREATE'), async c => {
@@ -1178,14 +1194,18 @@ financeRoutes.get('/reports/tax-summary', requirePermission('FINANCE', 'VIEW'), 
 
 financeRoutes.get('/reports/inventory-reconciliation', requirePermission('FINANCE', 'VIEW'), async c => {
   const summary = await first(c.env.DB, `SELECT * FROM vw_erp_inventory_gl_reconciliation`);
-  const byCategory = await all(c.env.DB,
-    `SELECT a.category,COUNT(*) units,ROUND(SUM(a.unit_cost),2) subledger_value
-      FROM erp_assets a WHERE a.active=1 AND a.current_status NOT IN ('SOLD','WRITTEN_OFF')
-      AND NOT EXISTS(SELECT 1 FROM erp_fixed_asset_books f WHERE f.asset_id=a.id)
-      GROUP BY a.category ORDER BY a.category`);
+  const byCategory = await all(c.env.DB,`
+    SELECT class_code category,class_name,account_code,cogs_account_code,units,valued_units,unvalued_units,
+      subledger_value,gl_value,difference,
+      CASE WHEN ABS(difference)<=0.01 THEN 'RECONCILED' ELSE 'REVIEW_REQUIRED' END status
+    FROM vw_erp_inventory_class_reconciliation
+    ORDER BY CASE class_code WHEN 'MC' THEN 1 WHEN 'BAT' THEN 2 WHEN 'BSS' THEN 3 WHEN 'CHG' THEN 4 WHEN 'SP' THEN 5 ELSE 6 END`);
   const sourceEvents = await all(c.env.DB,
     `SELECT status,event_type,COUNT(*) events,ROUND(SUM(amount),2) amount
-      FROM erp_finance_source_events WHERE source_module='INVENTORY'
+      FROM erp_finance_source_events
+      WHERE event_type IN ('GOODS_RECEIPT','LANDED_COST','SALE_COGS','SALES_RETURN_INVENTORY','CAPITALIZATION',
+        'INVENTORY_CONSUMPTION','WARRANTY_ISSUE','DONATION_ISSUE','INVENTORY_VALUATION_ADJUSTMENT',
+        'INVENTORY_WRITE_OFF','CYCLE_COUNT_ADJUSTMENT')
       GROUP BY status,event_type ORDER BY status,event_type`);
   const difference = round(Number(summary?.inventory_subledger || 0) - Number(summary?.inventory_general_ledger || 0));
   return ok(c, { summary:{ ...summary, difference, reconciled:Math.abs(difference) <= 0.01 }, byCategory, sourceEvents });

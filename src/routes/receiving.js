@@ -251,25 +251,30 @@ receivingRoutes.post('/', requirePermission('RECEIVING','POST'), async(c)=>{
         [poStatus,purchaseOrder.id]);
     }
   }
-  const receiptValue=await first(c.env.DB,`
-    SELECT COALESCE(SUM(a.unit_cost),0) amount
-    FROM erp_assets a WHERE a.receipt_id=?`,[receiptId]);
+  const receiptValues=await all(c.env.DB,`
+    SELECT COALESCE(NULLIF(a.category,''),'OTH') category,COALESCE(SUM(a.unit_cost),0) amount,COUNT(*) units
+    FROM erp_assets a WHERE a.receipt_id=?
+    GROUP BY COALESCE(NULLIF(a.category,''),'OTH')`,[receiptId]);
   const purchaseOrder=shipment.purchase_order_ref?await first(c.env.DB,`
     SELECT * FROM erp_purchase_orders WHERE purchase_order_no=?`,[shipment.purchase_order_ref]):null;
-  await captureFinanceEvent(c.env.DB,{
-    eventKey:`RECEIPT:${receiptId}`,
-    eventType:'GOODS_RECEIPT',
-    sourceModule:'RECEIVING',
-    sourceType:'RECEIPT',
-    sourceId:receiptId,
-    sourceNo:receiptNo,
-    eventDate:receivedAt,
-    partnerId:purchaseOrder?.vendor_id||null,
-    amount:Number(receiptValue?.amount||0),
-    currency:purchaseOrder?.currency||'PHP',
-    description:`Goods receipt ${receiptNo} against ${shipment.purchase_order_ref||'unlinked PO'}`,
-    payload:{netAmount:Number(receiptValue?.amount||0)},
-  },user);
+  for(const receiptValue of receiptValues){
+    const amount=Number(receiptValue.amount||0);
+    if(amount<=0)continue;
+    await captureFinanceEvent(c.env.DB,{
+      eventKey:`RECEIPT:${receiptId}:${receiptValue.category}`,
+      eventType:'GOODS_RECEIPT',
+      sourceModule:'RECEIVING',
+      sourceType:'RECEIPT',
+      sourceId:receiptId,
+      sourceNo:receiptNo,
+      eventDate:receivedAt,
+      partnerId:purchaseOrder?.vendor_id||null,
+      amount,
+      currency:purchaseOrder?.currency||'PHP',
+      description:`Goods receipt ${receiptNo} · ${receiptValue.category} · ${receiptValue.units} unit(s) against ${shipment.purchase_order_ref||'unlinked PO'}`,
+      payload:{netAmount:amount,category:receiptValue.category,unitCount:Number(receiptValue.units||0)},
+    },user);
+  }
   await audit(c,{action:'POST_RECEIPT',module:'RECEIVING',recordType:'RECEIPT',recordId:receiptId,recordNo:receiptNo,after:{shipmentNo:shipment.shipment_no,summary,results}});
   return ok(c,{receiptId,receiptNo,shipmentStatus:status,
     location:{id:location.id,code:location.code,name:location.name,type:location.location_type},

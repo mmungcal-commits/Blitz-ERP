@@ -6,6 +6,7 @@ import { audit } from '../lib/audit.js';
 import { normalizeSerial, normalizeText, ensureLocation, nextCode } from '../lib/codes.js';
 import { postMovement } from '../lib/inventory.js';
 import { captureFinanceEvent } from '../lib/finance.js';
+import { inventoryAccountForCategory } from '../lib/transaction-rules.js';
 
 export const inventoryRoutes = new Hono();
 
@@ -27,8 +28,24 @@ inventoryRoutes.get('/', requirePermission('INVENTORY','VIEW'), async(c)=>{
 });
 
 inventoryRoutes.get('/by-class', requirePermission('INVENTORY','VIEW'), async(c)=>{
-  const rows=await all(c.env.DB,`SELECT COALESCE(NULLIF(i.category,''),'OTH') cls, COUNT(*) total, SUM(CASE WHEN a.current_status IN ('AVAILABLE','IN_STOCK') THEN 1 ELSE 0 END) available FROM erp_assets a LEFT JOIN erp_items i ON i.id=a.item_id WHERE a.active=1 GROUP BY cls ORDER BY total DESC`);
-  return ok(c,{rows});
+  const rows=await all(c.env.DB,`
+    SELECT class_code cls,class_name,COUNT(DISTINCT item_id) item_count,
+      COALESCE(SUM(quantity),0) total,COALESCE(SUM(available_quantity),0) available,
+      COALESCE(SUM(deployed_quantity),0) deployed,COALESCE(SUM(quarantine_quantity),0) quarantine,
+      COALESCE(SUM(unvalued_quantity),0) unvalued,ROUND(COALESCE(SUM(inventory_value),0),2) inventory_value
+    FROM vw_erp_inventory_by_item_class
+    GROUP BY class_code,class_name
+    ORDER BY CASE class_code WHEN 'MC' THEN 1 WHEN 'BAT' THEN 2 WHEN 'BSS' THEN 3 WHEN 'CHG' THEN 4 WHEN 'SP' THEN 5 ELSE 6 END`);
+  const items=await all(c.env.DB,`
+    SELECT class_code,class_name,item_id,item_code,item_name,
+      COALESCE(SUM(quantity),0) total,COALESCE(SUM(available_quantity),0) available,
+      COALESCE(SUM(deployed_quantity),0) deployed,COALESCE(SUM(quarantine_quantity),0) quarantine,
+      COALESCE(SUM(unvalued_quantity),0) unvalued,ROUND(COALESCE(SUM(inventory_value),0),2) inventory_value
+    FROM vw_erp_inventory_by_item_class
+    GROUP BY class_code,class_name,item_id,item_code,item_name
+    HAVING COALESCE(SUM(quantity),0)>0
+    ORDER BY CASE class_code WHEN 'MC' THEN 1 WHEN 'BAT' THEN 2 WHEN 'BSS' THEN 3 WHEN 'CHG' THEN 4 WHEN 'SP' THEN 5 ELSE 6 END,item_name`);
+  return ok(c,{rows,items,totalItems:items.length});
 });
 
 inventoryRoutes.get('/summary', requirePermission('INVENTORY','VIEW'), async(c)=>{
@@ -37,25 +54,41 @@ inventoryRoutes.get('/summary', requirePermission('INVENTORY','VIEW'), async(c)=
 });
 
 inventoryRoutes.get('/visibility', requirePermission('INVENTORY','VIEW'), async(c)=>{
+  const {page,size,offset}=pageParams(c);
   const locationId=Number(c.req.query('locationId')||0);
   const status=normalizeText(c.req.query('status'));
+  const category=normalizeText(c.req.query('category')).toUpperCase();
   const q=`%${normalizeText(c.req.query('q'))}%`;
   const args=[]; const where=['a.active=1'];
   if(locationId){where.push('a.current_location_id=?');args.push(locationId);}
   if(status){where.push('a.current_status=?');args.push(status);}
+  if(category){where.push('a.category=?');args.push(category);}
   if(q!=='%%'){
-    where.push('(a.serial_no LIKE ? OR a.item_code LIKE ? OR a.item_name LIKE ? OR l.code LIKE ? OR l.name LIKE ? OR a.current_holder_name LIKE ?)');
-    args.push(q,q,q,q,q,q);
+    where.push('(a.serial_no LIKE ? OR a.secondary_serial LIKE ? OR a.item_code LIKE ? OR a.item_name LIKE ? OR l.code LIKE ? OR l.name LIKE ? OR a.current_holder_name LIKE ?)');
+    args.push(q,q,q,q,q,q,q);
   }
+  const whereSql=where.join(' AND ');
   const rows=await all(c.env.DB,`
     SELECT a.id,a.asset_no,a.serial_no,a.secondary_serial,a.item_code,a.item_name,a.category,
       a.current_status,a.condition_code,a.reconciliation_status,a.current_holder_type,a.current_holder_name,
+      a.unit_cost,a.landed_cost,a.cost_source,a.valuation_status,
       l.id location_id,l.code location_code,l.name location_name,l.location_type,a.updated_at
     FROM erp_assets a
     LEFT JOIN erp_locations l ON l.id=a.current_location_id
-    WHERE ${where.join(' AND ')}
-    ORDER BY l.name,a.category,a.item_name,a.serial_no
-    LIMIT 5000`,args);
+    WHERE ${whereSql}
+    ORDER BY CASE a.category WHEN 'MC' THEN 1 WHEN 'BAT' THEN 2 WHEN 'BSS' THEN 3 WHEN 'CHG' THEN 4 WHEN 'SP' THEN 5 ELSE 6 END,
+      a.item_name,a.serial_no
+    LIMIT ? OFFSET ?`,[...args,size,offset]);
+  const count=await first(c.env.DB,`SELECT COUNT(*) total FROM erp_assets a LEFT JOIN erp_locations l ON l.id=a.current_location_id WHERE ${whereSql}`,args);
+  const summary=await first(c.env.DB,`
+    SELECT COUNT(*) total_units,
+      SUM(CASE WHEN a.current_status='AVAILABLE' THEN 1 ELSE 0 END) available_units,
+      SUM(CASE WHEN a.current_status='QUARANTINE' THEN 1 ELSE 0 END) quarantine_units,
+      SUM(CASE WHEN a.current_holder_name IS NOT NULL OR a.current_status IN ('ASSIGNED','LEASED','DEMO','PILOT_TEST','EMPLOYEE_ASSIGNED','INTERNAL_ASSIGNED') THEN 1 ELSE 0 END) assigned_units,
+      SUM(CASE WHEN a.reconciliation_status!='CLEAR' THEN 1 ELSE 0 END) unreconciled_units,
+      SUM(CASE WHEN COALESCE(a.unit_cost,0)<=0 THEN 1 ELSE 0 END) unvalued_units,
+      ROUND(COALESCE(SUM(CASE WHEN NOT EXISTS(SELECT 1 FROM erp_fixed_asset_books f WHERE f.asset_id=a.id) AND a.current_status NOT IN ('SOLD','WRITTEN_OFF') THEN a.unit_cost ELSE 0 END),0),2) inventory_value
+    FROM erp_assets a LEFT JOIN erp_locations l ON l.id=a.current_location_id WHERE ${whereSql}`,args);
   const byLocation=await all(c.env.DB,`
     SELECT l.id location_id,l.code location_code,l.name location_name,l.location_type,
       COUNT(a.id) total_units,
@@ -66,7 +99,7 @@ inventoryRoutes.get('/visibility', requirePermission('INVENTORY','VIEW'), async(
     LEFT JOIN erp_assets a ON a.current_location_id=l.id AND a.active=1
     WHERE l.active=1
     GROUP BY l.id ORDER BY l.name`);
-  return ok(c,{rows,byLocation,total:rows.length});
+  return ok(c,{rows,byLocation,summary,page,size,total:Number(count?.total||0)});
 });
 
 inventoryRoutes.get('/analysis', requirePermission('INVENTORY','VIEW'), async(c)=>{
@@ -75,7 +108,11 @@ inventoryRoutes.get('/analysis', requirePermission('INVENTORY','VIEW'), async(c)
       (SELECT COUNT(*) FROM erp_assets a WHERE a.item_id=i.id AND a.active=1) on_hand_qty,
       (SELECT COUNT(*) FROM erp_assets a WHERE a.item_id=i.id AND a.active=1 AND a.current_status='AVAILABLE') available_qty,
       (SELECT COUNT(*) FROM erp_assets a WHERE a.item_id=i.id AND a.active=1 AND a.current_status='QUARANTINE') quarantine_qty,
-      (SELECT COUNT(*) FROM erp_assets a WHERE a.item_id=i.id AND a.active=1 AND a.current_holder_id IS NOT NULL) deployed_qty,
+      (SELECT COUNT(*) FROM erp_assets a WHERE a.item_id=i.id AND a.active=1 AND (a.current_holder_id IS NOT NULL OR a.current_status IN ('ASSIGNED','LEASED','DEMO','PILOT_TEST','EMPLOYEE_ASSIGNED','INTERNAL_ASSIGNED'))) deployed_qty,
+      (SELECT COUNT(*) FROM erp_assets a WHERE a.item_id=i.id AND a.active=1 AND COALESCE(a.unit_cost,0)<=0) unvalued_qty,
+      (SELECT ROUND(COALESCE(SUM(a.unit_cost),0),2) FROM erp_assets a WHERE a.item_id=i.id AND a.active=1
+        AND a.current_status NOT IN ('SOLD','WRITTEN_OFF')
+        AND NOT EXISTS(SELECT 1 FROM erp_fixed_asset_books f WHERE f.asset_id=a.id)) inventory_value,
       (SELECT COUNT(*) FROM erp_expected_assets e
         JOIN erp_shipments s ON s.id=e.shipment_id
         WHERE e.item_id=i.id AND e.expected_status IN ('EXPECTED','EXPECTED_EXCEPTION')
@@ -86,16 +123,132 @@ inventoryRoutes.get('/analysis', requirePermission('INVENTORY','VIEW'), async(c)
       (SELECT COUNT(DISTINCT a.current_location_id) FROM erp_assets a WHERE a.item_id=i.id AND a.active=1) location_count
     FROM erp_items i
     WHERE i.active=1
-    ORDER BY i.category,i.item_name`);
+    ORDER BY CASE i.category WHEN 'MC' THEN 1 WHEN 'BAT' THEN 2 WHEN 'BSS' THEN 3 WHEN 'CHG' THEN 4 WHEN 'SP' THEN 5 ELSE 6 END,i.item_name`);
   const byStatus=await all(c.env.DB,`
     SELECT current_status status,COUNT(*) qty
     FROM erp_assets WHERE active=1 GROUP BY current_status ORDER BY qty DESC`);
   const totals=rows.reduce((out,row)=>{
     out.items+=1;out.onHand+=Number(row.on_hand_qty||0);out.available+=Number(row.available_qty||0);
     out.incoming+=Number(row.incoming_qty||0);out.openPO+=Number(row.open_po_qty||0);
-    out.quarantine+=Number(row.quarantine_qty||0);return out;
-  },{items:0,onHand:0,available:0,incoming:0,openPO:0,quarantine:0});
+    out.quarantine+=Number(row.quarantine_qty||0);out.unvalued+=Number(row.unvalued_qty||0);
+    out.inventoryValue+=Number(row.inventory_value||0);return out;
+  },{items:0,onHand:0,available:0,incoming:0,openPO:0,quarantine:0,unvalued:0,inventoryValue:0});
   return ok(c,{rows,byStatus,totals});
+});
+
+inventoryRoutes.get('/valuation', requirePermission('INVENTORY','VIEW'), async c=>{
+  const q=`%${normalizeText(c.req.query('q'))}%`;
+  const readiness=normalizeText(c.req.query('readiness')).toUpperCase();
+  const where=['v.active=1'];const args=[];
+  if(q!=='%%'){where.push('(v.serial_no LIKE ? OR v.item_code LIKE ? OR v.item_name LIKE ?)');args.push(q,q,q);}
+  if(readiness){where.push('v.finance_readiness=?');args.push(readiness);}
+  const rows=await all(c.env.DB,`SELECT v.*,
+    x.id exception_id,x.exception_type,x.status exception_status,x.proposed_unit_cost,x.current_unit_cost,
+    x.requested_by,x.requested_at,x.approved_by,x.approved_at,x.journal_id
+    FROM vw_erp_inventory_valuation_status v
+    LEFT JOIN erp_inventory_valuation_exceptions x ON x.id=(
+      SELECT x2.id FROM erp_inventory_valuation_exceptions x2
+      WHERE x2.asset_id=v.id AND x2.status IN ('OPEN','PENDING_POSTING')
+      ORDER BY x2.id DESC LIMIT 1)
+    WHERE ${where.join(' AND ')}
+    ORDER BY CASE v.finance_readiness WHEN 'BLOCKED_MISSING_COST' THEN 0
+      WHEN 'PROVISIONAL_REVIEW_REQUIRED' THEN 1 ELSE 2 END,v.category,v.item_name,v.serial_no LIMIT 5000`,args);
+  const summary=await first(c.env.DB,`SELECT COUNT(*) total_assets,
+    SUM(CASE WHEN unit_cost>0 THEN 1 ELSE 0 END) valued_assets,
+    SUM(CASE WHEN unit_cost<=0 THEN 1 ELSE 0 END) unvalued_assets,
+    SUM(CASE WHEN valuation_status='PROVISIONAL_STANDARD' THEN 1 ELSE 0 END) provisional_assets,
+    ROUND(COALESCE(SUM(CASE WHEN fixed_asset_book_id IS NULL AND current_status NOT IN ('SOLD','WRITTEN_OFF') THEN unit_cost ELSE 0 END),0),2) inventory_value,
+    ROUND(COALESCE(SUM(CASE WHEN fixed_asset_book_id IS NOT NULL THEN net_book_value ELSE 0 END),0),2) fixed_asset_nbv
+    FROM vw_erp_inventory_valuation_status WHERE active=1`);
+  const exceptions=await first(c.env.DB,`SELECT
+    SUM(CASE WHEN status='OPEN' THEN 1 ELSE 0 END) open_exceptions,
+    SUM(CASE WHEN status='PENDING_POSTING' THEN 1 ELSE 0 END) pending_posting
+    FROM erp_inventory_valuation_exceptions`);
+  return ok(c,{rows,summary:{...summary,...exceptions}});
+});
+
+inventoryRoutes.post('/valuation/:assetId/request', requirePermission('INVENTORY','EDIT'), async c=>{
+  const assetId=Number(c.req.param('assetId'));const b=await jsonBody(c);const user=c.get('erpUser').email;
+  const proposed=numberValue(b.proposedUnitCost);const reason=normalizeText(b.reason);
+  if(proposed<=0)return fail(c,'Proposed unit cost must be greater than zero.');
+  if(reason.length<8)return fail(c,'Provide the invoice, landed-cost basis, or reason for the proposed value.');
+  const asset=await first(c.env.DB,`SELECT a.*,f.id fixed_asset_book_id FROM erp_assets a
+    LEFT JOIN erp_fixed_asset_books f ON f.asset_id=a.id WHERE a.id=? AND a.active=1`,[assetId]);
+  if(!asset)return fail(c,'Serialized asset not found.',404);
+  if(asset.fixed_asset_book_id)return fail(c,'This serial is already a fixed asset. Use the fixed-asset revaluation workflow.',409);
+  let exception=await first(c.env.DB,`SELECT * FROM erp_inventory_valuation_exceptions
+    WHERE asset_id=? AND status='OPEN' ORDER BY id DESC LIMIT 1`,[assetId]);
+  if(exception){
+    await run(c.env.DB,`UPDATE erp_inventory_valuation_exceptions SET proposed_unit_cost=?,current_unit_cost=?,
+      exception_message=?,requested_by=?,requested_at=datetime('now'),resolution_notes=? WHERE id=?`,[
+      proposed,Number(asset.unit_cost||0),`Proposed valuation for ${asset.serial_no}: ${reason}`,user,
+      `Source: ${normalizeText(b.costSource||'SUPPORTING_DOCUMENT')}`,exception.id,
+    ]);
+  }else{
+    const inserted=await run(c.env.DB,`INSERT INTO erp_inventory_valuation_exceptions(
+      asset_id,item_id,serial_no,item_code,exception_type,exception_message,status,proposed_unit_cost,
+      current_unit_cost,requested_by,resolution_notes)
+      VALUES(?,?,?,?,?,?,'OPEN',?,?,?,?)`,[
+      asset.id,asset.item_id,asset.serial_no,asset.item_code,
+      Number(asset.unit_cost||0)>0?'VALUATION_CHANGE':'MISSING_UNIT_COST',
+      `Proposed valuation for ${asset.serial_no}: ${reason}`,proposed,Number(asset.unit_cost||0),user,
+      `Source: ${normalizeText(b.costSource||'SUPPORTING_DOCUMENT')}`,
+    ]);
+    exception=await first(c.env.DB,`SELECT * FROM erp_inventory_valuation_exceptions WHERE id=?`,[inserted.meta.last_row_id]);
+  }
+  exception=await first(c.env.DB,`SELECT * FROM erp_inventory_valuation_exceptions WHERE id=?`,[exception.id]);
+  await audit(c,{action:'REQUEST_VALUATION',module:'INVENTORY',recordType:'VALUATION_EXCEPTION',
+    recordId:exception.id,recordNo:asset.serial_no,after:exception});
+  return ok(c,{exception},201);
+});
+
+inventoryRoutes.post('/valuation/exceptions/:id/decision', requirePermission('INVENTORY','APPROVE'), async c=>{
+  const id=Number(c.req.param('id'));const b=await jsonBody(c);const user=c.get('erpUser').email;
+  const decision=normalizeText(b.decision).toUpperCase();
+  if(!['APPROVE','REJECT'].includes(decision))return fail(c,'Decision must be approve or reject.');
+  const exception=await first(c.env.DB,`SELECT x.*,a.category,a.unit_cost,a.item_id,a.serial_no,a.item_code,
+    f.id fixed_asset_book_id FROM erp_inventory_valuation_exceptions x
+    JOIN erp_assets a ON a.id=x.asset_id LEFT JOIN erp_fixed_asset_books f ON f.asset_id=a.id
+    WHERE x.id=?`,[id]);
+  if(!exception)return fail(c,'Valuation request not found.',404);
+  if(exception.status!=='OPEN')return fail(c,'Valuation request was already decided.',409);
+  if(exception.requested_by===user)return fail(c,'The valuation requester cannot approve the same request.',409);
+  if(decision==='REJECT'){
+    await run(c.env.DB,`UPDATE erp_inventory_valuation_exceptions SET status='REJECTED',approved_by=?,
+      approved_at=datetime('now'),resolution_notes=trim(COALESCE(resolution_notes,'')||' Rejected: '||?) WHERE id=?`,[
+      user,normalizeText(b.notes),id,
+    ]);
+    return ok(c,{status:'REJECTED'});
+  }
+  if(exception.fixed_asset_book_id)return fail(c,'This serial is already a fixed asset. Use the fixed-asset revaluation workflow.',409);
+  const proposed=Number(exception.proposed_unit_cost||0);const current=Number(exception.unit_cost||0);
+  if(proposed<=0)return fail(c,'Approved cost must be greater than zero.',409);
+  const delta=Math.round((proposed-current)*100)/100;
+  if(Math.abs(delta)<0.005){
+    await run(c.env.DB,`UPDATE erp_assets SET unit_cost=?,acquisition_cost=?,landed_cost=?,cost_source='APPROVED_VALUATION',
+      valuation_status='VALUED',updated_at=datetime('now') WHERE id=?`,[proposed,proposed,proposed,exception.asset_id]);
+    await run(c.env.DB,`UPDATE erp_inventory_valuation_exceptions SET status='RESOLVED',approved_by=?,approved_at=datetime('now'),
+      resolved_by=?,resolved_at=datetime('now'),resolution_notes=trim(COALESCE(resolution_notes,'')||' No GL delta.') WHERE id=?`,[
+      user,user,id,
+    ]);
+    return ok(c,{status:'RESOLVED',journalRequired:false});
+  }
+  const event=await captureFinanceEvent(c.env.DB,{
+    eventKey:`INVENTORY_VALUATION:${id}`,eventType:'INVENTORY_VALUATION_ADJUSTMENT',sourceModule:'INVENTORY',
+    sourceType:'VALUATION_EXCEPTION',sourceId:id,sourceNo:exception.serial_no,
+    eventDate:new Date().toISOString().slice(0,10),amount:Math.abs(delta),businessLine:'INVENTORY',
+    description:`Approved valuation adjustment for ${exception.serial_no}: ${current.toFixed(2)} to ${proposed.toFixed(2)}`,
+    payload:{costAmount:Math.abs(delta),adjustmentDirection:delta>0?'INCREASE':'DECREASE',category:exception.category,
+      inventoryAccountCode:inventoryAccountForCategory(exception.category),assetId:exception.asset_id,
+      itemId:exception.item_id,serialNo:exception.serial_no,offsetAccountCode:'6900'},
+  },user);
+  if(event.status==='ERROR')return fail(c,event.error_message||'Valuation journal could not be prepared.',409);
+  await run(c.env.DB,`UPDATE erp_inventory_valuation_exceptions SET status='PENDING_POSTING',current_unit_cost=?,
+    approved_by=?,approved_at=datetime('now'),finance_event_id=?,journal_id=?,resolution_notes=trim(COALESCE(resolution_notes,'')||' Approved: '||?)
+    WHERE id=?`,[current,user,event.id,event.journal_id,normalizeText(b.notes),id]);
+  await audit(c,{action:'APPROVE_VALUATION',module:'INVENTORY',recordType:'VALUATION_EXCEPTION',
+    recordId:id,recordNo:exception.serial_no,before:exception,after:{status:'PENDING_POSTING',eventId:event.id,journalId:event.journal_id}});
+  return ok(c,{status:'PENDING_POSTING',eventId:event.id,journalId:event.journal_id,journalStatus:'SUBMITTED'});
 });
 
 inventoryRoutes.get('/plans', requirePermission('INVENTORY','VIEW'), async(c)=>{

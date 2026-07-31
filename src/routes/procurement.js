@@ -4,7 +4,8 @@ import { ok, fail, jsonBody, pageParams, numberValue } from '../lib/http.js';
 import { requirePermission } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { ensurePartner, ensureItem, nextCode, normalizeText } from '../lib/codes.js';
-import { captureFinanceEvent } from '../lib/finance.js';
+import { captureFinanceEvent, entityByCode, ensureAccountingPeriod } from '../lib/finance.js';
+import { decideCoreWorkflowApproval } from '../lib/specialist-engine.js';
 
 export const procurementRoutes = new Hono();
 
@@ -42,8 +43,18 @@ procurementRoutes.get('/purchase-orders/:id', requirePermission('PROCUREMENT','V
 
 procurementRoutes.post('/purchase-orders/:id/approve', requirePermission('PROCUREMENT','APPROVE'), async c => {
   const id=Number(c.req.param('id')); const before=await first(c.env.DB,`SELECT * FROM erp_purchase_orders WHERE id=?`,[id]); if(!before)return fail(c,'Purchase order not found',404); if(before.status!=='DRAFT')return fail(c,'Only draft purchase orders can be approved',409);
+  const body=await jsonBody(c);let approvalDecision;
+  try{approvalDecision=await decideCoreWorkflowApproval(c.env.DB,'ip-sourcing-purchasing',{
+    sourceType:'PURCHASE_ORDER',sourceId:id,sourceNo:before.purchase_order_no,recordType:'Purchase Order',
+    department:'Supply Chain',amount:before.total_amount,createdBy:before.created_by,
+  },c.get('erpUser'),body.decision||'APPROVE',body.notes||'');}catch(error){return fail(c,error.message,409);}
+  if(approvalDecision.rejected)return fail(c,'The purchase order approval was rejected.',409);
+  if(!approvalDecision.completed){
+    await audit(c,{action:'APPROVAL_STEP',module:'PROCUREMENT',recordType:'PURCHASE_ORDER',recordId:id,recordNo:before.purchase_order_no,before,after:{approvalDecision}});
+    return ok(c,{approved:false,pendingApproval:true,approvalDecision});
+  }
   await run(c.env.DB,`UPDATE erp_purchase_orders SET status='APPROVED',approved_by=?,approved_at=datetime('now'),updated_at=datetime('now') WHERE id=?`,[c.get('erpUser').email,id]);
-  const after=await first(c.env.DB,`SELECT * FROM erp_purchase_orders WHERE id=?`,[id]); await audit(c,{action:'APPROVE',module:'PROCUREMENT',recordType:'PURCHASE_ORDER',recordId:id,recordNo:after.purchase_order_no,before,after}); return ok(c,{purchaseOrder:after});
+  const after=await first(c.env.DB,`SELECT * FROM erp_purchase_orders WHERE id=?`,[id]); await audit(c,{action:'APPROVE',module:'PROCUREMENT',recordType:'PURCHASE_ORDER',recordId:id,recordNo:after.purchase_order_no,before,after}); return ok(c,{purchaseOrder:after,approved:true,approvalDecision});
 });
 
 procurementRoutes.get('/landed-cost', requirePermission('PROCUREMENT','VIEW'), async c => {
@@ -54,25 +65,59 @@ procurementRoutes.get('/landed-cost', requirePermission('PROCUREMENT','VIEW'), a
 procurementRoutes.post('/landed-cost', requirePermission('PROCUREMENT','CREATE'), async c => {
   const b=await jsonBody(c); if(!b.shipmentId&&!b.purchaseOrderId)return fail(c,'Shipment or purchase order is required');
   const costs=(Array.isArray(b.costs)?b.costs:[]).filter(x=>normalizeText(x.costType)&&numberValue(x.amount)!==0); if(!costs.length)return fail(c,'At least one landed-cost line is required');
-  const no=await nextCode(c.env.DB,'LANDED_COST','LC',6); const total=costs.reduce((s,x)=>s+numberValue(x.amount)+numberValue(x.taxAmount),0);
-  const r=await run(c.env.DB,`INSERT INTO erp_landed_cost_headers(landed_cost_no,shipment_id,purchase_order_id,allocation_method,currency,exchange_rate,total_cost,notes,created_by) VALUES(?,?,?,?,?,?,?,?,?)`,[no,b.shipmentId||null,b.purchaseOrderId||null,b.allocationMethod||'VALUE',b.currency||'PHP',numberValue(b.exchangeRate,1),total,normalizeText(b.notes),c.get('erpUser').email]);
-  for(const line of costs)await run(c.env.DB,`INSERT INTO erp_landed_cost_lines(landed_cost_id,cost_type,vendor_name,reference_no,amount,tax_amount,notes) VALUES(?,?,?,?,?,?,?)`,[r.meta.last_row_id,normalizeText(line.costType),normalizeText(line.vendorName),normalizeText(line.referenceNo),numberValue(line.amount),numberValue(line.taxAmount),normalizeText(line.notes)]);
-  await audit(c,{action:'CREATE',module:'PROCUREMENT',recordType:'LANDED_COST',recordId:r.meta.last_row_id,recordNo:no,after:{...b,total}}); return ok(c,{id:r.meta.last_row_id,landedCostNo:no,total},201);
+  const no=await nextCode(c.env.DB,'LANDED_COST','LC',6);
+  const capitalizableTotal=costs.reduce((s,x)=>s+numberValue(x.amount),0);
+  const inputVatTotal=costs.reduce((s,x)=>s+(x.taxRecoverable===false?0:numberValue(x.taxAmount)),0);
+  const nonRecoverableTax=costs.reduce((s,x)=>s+(x.taxRecoverable===false?numberValue(x.taxAmount):0),0);
+  const total=capitalizableTotal+nonRecoverableTax;
+  const invoiceTotal=total+inputVatTotal;
+  const r=await run(c.env.DB,`INSERT INTO erp_landed_cost_headers(
+    landed_cost_no,shipment_id,purchase_order_id,allocation_method,currency,exchange_rate,
+    total_cost,input_vat_amount,invoice_total,notes,created_by
+  ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,[
+    no,b.shipmentId||null,b.purchaseOrderId||null,b.allocationMethod||'VALUE',b.currency||'PHP',
+    numberValue(b.exchangeRate,1),total,inputVatTotal,invoiceTotal,normalizeText(b.notes),c.get('erpUser').email,
+  ]);
+  for(const line of costs)await run(c.env.DB,`INSERT INTO erp_landed_cost_lines(
+    landed_cost_id,cost_type,vendor_name,reference_no,amount,tax_amount,tax_recoverable,notes
+  ) VALUES(?,?,?,?,?,?,?,?)`,[
+    r.meta.last_row_id,normalizeText(line.costType),normalizeText(line.vendorName),normalizeText(line.referenceNo),
+    numberValue(line.amount),numberValue(line.taxAmount),line.taxRecoverable===false?0:1,normalizeText(line.notes),
+  ]);
+  await audit(c,{action:'CREATE',module:'PROCUREMENT',recordType:'LANDED_COST',recordId:r.meta.last_row_id,
+    recordNo:no,after:{...b,capitalizableTotal:total,inputVatTotal,invoiceTotal}});
+  return ok(c,{id:r.meta.last_row_id,landedCostNo:no,capitalizableTotal:total,inputVatTotal,invoiceTotal},201);
 });
 
 procurementRoutes.post('/landed-cost/:id/post', requirePermission('PROCUREMENT','POST'), async c => {
   const id=Number(c.req.param('id')); const header=await first(c.env.DB,`SELECT * FROM erp_landed_cost_headers WHERE id=?`,[id]); if(!header)return fail(c,'Landed cost not found',404); if(header.status==='POSTED')return fail(c,'Landed cost is already posted',409);
+  const eventDate=(normalizeText(header.posting_date)||new Date().toISOString()).slice(0,10);
+  const entity=await entityByCode(c.env.DB,'E88');
+  if(!entity)return fail(c,'Accounting entity E88 is not configured.',409);
+  const period=await ensureAccountingPeriod(c.env.DB,entity.id,eventDate);
+  if(period.status==='CLOSED')return fail(c,`Accounting period ${period.period_name} is closed. Reopen it before posting landed cost.`,409);
   const assets=await all(c.env.DB,`SELECT * FROM erp_assets WHERE (? IS NOT NULL AND shipment_id=?) OR (? IS NOT NULL AND shipment_id IN (SELECT id FROM erp_shipments WHERE purchase_order_ref=(SELECT purchase_order_no FROM erp_purchase_orders WHERE id=?)))`,[header.shipment_id,header.shipment_id,header.purchase_order_id,header.purchase_order_id]); if(!assets.length)return fail(c,'No received assets are available for allocation');
-  const basis=assets.map(a=>header.allocation_method==='VALUE'?Math.max(numberValue(a.unit_cost),1):1); const totalBasis=basis.reduce((s,x)=>s+x,0); let allocated=0;
-  for(let i=0;i<assets.length;i++){const amount=i===assets.length-1?header.total_cost-allocated:Math.round((header.total_cost*basis[i]/totalBasis)*100)/100;allocated+=amount;await run(c.env.DB,`INSERT INTO erp_landed_cost_allocations(landed_cost_id,asset_id,serial_no,item_id,allocation_basis,allocated_amount) VALUES(?,?,?,?,?,?)`,[id,assets[i].id,assets[i].serial_no,assets[i].item_id,basis[i],amount]);await run(c.env.DB,`UPDATE erp_assets SET landed_cost=landed_cost+?,unit_cost=unit_cost+?,updated_at=datetime('now') WHERE id=?`,[amount,amount,assets[i].id]);}
+  const basis=assets.map(a=>header.allocation_method==='VALUE'?Math.max(numberValue(a.unit_cost),1):1);
+  const totalBasis=basis.reduce((s,x)=>s+x,0);let allocated=0;const allocatedByClass=new Map();
+  for(let i=0;i<assets.length;i++){
+    const amount=i===assets.length-1?Number(header.total_cost)-allocated:Math.round((Number(header.total_cost)*basis[i]/totalBasis)*100)/100;
+    allocated+=amount;
+    const category=normalizeText(assets[i].category||'OTH').toUpperCase()||'OTH';
+    allocatedByClass.set(category,Math.round(((allocatedByClass.get(category)||0)+amount)*100)/100);
+    await run(c.env.DB,`INSERT INTO erp_landed_cost_allocations(landed_cost_id,asset_id,serial_no,item_id,allocation_basis,allocated_amount) VALUES(?,?,?,?,?,?)`,[id,assets[i].id,assets[i].serial_no,assets[i].item_id,basis[i],amount]);
+    await run(c.env.DB,`UPDATE erp_assets SET landed_cost=landed_cost+?,unit_cost=unit_cost+?,updated_at=datetime('now') WHERE id=?`,[amount,amount,assets[i].id]);
+  }
   const user=c.get('erpUser').email;
   await run(c.env.DB,`UPDATE erp_landed_cost_headers SET status='POSTED',posted_by=?,posted_at=datetime('now') WHERE id=?`,[user,id]);
-  await captureFinanceEvent(c.env.DB,{
-    eventKey:`LANDED_COST:${id}`,eventType:'LANDED_COST',sourceModule:'PROCUREMENT',
-    sourceType:'LANDED_COST',sourceId:id,sourceNo:header.landed_cost_no,
-    eventDate:new Date().toISOString().slice(0,10),amount:header.total_cost,
-    currency:header.currency||'PHP',description:`Landed cost ${header.landed_cost_no}`,
-    payload:{grossAmount:header.total_cost},
-  },user);
+  for(const [category,amount] of allocatedByClass){
+    if(amount<=0)continue;
+    await captureFinanceEvent(c.env.DB,{
+      eventKey:`LANDED_COST:${id}:${category}`,eventType:'LANDED_COST',sourceModule:'PROCUREMENT',
+      sourceType:'LANDED_COST',sourceId:id,sourceNo:header.landed_cost_no,
+      eventDate,amount,
+      currency:header.currency||'PHP',description:`Landed cost allocation ${header.landed_cost_no} · ${category}`,
+      payload:{grossAmount:amount,netAmount:amount,capitalizableAmount:amount,category,accrualAccountCode:'2060'},
+    },user);
+  }
   await audit(c,{action:'POST',module:'PROCUREMENT',recordType:'LANDED_COST',recordId:id,recordNo:header.landed_cost_no,after:{assets:assets.length,total:header.total_cost}}); return ok(c,{allocatedAssets:assets.length,totalAllocated:allocated});
 });

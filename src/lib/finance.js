@@ -1,5 +1,6 @@
 import { all, first, run } from './db.js';
 import { nextCode, normalizeText } from './codes.js';
+import { cogsAccountForCategory, inventoryAccountForCategory } from './transaction-rules.js';
 
 const round = value => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
@@ -57,15 +58,13 @@ function amountForBasis(basis, payload) {
   return round(payload.amount);
 }
 
-function eventLines(eventType, payload = {}) {
+export function eventLines(eventType, payload = {}) {
   const gross = round(payload.grossAmount ?? payload.amount);
   const tax = round(payload.taxAmount);
   const withholding = round(payload.withholdingAmount);
   const net = round(payload.netAmount ?? (gross - tax));
   const cost = round(payload.costAmount ?? payload.amount);
-  const inventoryAccount = payload.inventoryAccountCode || (
-    /BAT|BSS/.test(String(payload.category || '').toUpperCase()) ? '1220' : '1200'
-  );
+  const inventoryAccount = payload.inventoryAccountCode || inventoryAccountForCategory(payload.category);
   const revenueAccount = payload.revenueAccountCode || (
     payload.businessLine === 'LEASE' ? '4010'
       : payload.businessLine === 'ENERGY' ? '4020'
@@ -83,8 +82,9 @@ function eventLines(eventType, payload = {}) {
     add(inventoryAccount, net || gross || cost, 0, 'INVENTORY');
     add('2050', 0, net || gross || cost, 'GRNI');
   } else if (eventType === 'LANDED_COST') {
-    add(inventoryAccount, gross || cost, 0, 'INVENTORY');
-    add('2000', 0, gross || cost, 'PAYABLE');
+    const capitalizable = round(payload.capitalizableAmount ?? net ?? cost);
+    add(inventoryAccount, capitalizable, 0, 'INVENTORY');
+    add(payload.accrualAccountCode || '2060', 0, capitalizable, 'LANDED_COST_ACCRUAL');
   } else if (eventType === 'SUPPLIER_BILL') {
     add(payload.debitAccountCode || expenseAccount, net, 0, 'EXPENSE_OR_INVENTORY');
     add('1150', tax, 0, 'INPUT_VAT');
@@ -101,11 +101,46 @@ function eventLines(eventType, payload = {}) {
     add('2000', gross, 0, 'PAYABLE');
     add(payload.bankAccountCode || '1010', 0, gross, 'BANK');
   } else if (eventType === 'SALE_COGS') {
-    add(payload.cogsAccountCode || '5000', cost, 0, 'COGS');
+    add(payload.cogsAccountCode || cogsAccountForCategory(payload.category), cost, 0, 'COGS');
     add(inventoryAccount, 0, cost, 'INVENTORY');
+  } else if (eventType === 'SALES_RETURN_INVENTORY') {
+    add(inventoryAccount, cost, 0, 'INVENTORY_RETURN');
+    add(payload.cogsAccountCode || cogsAccountForCategory(payload.category), 0, cost, 'COGS_REVERSAL');
   } else if (eventType === 'CAPITALIZATION') {
     add(payload.assetAccountCode || '1310', cost, 0, 'FIXED_ASSET');
     add(inventoryAccount, 0, cost, 'INVENTORY');
+  } else if (eventType === 'INVENTORY_CONSUMPTION') {
+    add(payload.expenseAccountCode || expenseAccount, cost, 0, 'CONSUMPTION_EXPENSE');
+    add(inventoryAccount, 0, cost, 'INVENTORY');
+  } else if (eventType === 'WARRANTY_ISSUE') {
+    add(payload.expenseAccountCode || '6500', cost, 0, 'WARRANTY_EXPENSE');
+    add(inventoryAccount, 0, cost, 'INVENTORY');
+  } else if (eventType === 'DONATION_ISSUE') {
+    add(payload.expenseAccountCode || '6990', cost, 0, 'DONATION_EXPENSE');
+    add(inventoryAccount, 0, cost, 'INVENTORY');
+  } else if (eventType === 'CUSTOMER_CREDIT') {
+    add(revenueAccount, net, 0, 'REVENUE_REVERSAL');
+    add('2100', tax, 0, 'OUTPUT_VAT_REVERSAL');
+    add('1100', 0, gross, 'RECEIVABLE');
+  } else if (eventType === 'LEASE_DEPOSIT') {
+    add(payload.bankAccountCode || '1010', gross, 0, 'BANK');
+    add(payload.depositAccountCode || '2250', 0, gross, 'CUSTOMER_DEPOSIT');
+  } else if (eventType === 'ASSET_RETIREMENT') {
+    const originalCost = round(payload.originalCost ?? cost);
+    const accumulated = round(payload.accumulatedDepreciation);
+    const netBookValue = round(payload.netBookValue ?? Math.max(0, originalCost - accumulated));
+    add(payload.accumulatedDepreciationAccountCode || '1390', accumulated, 0, 'ACCUMULATED_DEPRECIATION_CLEARING');
+    add(payload.lossAccountCode || '6900', netBookValue, 0, 'RETIREMENT_LOSS');
+    add(payload.assetAccountCode || '1310', 0, originalCost, 'FIXED_ASSET');
+  } else if (eventType === 'INVENTORY_VALUATION_ADJUSTMENT') {
+    const direction = normalizeText(payload.adjustmentDirection || 'INCREASE').toUpperCase();
+    if (direction === 'INCREASE') {
+      add(inventoryAccount, cost, 0, 'INVENTORY');
+      add(payload.offsetAccountCode || '6900', 0, cost, 'VALUATION_VARIANCE');
+    } else {
+      add(payload.offsetAccountCode || '6900', cost, 0, 'VALUATION_VARIANCE');
+      add(inventoryAccount, 0, cost, 'INVENTORY');
+    }
   } else if (eventType === 'INVENTORY_WRITE_OFF' || eventType === 'CYCLE_COUNT_ADJUSTMENT') {
     const direction = normalizeText(payload.adjustmentDirection || 'DECREASE').toUpperCase();
     if (direction === 'INCREASE') {
@@ -118,6 +153,45 @@ function eventLines(eventType, payload = {}) {
   } else if (eventType === 'DEPRECIATION') {
     add(payload.depreciationExpenseAccountCode || '6800', gross, 0, 'DEPRECIATION_EXPENSE');
     add(payload.accumulatedDepreciationAccountCode || '1390', 0, gross, 'ACCUMULATED_DEPRECIATION');
+  } else if (eventType === 'PROJECT_BILLING' || eventType === 'REVENUE_RECOGNITION') {
+    add(payload.receivableAccountCode || (eventType === 'REVENUE_RECOGNITION' ? '1110' : '1100'), gross, 0, eventType === 'REVENUE_RECOGNITION' ? 'CONTRACT_ASSET' : 'RECEIVABLE');
+    add(payload.revenueAccountCode || '4040', 0, net || gross, 'PROJECT_REVENUE');
+    add('2100', 0, tax, 'OUTPUT_VAT');
+  } else if (eventType === 'EXPENSE_REIMBURSEMENT') {
+    add(payload.expenseAccountCode || '6520', net || gross, 0, 'REIMBURSABLE_EXPENSE');
+    add('1150', tax, 0, 'INPUT_VAT');
+    add(payload.payableAccountCode || '2230', 0, gross, 'EMPLOYEE_PAYABLE');
+  } else if (eventType === 'MANUFACTURING_MATERIAL_ISSUE') {
+    add(payload.wipAccountCode || '1230', cost, 0, 'WORK_IN_PROCESS');
+    add(inventoryAccount, 0, cost, 'MATERIAL_INVENTORY');
+  } else if (eventType === 'MANUFACTURING_OUTPUT') {
+    add(payload.finishedGoodsAccountCode || '1240', cost, 0, 'FINISHED_GOODS');
+    add(payload.wipAccountCode || '1230', 0, cost, 'WORK_IN_PROCESS');
+  } else if (eventType === 'MAINTENANCE_COST') {
+    add(payload.expenseAccountCode || '6510', net || cost || gross, 0, 'MAINTENANCE_EXPENSE');
+    add('1150', tax, 0, 'INPUT_VAT');
+    add(payload.payableAccountCode || '2000', 0, gross || cost, 'PAYABLE');
+  } else if (eventType === 'TRANSPORT_BILL') {
+    add(payload.expenseAccountCode || '6530', net || gross, 0, 'LOGISTICS_EXPENSE');
+    add('1150', tax, 0, 'INPUT_VAT');
+    add(payload.payableAccountCode || '2000', 0, gross, 'PAYABLE');
+  } else if (eventType === 'EMPLOYEE_DEVELOPMENT_COST') {
+    add(payload.expenseAccountCode || '6540', net || gross, 0, 'EMPLOYEE_DEVELOPMENT_EXPENSE');
+    add('1150', tax, 0, 'INPUT_VAT');
+    add(payload.payableAccountCode || '2000', 0, gross, 'PAYABLE');
+  } else if (eventType === 'FUND_UTILIZATION') {
+    add(payload.expenseAccountCode || '6520', gross, 0, 'FUND_EXPENSE');
+    add(payload.fundAccountCode || '1010', 0, gross, 'RESTRICTED_FUND_CASH');
+  } else if (eventType === 'PAYROLL_DETAILED') {
+    const deductions = round(payload.deductionAmount ?? tax);
+    const netPay = round(payload.netAmount ?? (gross - deductions));
+    add(payload.payrollExpenseAccountCode || '6000', gross, 0, 'PAYROLL_EXPENSE');
+    add(payload.employeePayableAccountCode || '2200', 0, netPay, 'NET_PAYABLE');
+    add(payload.deductionPayableAccountCode || '2240', 0, deductions, 'PAYROLL_DEDUCTIONS');
+  } else if (eventType === 'PROJECT_COST') {
+    add(payload.expenseAccountCode || '6520', net || gross, 0, 'PROJECT_COST');
+    add('1150', tax, 0, 'INPUT_VAT');
+    add(payload.payableAccountCode || '2000', 0, gross, 'PAYABLE');
   } else if (eventType === 'PAYROLL') {
     add('6000', gross, 0, 'PAYROLL_EXPENSE');
     add('2120', 0, tax, 'WITHHOLDING');
@@ -322,6 +396,34 @@ export async function retryFinanceEvent(db, eventId, userEmail) {
   }, payload, userEmail);
 }
 
+
+export async function registerPendingFixedAsset(db, input, userEmail) {
+  const asset = await first(db, `SELECT * FROM erp_assets WHERE id=? AND active=1`, [Number(input.assetId)]);
+  if (!asset) throw new Error('Serialized asset not found for capitalization.');
+  const existing = await first(db, `SELECT * FROM erp_fixed_asset_books WHERE asset_id=?`, [asset.id]);
+  if (existing) return existing;
+  const entity = await entityByCode(db, input.entityCode || 'E88');
+  if (!entity) throw new Error('Accounting entity is not configured.');
+  const acquisitionCost = round(input.acquisitionCost ?? asset.unit_cost);
+  if (acquisitionCost <= 0) throw new Error(`Serial ${asset.serial_no} has no approved valuation.`);
+  const result = await run(db,
+    `INSERT INTO erp_fixed_asset_books(
+      asset_id,entity_id,asset_class,capitalization_date,acquisition_cost,residual_value,useful_life_months,
+      depreciation_method,accumulated_depreciation,net_book_value,asset_account_code,
+      accumulated_depreciation_account_code,depreciation_expense_account_code,status,created_by,
+      capitalization_event_id,capitalization_journal_id,source_delivery_id,ownership_status
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'PENDING_APPROVAL',?,?,?,?,?)`,
+    [asset.id,entity.id,input.assetClass,input.capitalizationDate,acquisitionCost,
+      round(input.residualValue),Number(input.usefulLifeMonths||36),input.depreciationMethod||'STRAIGHT_LINE',
+      0,acquisitionCost,input.assetAccountCode||'1310',
+      input.accumulatedDepreciationAccountCode||'1390',input.depreciationExpenseAccountCode||'6800',
+      userEmail,input.capitalizationEventId||null,input.capitalizationJournalId||null,
+      input.sourceDeliveryId||null,'COMPANY_OWNED']);
+  await run(db, `UPDATE erp_assets SET capitalization_status='PENDING_APPROVAL',
+    placed_in_service_date=?,updated_at=datetime('now') WHERE id=?`, [input.capitalizationDate,asset.id]);
+  return first(db, `SELECT * FROM erp_fixed_asset_books WHERE id=?`, [result.meta.last_row_id]);
+}
+
 export async function submitJournal(db, journalId, userEmail) {
   const journal = await first(db, `SELECT * FROM erp_journal_headers WHERE id=?`, [journalId]);
   if (!journal) throw new Error('Journal not found.');
@@ -376,6 +478,31 @@ export async function postJournal(db, journalId, userEmail) {
       SET status='POSTED',processed_by=?,processed_at=datetime('now')
       WHERE journal_id=?`,
     [userEmail, journalId]);
+  await run(db,
+    `UPDATE erp_fixed_asset_books SET status='ACTIVE'
+      WHERE capitalization_journal_id=? AND status='PENDING_APPROVAL'`,
+    [journalId]);
+  await run(db,
+    `UPDATE erp_assets SET capitalization_status='CAPITALIZED',updated_at=datetime('now')
+      WHERE id IN (SELECT asset_id FROM erp_fixed_asset_books WHERE capitalization_journal_id=? AND status='ACTIVE')`,
+    [journalId]);
+  await run(db,
+    `UPDATE erp_assets SET
+      unit_cost=(SELECT proposed_unit_cost FROM erp_inventory_valuation_exceptions x
+        WHERE x.asset_id=erp_assets.id AND x.journal_id=? AND x.status='PENDING_POSTING' LIMIT 1),
+      acquisition_cost=(SELECT proposed_unit_cost FROM erp_inventory_valuation_exceptions x
+        WHERE x.asset_id=erp_assets.id AND x.journal_id=? AND x.status='PENDING_POSTING' LIMIT 1),
+      landed_cost=(SELECT proposed_unit_cost FROM erp_inventory_valuation_exceptions x
+        WHERE x.asset_id=erp_assets.id AND x.journal_id=? AND x.status='PENDING_POSTING' LIMIT 1),
+      cost_source='APPROVED_VALUATION',valuation_status='VALUED',updated_at=datetime('now')
+      WHERE id IN (SELECT asset_id FROM erp_inventory_valuation_exceptions
+        WHERE journal_id=? AND status='PENDING_POSTING')`,
+    [journalId,journalId,journalId,journalId]);
+  await run(db,
+    `UPDATE erp_inventory_valuation_exceptions SET status='RESOLVED',resolved_by=?,resolved_at=datetime('now'),
+      resolution_notes=trim(COALESCE(resolution_notes,'')||' Posted through journal '||?)
+      WHERE journal_id=? AND status='PENDING_POSTING'`,
+    [userEmail,journal.journal_no,journalId]);
   await run(db,
     `UPDATE erp_subledger_documents
       SET status='POSTED',posted_by=?,posted_at=datetime('now')
@@ -442,6 +569,42 @@ export async function reversePostedJournal(db, journalId, userEmail, requestNo) 
       SET status='REVERSED',open_balance=0
       WHERE journal_id=?`,
     [journalId]);
+  await run(db,
+    `UPDATE erp_assets SET unit_cost=(SELECT current_unit_cost FROM erp_inventory_valuation_exceptions x
+        WHERE x.asset_id=erp_assets.id AND x.journal_id=? LIMIT 1),
+      acquisition_cost=(SELECT current_unit_cost FROM erp_inventory_valuation_exceptions x
+        WHERE x.asset_id=erp_assets.id AND x.journal_id=? LIMIT 1),
+      landed_cost=(SELECT current_unit_cost FROM erp_inventory_valuation_exceptions x
+        WHERE x.asset_id=erp_assets.id AND x.journal_id=? LIMIT 1),
+      cost_source='VALUATION_REVERSED',valuation_status=CASE WHEN
+        (SELECT current_unit_cost FROM erp_inventory_valuation_exceptions x
+          WHERE x.asset_id=erp_assets.id AND x.journal_id=? LIMIT 1)>0 THEN 'VALUED' ELSE 'UNVALUED' END,
+      updated_at=datetime('now')
+      WHERE id IN (SELECT asset_id FROM erp_inventory_valuation_exceptions WHERE journal_id=?)`,
+    [journalId,journalId,journalId,journalId,journalId]);
+  await run(db,
+    `UPDATE erp_inventory_valuation_exceptions SET status='REVERSED',resolved_by=?,resolved_at=datetime('now'),
+      resolution_notes=trim(COALESCE(resolution_notes,'')||' Reversed through journal '||?)
+      WHERE journal_id=?`,
+    [userEmail,reversal.journal_no,journalId]);
+  await run(db,
+    `UPDATE erp_fixed_asset_books SET status='REVERSED'
+      WHERE capitalization_journal_id=? AND status IN ('ACTIVE','PENDING_APPROVAL')`,
+    [journalId]);
+  await run(db,
+    `UPDATE erp_assets SET capitalization_status='INVENTORY',placed_in_service_date=NULL,updated_at=datetime('now')
+      WHERE id IN (SELECT asset_id FROM erp_fixed_asset_books WHERE capitalization_journal_id=?)`,
+    [journalId]);
+  if (original.source_type === 'DEPRECIATION_RUN' && original.source_id) {
+    const depreciationLines = await all(db, `SELECT * FROM erp_depreciation_lines WHERE depreciation_run_id=?`, [original.source_id]);
+    for (const line of depreciationLines) {
+      await run(db, `UPDATE erp_fixed_asset_books SET
+        accumulated_depreciation=MAX(0,accumulated_depreciation-?),
+        net_book_value=MIN(acquisition_cost,net_book_value+?),last_depreciation_date=NULL
+        WHERE id=?`, [line.depreciation_amount,line.depreciation_amount,line.fixed_asset_book_id]);
+    }
+    await run(db, `UPDATE erp_depreciation_runs SET status='REVERSED' WHERE id=?`, [original.source_id]);
+  }
   await run(db,
     `INSERT OR IGNORE INTO erp_finance_source_events(
       event_key,event_type,source_module,source_type,source_id,source_no,event_date,entity_code,
