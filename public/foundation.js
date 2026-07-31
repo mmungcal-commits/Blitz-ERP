@@ -1820,7 +1820,7 @@ async function renderWarehouseOverview(){
   content.innerHTML='<div class="workspace-loading">Loading warehouse visibility…</div>';
   try{
     const [data,classes]=await Promise.all([api('/inventory/visibility?size=1'),api('/inventory/by-class')]);
-    const classOrder=['MC','BAT','BSS','CHG','SP','OTH'];
+    const classOrder=['D400','R280','RSPORT','BAT','BSS','CHG','SP','OTH'];
     const byCode=new Map((classes.rows||[]).map(row=>[row.cls,row]));
     const classKpis=classOrder.map(code=>{
       const row=byCode.get(code)||{class_name:code,total:0,available:0};
@@ -1865,7 +1865,7 @@ async function renderWarehouseVisibility(locationId='',search='',status='',categ
     const pages=Math.max(1,Math.ceil(Number(data.total||0)/size));
     const body=`<div class="workspace-commandbar">
       <input id="unitSearch" placeholder="Serial, material code, item, holder, or location" value="${esc(search)}">
-      <select id="unitClass"><option value="">All inventory classes</option>${[['MC','Motorcycles'],['BAT','Batteries'],['BSS','Lockers / BSS'],['CHG','Chargers'],['SP','Spare Parts'],['OTH','Other']].map(([value,label])=>`<option value="${value}" ${value===category?'selected':''}>${label}</option>`).join('')}</select>
+      <select id="unitClass"><option value="">All inventory classes</option>${[['D400','Motorcycle D400'],['R280','Motorcycle R280'],['RSPORT','Motorcycle R280 Sport'],['BAT','Batteries'],['BSS','Lockers / BSS'],['CHG','Chargers'],['SP','Spare Parts'],['OTH','Other Inventory']].map(([value,label])=>`<option value="${value}" ${value===category?'selected':''}>${label}</option>`).join('')}</select>
       <select id="unitLocation"><option value="">All locations</option>${lookups.locations.map(row=>`<option value="${row.id}" ${Number(row.id)===Number(locationId)?'selected':''}>${esc(row.code)} · ${esc(row.name)}</option>`).join('')}</select>
       <select id="unitStatus"><option value="">All statuses</option>${['AVAILABLE','ASSIGNED','QUARANTINE','UNDER_REPAIR','LEASED','SOLD'].map(value=>`<option ${value===status?'selected':''}>${value}</option>`).join('')}</select>
       <button class="command primary" id="applyUnitFilter">Apply</button><span class="command-spacer"></span><span class="workspace-mode">${Number(data.total||0).toLocaleString()} UNITS · PAGE ${page}/${pages}</span>

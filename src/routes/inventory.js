@@ -35,7 +35,7 @@ inventoryRoutes.get('/by-class', requirePermission('INVENTORY','VIEW'), async(c)
       COALESCE(SUM(unvalued_quantity),0) unvalued,ROUND(COALESCE(SUM(inventory_value),0),2) inventory_value
     FROM vw_erp_inventory_by_item_class
     GROUP BY class_code,class_name
-    ORDER BY CASE class_code WHEN 'MC' THEN 1 WHEN 'BAT' THEN 2 WHEN 'BSS' THEN 3 WHEN 'CHG' THEN 4 WHEN 'SP' THEN 5 ELSE 6 END`);
+    ORDER BY CASE class_code WHEN 'D400' THEN 1 WHEN 'R280' THEN 2 WHEN 'RSPORT' THEN 3 WHEN 'BAT' THEN 4 WHEN 'BSS' THEN 5 WHEN 'CHG' THEN 6 WHEN 'SP' THEN 7 ELSE 8 END`);
   const items=await all(c.env.DB,`
     SELECT class_code,class_name,item_id,item_code,item_name,
       COALESCE(SUM(quantity),0) total,COALESCE(SUM(available_quantity),0) available,
@@ -44,7 +44,7 @@ inventoryRoutes.get('/by-class', requirePermission('INVENTORY','VIEW'), async(c)
     FROM vw_erp_inventory_by_item_class
     GROUP BY class_code,class_name,item_id,item_code,item_name
     HAVING COALESCE(SUM(quantity),0)>0
-    ORDER BY CASE class_code WHEN 'MC' THEN 1 WHEN 'BAT' THEN 2 WHEN 'BSS' THEN 3 WHEN 'CHG' THEN 4 WHEN 'SP' THEN 5 ELSE 6 END,item_name`);
+    ORDER BY CASE class_code WHEN 'D400' THEN 1 WHEN 'R280' THEN 2 WHEN 'RSPORT' THEN 3 WHEN 'BAT' THEN 4 WHEN 'BSS' THEN 5 WHEN 'CHG' THEN 6 WHEN 'SP' THEN 7 ELSE 8 END,item_name`);
   return ok(c,{rows,items,totalItems:items.length});
 });
 
