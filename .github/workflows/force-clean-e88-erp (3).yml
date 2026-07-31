@@ -2217,6 +2217,17 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      - name: Disable R2 document storage for deploy
+        run: |
+          cat > /tmp/strip_r2.py <<'PYEOF'
+          import re
+          t=open('wrangler.toml').read()
+          t=re.sub(r'(?ms)^\[\[r2_buckets\]\].*?(?=^\[|\Z)','',t)
+          open('wrangler.toml','w').write(t)
+          print('R2 binding stripped for deploy')
+          PYEOF
+          python3 /tmp/strip_r2.py
+
       - name: Deploy complete E88 connected ERP
         run: npx wrangler deploy
         env:
