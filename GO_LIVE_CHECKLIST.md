@@ -1,54 +1,50 @@
-# E88 FinSys v7.1 Go-Live Checklist
+# E88 Enterprise System v13.0 Go-Live Checklist
 
-## Backup and environment
+## Governance and sign-off
 
-- [ ] Current Worker deployment retained for rollback
-- [ ] Current D1 database exported
-- [ ] New D1 database created for v7.1
-- [ ] R2 document bucket configured
-- [ ] Cloudflare Access permits only authorized `@nrdev.ph` users
-- [ ] Admin account `mmungcal@nrdev.ph` can sign in
+- [ ] Executive sponsor, Finance, SCM, Sales, HR, Operations, IT, and process owners approve rollout scope.
+- [ ] UAT scenarios are completed with no unresolved critical/high defects.
+- [ ] Cutover owner, rollback owner, and support escalation contacts are assigned.
+- [ ] Production change window and user communication are approved.
 
-## Opening data
+## Infrastructure and security
 
-- [ ] 14 source workbooks shown in Opening Data Control
-- [ ] 8,650 canonical assets loaded
-- [ ] 6,697 serial exceptions visible for review
-- [ ] Duplicate canonical serial count remains zero
-- [ ] 28 shipments and 2,015 expected assets loaded
-- [ ] 5,807 stock movements loaded
-- [ ] Sales/lease, delivery, return, procurement, budget, and planning counts agree with the reports
+- [ ] Production D1 database ID and Worker environment are confirmed.
+- [ ] R2 bucket `e88-erp-documents` is created and bound as `DOCS`.
+- [ ] Cloudflare Access restricts the application to authorized users.
+- [ ] Secrets, tokens, and provider credentials are stored outside source control.
+- [ ] Named users, roles, departments, and segregation-of-duties conflicts are reviewed.
 
-## Critical process tests
+## Data and Finance
 
-- [ ] Upload one new ATLAS workbook and preview exceptions
-- [ ] Post ATLAS and confirm automatic shipment creation
-- [ ] Receive a matching QR serial against the shipment
-- [ ] Receive an unplanned or duplicate serial and confirm quarantine/exception
-- [ ] Create a new item description and confirm automatic item code
-- [ ] Transfer a motorcycle to another location
-- [ ] Assign a unit to a customer
-- [ ] Assign a unit to an employee or pilot test
-- [ ] Create requisition and pre-release checklist
-- [ ] Release a delivery and confirm the same serial is updated
-- [ ] Record a return with matching serial
-- [ ] Record a returned battery with a different serial and confirm `BATTERY_SWAP` / `UNRECONCILED`
-- [ ] Resolve a reconciliation case through authorized approval
-- [ ] Confirm unavailable/quarantined serials cannot be assigned or delivered
-- [ ] Confirm blocked customers cannot receive new commercial transactions without authorized override
+- [ ] Legal entities, chart of accounts, tax codes, banks, departments, locations, warehouses, items, customers, suppliers, and employees are approved.
+- [ ] Opening inventory, AR, AP, cash, fixed assets, equity, and retained earnings reconcile to approved cutover balances.
+- [ ] Inventory and fixed-asset subledgers reconcile to the GL.
+- [ ] Accounting periods, numbering, approval matrices, and monetary limits are approved.
+- [ ] Historical valuation exceptions are assigned and cost-dependent transactions remain blocked until approved.
+- [ ] Philippine payroll and statutory configuration is reviewed by HR/Payroll/Tax owners.
 
-## Security and concurrency
+## Process readiness
 
-- [ ] Staff permissions tested by module/action
-- [ ] Unauthorized module/API requests return 403
-- [ ] Two users attempting the same serial cannot both post
-- [ ] Audit log records user, action, date, and record
-- [ ] Mobile Android and iOS transaction screens tested
+- [ ] Procure-to-pay, order-to-cash, lease, returns, inventory custody, fixed assets, and bank reconciliation pass UAT.
+- [ ] Manufacturing, Quality, Projects, EAM, Facilities, Logistics, HCM, and SRP process owners sign off their scenarios.
+- [ ] External eSignature, device, SOA/collaboration, and optimization connections are configured and tested where required.
+- [ ] User manuals, support process, and training attendance are completed.
 
-## Final approval
+## Deployment
 
-- [ ] Supply Chain opening balances approved
-- [ ] Commercial assignments approved
-- [ ] Finance procurement/budget records approved
-- [ ] Unreconciled serial exception owner assigned
-- [ ] Management approves production cutover
+- [ ] Current Worker and D1 database are backed up.
+- [ ] Migration `0021` is applied exactly once to an existing v12 database.
+- [ ] `npm run build` passes.
+- [ ] Deployment guard passes and the Worker deploys successfully.
+- [ ] `/api/health` reports version `13.0.0` and rollout specialist build mode.
+- [ ] Live smoke test passes for login, document upload, transaction posting, approval, report, and audit history.
+
+## Go-live authorization
+
+- [ ] Finance sign-off
+- [ ] Operations/SCM sign-off
+- [ ] Sales/Commercial sign-off
+- [ ] HR sign-off
+- [ ] IT/Security sign-off
+- [ ] Executive sponsor approval

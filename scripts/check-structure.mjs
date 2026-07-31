@@ -40,7 +40,12 @@ async function main() {
     'migrations/0017_inbound_logistics_control.sql',
     'migrations/0018_sales_distribution_custody.sql','src/lib/module-definitions.js',
     'migrations/0019_connected_finance_engine.sql','src/lib/finance.js','src/routes/finance.js',
-    'migrations/opening/manifest.json','scripts/generate_opening_data.py','scripts/self_test.py'
+    'migrations/0020_operational_submodules_and_posting_rules.sql','src/lib/transaction-rules.js',
+    'migrations/0021_rollout_specialist_engines.sql',
+    'migrations/0022_inventory_class_r2_rollout.sql','src/lib/specialist-engine.js','src/routes/enterprise.js',
+    'test/transaction-rules.test.mjs','test/specialist-engine.test.mjs',
+    'migrations/opening/manifest.json','scripts/generate_opening_data.py','scripts/self_test.py',
+    '.github/workflows/deploy-e88-erp.yml','scripts/verify-empty-d1.mjs'
   ];
   for (const rel of required) check(await exists(join(ROOT, rel)), `Required file: ${rel}`);
 
@@ -83,12 +88,29 @@ async function main() {
     'erp_journal_headers','erp_finance_source_events','erp_subledger_documents',
     'erp_bank_reconciliations','erp_fixed_asset_books','vw_erp_inventory_gl_reconciliation',
     'captureFinanceEvent','CAPITALIZATION','JOURNAL_REVERSAL',
+    'erp_transaction_purpose_rules','erp_return_obligations','erp_inventory_valuation_exceptions',
+    'vw_erp_operational_finance_reconciliation','INVENTORY_CONSUMPTION','WARRANTY_ISSUE',
+    'INVENTORY_VALUATION_ADJUSTMENT','SALES_RETURN_INVENTORY','registerPendingFixedAsset','erp_module_submodules',
     'renderConnectedModuleWorkspace','renderModuleReports','renderModuleSetup',
-    'renderSalesOrderWorkspace','renderSourcingWorkspace','access-audit'
+    'renderSalesOrderWorkspace','renderSourcingWorkspace','access-audit',
+    'erp_specialist_module_config','erp_approval_matrices','erp_workflow_approvals','erp_core_workflow_approvals','erp_enterprise_record_links',
+    'syncSpecialistRecord','validateSpecialistAction','afterSpecialistAction','rolloutReadiness',
+    'decideWorkflowApproval','decideCoreWorkflowApproval','Segregation of duties',
+    'MANUFACTURING_OUTPUT','PROJECT_BILLING','PAYROLL_DETAILED','PLATFORM_INTEGRATION'
   ]) check(allSource.includes(token), `Business control present: ${token}`);
 
   const foundation = await readFile(join(ROOT, 'public/foundation.js'), 'utf8');
   check(!foundation.includes('renderEmptyWorkspace'), 'No generic empty module fallback remains');
+  for (const token of ['E88-ROLLOUT-ERP-20260731-R13.1','data-group-toggle','column-resizer',
+    'openInventoryDetail','unitClass','Exact Serial Inventory Register']) {
+    check(foundation.includes(token), `Rollout interface control present: ${token}`);
+  }
+  const workflow = await readFile(join(ROOT, '.github/workflows/deploy-e88-erp.yml'), 'utf8');
+  check(workflow.includes('database_mode'), 'GitHub workflow exposes database mode');
+  check(!workflow.includes('e88-erp-documents'), 'GitHub workflow intentionally omits the R2 bucket');
+  check(workflow.includes('R2 is intentionally disabled') || workflow.includes('R2: Disabled'), 'GitHub workflow documents the no-R2 rollout');
+  check(workflow.includes('\"r2Bound\":false'), 'GitHub workflow verifies that R2 remains unbound');
+  check(workflow.includes('scripts/verify-empty-d1.mjs'), 'GitHub workflow uses JSON-safe empty-D1 verification');
   for (const code of [
     'sd-crm','sd-demand-planning','sd-order-management','sd-lease-contract-management',
     'sd-warranty-management','sd-service-management','sd-pim','sd-customer-portal',

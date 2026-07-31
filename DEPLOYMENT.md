@@ -1,33 +1,32 @@
-# E88 FinSys v7.1 Deployment Guide
+# E88 Enterprise System v13.0 Deployment Guide
 
-This package is data-loaded and self-tested locally. Production deployment still requires your authenticated GitHub and Cloudflare accounts.
+## 1. Protect the current production state
 
-## 1. Protect the current live system
-
-From a computer with Node.js installed and authenticated Wrangler:
+Retain the current Worker version and export the live D1 database before migration:
 
 ```bash
 mkdir -p backups
-npx wrangler d1 export e88 --remote --output backups/e88-before-v7.sql
+npx wrangler d1 export DB --remote --output backups/e88-before-v13.sql
 ```
 
-Also download the current GitHub repository ZIP and retain the existing Worker deployment/version.
+Confirm that the backup is non-empty and store it outside the deployment workspace.
 
-## 2. Upload this repository to GitHub
+## 2. Prepare Cloudflare resources
 
-Use a new branch rather than replacing production immediately:
+Confirm the D1 binding in `wrangler.toml`. Create the document bucket if it does not exist:
 
 ```bash
-git checkout -b rebuild/connected-supply-chain-sales-v7
-# Copy this package into the repository folder
-git add .
-git commit -m "Rebuild connected supply chain and sales ERP with opening data"
-git push -u origin rebuild/connected-supply-chain-sales-v7
+npx wrangler r2 bucket create e88-erp-documents
 ```
 
-Open a pull request to review the changes. If using only the GitHub browser, see `GITHUB_BROWSER_DEPLOYMENT.md`.
+The Worker expects:
 
-## 3. Install and run local checks
+- D1 binding: `DB`
+- R2 binding: `DOCS`
+- assets binding: `ASSETS`
+- Access/domain controls for authorized E88 users
+
+## 3. Validate the source package
 
 ```bash
 npm install
@@ -35,85 +34,62 @@ python -m pip install openpyxl
 npm run build
 ```
 
-Expected result: unit/structure checks pass and the data self-test reports **29/29**.
+Expected v13 result: 357 structural checks, 24 unit/lifecycle tests, and 70 data/reconciliation tests.
 
-## 4. Create a new D1 database for the rebuild
+## 4. Upgrade an existing v12 database
 
-Recommended name: `e88-v7`.
-
-```bash
-npx wrangler d1 create e88-v7
-```
-
-Copy the returned `database_id` into `wrangler.toml`. Keep `binding = "DB"`. You may set `database_name = "e88-v7"`; the scripts use the binding configuration.
-
-For additional safety, keep the current production D1 untouched during UAT.
-
-## 5. Bootstrap the new database
-
-The command is intentionally guarded and must only be used for a new/empty database:
+Apply migration `0021` exactly once:
 
 ```bash
-npm run db:bootstrap:remote
+npx wrangler d1 execute DB --remote --file=migrations/0021_rollout_specialist_engines.sql
 ```
 
-This applies the legacy schema, connected ERP migrations, and all 13 opening-data chunks. It includes the records from every shared workbook.
+Do not rerun opening-data bootstrap on an existing production database.
 
-## 6. Configure document storage
+## 5. Upgrade from a version earlier than v12
 
-Create an R2 bucket, then enable the `DOCS` binding in `wrangler.toml`:
+Apply every missing migration in numeric order. Do not skip `0020` or `0021`. Back up and test the migration against a copied D1 database before modifying production.
 
-```toml
-[[r2_buckets]]
-binding = "DOCS"
-bucket_name = "e88-finsys-documents"
+## 6. Bootstrap a new database
+
+For a new empty D1 database, update `wrangler.toml`, then run:
+
+```bash
+npm run db:bootstrap:remote -- --confirm=E88_NEW_DATABASE
 ```
 
-Without R2, operational records work but uploaded ATLAS and supporting documents are not permanently stored by the Worker.
+This applies schemas, opening-data chunks, and migrations through `0021`.
 
-## 7. Install the application login
+## 7. Configure security and master data
 
-Apply `migrations/0014_application_auth.sql` before deploying v8.1.1. For the existing v8.1 production database, use the manual GitHub Action:
+Before deployment approval:
 
-`Repair E88 FinSys Login and Deploy`
-
-Enter confirmation:
-
-`E88_REPAIR_LOGIN`
-
-The existing administrator `mmungcal@nrdev.ph` can use the prior `APP_PASS` once on the new branded login page. The Worker immediately converts that first successful login into an individual salted password hash. Other authorized users must be created in **Users & Diagnostics**, then activated through their one-time activation link.
-
-Cloudflare Access may remain enabled as an additional outer security layer. If used, allow only the `nrdev.ph` domain.
+- restrict Cloudflare Access to authorized company accounts;
+- activate named application users and role assignments;
+- review approval matrices and monetary limits;
+- confirm legal entities, departments, locations, warehouses, banks, tax codes, chart of accounts, numbering sequences, and accounting periods;
+- put tokens and credentials only in Cloudflare or repository secrets;
+- never commit `.dev.vars`, passwords, API keys, or production exports.
 
 ## 8. Deploy
 
 ```bash
-npm run deploy
+E88_DEPLOY_CONFIRM=CONNECTED_SCHEMA_INSTALLED npm run deploy
 ```
 
-For a browser-based deployment, use the included **Bootstrap New D1 and Deploy E88 FinSys** GitHub Action after changing `wrangler.toml` to the new D1 ID and adding `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` as repository secrets. The workflow is manual and confirmation-gated.
-
-## 9. Live smoke test
+## 9. Smoke test
 
 ```bash
-E88_URL=https://your-deployed-url npm run smoke
+E88_URL=https://your-worker-url npm run smoke
 ```
 
-If Cloudflare Access service tokens are used:
-
-```bash
-CF_ACCESS_CLIENT_ID=... \
-CF_ACCESS_CLIENT_SECRET=... \
-E88_URL=https://your-deployed-url \
-npm run smoke
-```
-
-## 10. UAT and cutover
-
-Follow `GO_LIVE_CHECKLIST.md`. Keep the previous deployment and database until all opening balances, serials, movements, assignments, and permissions are approved.
+Then complete `UAT_SCENARIOS_V13.md` and `GO_LIVE_CHECKLIST.md`.
 
 ## Rollback
 
-- Switch the Worker binding/deployment back to the previous production version.
-- Do not delete the previous D1 database.
-- If required, restore from `backups/e88-before-v7.sql` into a separate database and validate before rebinding.
+1. Stop new transaction entry.
+2. Restore the previous Worker deployment.
+3. Rebind the prior D1 database when a separate migration copy was used.
+4. Never attempt to undo `0021` by deleting its tables from a live transactional database.
+5. Restore the pre-v13 export into a separate D1 database, validate it, then rebind if database rollback is required.
+6. Reconcile transaction counts and posted journals before reopening access.

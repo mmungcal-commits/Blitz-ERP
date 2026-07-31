@@ -1,11 +1,11 @@
 {
-  "passed": 32,
-  "total": 32,
+  "passed": 73,
+  "total": 73,
   "tests": [
     {
       "name": "All opening SQL chunks execute",
       "passed": true,
-      "detail": "13 chunks"
+      "detail": "9 chunks"
     },
     {
       "name": "No foreign-key violations",
@@ -15,12 +15,12 @@
     {
       "name": "Actual source workbooks embedded",
       "passed": true,
-      "detail": "14"
+      "detail": "0"
     },
     {
       "name": "Source rows archived",
       "passed": true,
-      "detail": "24118"
+      "detail": "0"
     },
     {
       "name": "Canonical assets loaded",
@@ -39,6 +39,211 @@
     },
     {
       "name": "ATLAS receiving match control installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "PO-controlled ATLAS link installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Cycle count control installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Inventory planning control installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Connected requisition custody control installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Lease contract and actual-unit control installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Delete and reversal approval control installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Existing requisitions have custody context",
+      "passed": true,
+      "detail": "207"
+    },
+    {
+      "name": "Serial custody history view installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Connected double-entry journal installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Inventory finance event bridge installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "AR/AP subledgers installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Treasury reconciliation installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Fixed asset and depreciation installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Four legal entities configured",
+      "passed": true,
+      "detail": "4"
+    },
+    {
+      "name": "Finance chart of accounts configured",
+      "passed": true,
+      "detail": "63"
+    },
+    {
+      "name": "Finance cutover inventory agrees with serial subledger",
+      "passed": true,
+      "detail": "subledger=66355519.99, gl=66355519.99"
+    },
+    {
+      "name": "Every inventory class separately reconciles to its GL account",
+      "passed": true,
+      "detail": "MC=0.0, BAT=0.0, BSS=0.0, SP=0.0, CHG=0.0, OTH=0.0"
+    },
+    {
+      "name": "Motorcycles, batteries, lockers/BSS, spare parts and chargers remain distinct",
+      "passed": true,
+      "detail": "MC,BAT,BSS,SP,CHG,OTH"
+    },
+    {
+      "name": "Lease motorcycle and battery fixed assets use separate GL accounts",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Transaction-purpose accounting rules installed",
+      "passed": true,
+      "detail": "12"
+    },
+    {
+      "name": "Connected functional submodules installed",
+      "passed": true,
+      "detail": "70"
+    },
+    {
+      "name": "Controlled provisional serial valuation loaded",
+      "passed": true,
+      "detail": "3084"
+    },
+    {
+      "name": "Missing historical costs remain visible and blocked",
+      "passed": true,
+      "detail": "5566"
+    },
+    {
+      "name": "Historical lease units capitalized to fixed assets",
+      "passed": true,
+      "detail": "604"
+    },
+    {
+      "name": "Operational inventory subledger agrees with GL",
+      "passed": true,
+      "detail": "subledger=66355519.99, gl=66355519.99"
+    },
+    {
+      "name": "Fixed asset subledger agrees with GL",
+      "passed": true,
+      "detail": "subledger=22273649.02, gl=22273649.02"
+    },
+    {
+      "name": "No finance posting errors at cutover",
+      "passed": true,
+      "detail": "0"
+    },
+    {
+      "name": "Return-obligation control installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Sales-return source and finance bridge installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Landed-cost VAT and accrual controls installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "All rollout specialist engine tables installed",
+      "passed": true,
+      "detail": "26/26"
+    },
+    {
+      "name": "All 83 enterprise modules mapped to an engine",
+      "passed": true,
+      "detail": "83"
+    },
+    {
+      "name": "Rollout readiness view covers every enterprise module",
+      "passed": true,
+      "detail": "83"
+    },
+    {
+      "name": "Core transaction modules retain specialist core engines",
+      "passed": true,
+      "detail": "16"
+    },
+    {
+      "name": "Wider enterprise modules use specialist engines",
+      "passed": true,
+      "detail": "56"
+    },
+    {
+      "name": "Platform add-ons have controlled integration engines",
+      "passed": true,
+      "detail": "11"
+    },
+    {
+      "name": "Default amount-based approval matrix installed",
+      "passed": true,
+      "detail": "3"
+    },
+    {
+      "name": "Default approval roles resolve to active roles",
+      "passed": true,
+      "detail": "0"
+    },
+    {
+      "name": "Pending approval queue view installed",
+      "passed": true,
+      "detail": ""
+    },
+    {
+      "name": "Specialist chart accounts installed",
+      "passed": true,
+      "detail": "11"
+    },
+    {
+      "name": "Enterprise document flow view installed",
       "passed": true,
       "detail": ""
     },
@@ -191,15 +396,36 @@
     "erp_payment_register": 1261,
     "erp_budget_plan": 133,
     "erp_planning_drivers": 4096,
-    "erp_import_rows": 24118
+    "erp_import_rows": 0,
+    "erp_transaction_purpose_rules": 12,
+    "erp_return_obligations": 0,
+    "erp_inventory_valuation_exceptions": 5566,
+    "erp_module_submodules": 70,
+    "erp_fixed_asset_books": 604,
+    "erp_specialist_module_config": 83,
+    "erp_approval_matrices": 3,
+    "erp_workflow_approvals": 0,
+    "erp_core_workflow_approvals": 0,
+    "erp_enterprise_record_links": 0,
+    "erp_crm_pipeline_records": 0,
+    "erp_manufacturing_documents": 0,
+    "erp_quality_documents": 0,
+    "erp_project_documents": 0,
+    "erp_eam_documents": 0,
+    "erp_facility_documents": 0,
+    "erp_logistics_documents": 0,
+    "erp_hcm_documents": 0,
+    "erp_srp_documents": 0,
+    "erp_finance_specialist_documents": 0,
+    "erp_platform_integrations": 0
   },
   "categories": {
     "MC": 3177,
-    "BAT": 3083,
-    "OTH": 1469,
-    "SP": 345,
-    "BSS": 336,
-    "CHG": 240
+    "BAT": 2641,
+    "OTH": 1169,
+    "CHG": 682,
+    "SP": 644,
+    "BSS": 337
   },
   "statuses": {
     "AVAILABLE": 5922,

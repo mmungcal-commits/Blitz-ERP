@@ -34,7 +34,15 @@ const preLoadFiles = [
 const postLoadFiles = [
   'migrations/0012_ramco_enterprise.sql',
   'migrations/0013_atlas_receiving_workbench.sql',
-  'migrations/0014_application_auth.sql'
+  'migrations/0014_application_auth.sql',
+  'migrations/0015_user_access_station_connections.sql',
+  'migrations/0016_clean_module_workspace.sql',
+  'migrations/0017_inbound_logistics_control.sql',
+  'migrations/0018_sales_distribution_custody.sql',
+  'migrations/0019_connected_finance_engine.sql',
+  'migrations/0020_operational_submodules_and_posting_rules.sql',
+  'migrations/0021_rollout_specialist_engines.sql',
+  'migrations/0022_inventory_class_r2_rollout.sql'
 ];
 const manifest = JSON.parse(await readFile(join(ROOT, 'migrations/opening/manifest.json'), 'utf8'));
 const files = [...preLoadFiles, ...(manifest.files || []).map(f => `migrations/opening/${f}`), ...postLoadFiles];

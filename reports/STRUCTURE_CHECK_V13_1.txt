@@ -1,0 +1,375 @@
+E88 FinSys structure check: 374 passed, 0 failed.
+PASS  Required file: src/index.js
+PASS  Required file: public/index.html
+PASS  Required file: public/foundation.js
+PASS  Required file: public/foundation.css
+PASS  Required file: public/logo.png
+PASS  Required file: wrangler.toml
+PASS  Required file: package.json
+PASS  Required file: migrations/0008_connected_erp.sql
+PASS  Required file: migrations/0010_procurement_sales_controls.sql
+PASS  Required file: migrations/0011_finance_planning_registers.sql
+PASS  Required file: migrations/0012_ramco_enterprise.sql
+PASS  Required file: migrations/0013_atlas_receiving_workbench.sql
+PASS  Required file: migrations/0014_application_auth.sql
+PASS  Required file: src/routes/auth.js
+PASS  Required file: src/lib/crypto.js
+PASS  Required file: migrations/0015_user_access_station_connections.sql
+PASS  Required file: migrations/0016_clean_module_workspace.sql
+PASS  Required file: src/lib/workspace.js
+PASS  Required file: src/routes/workspace.js
+PASS  Required file: migrations/0017_inbound_logistics_control.sql
+PASS  Required file: migrations/0018_sales_distribution_custody.sql
+PASS  Required file: src/lib/module-definitions.js
+PASS  Required file: migrations/0019_connected_finance_engine.sql
+PASS  Required file: src/lib/finance.js
+PASS  Required file: src/routes/finance.js
+PASS  Required file: migrations/0020_operational_submodules_and_posting_rules.sql
+PASS  Required file: src/lib/transaction-rules.js
+PASS  Required file: migrations/0021_rollout_specialist_engines.sql
+PASS  Required file: migrations/0022_inventory_class_r2_rollout.sql
+PASS  Required file: src/lib/specialist-engine.js
+PASS  Required file: src/routes/enterprise.js
+PASS  Required file: test/transaction-rules.test.mjs
+PASS  Required file: test/specialist-engine.test.mjs
+PASS  Required file: migrations/opening/manifest.json
+PASS  Required file: scripts/generate_opening_data.py
+PASS  Required file: scripts/self_test.py
+PASS  Required file: .github/workflows/deploy-e88-erp.yml
+PASS  Required file: scripts/verify-empty-d1.mjs
+PASS  JavaScript syntax: src/index.js
+PASS  JavaScript syntax: src/lib/atlas.js
+PASS  JavaScript syntax: src/lib/audit.js
+PASS  JavaScript syntax: src/lib/auth.js
+PASS  JavaScript syntax: src/lib/codes.js
+PASS  JavaScript syntax: src/lib/crypto.js
+PASS  JavaScript syntax: src/lib/db.js
+PASS  JavaScript syntax: src/lib/finance.js
+PASS  JavaScript syntax: src/lib/http.js
+PASS  JavaScript syntax: src/lib/inventory.js
+PASS  JavaScript syntax: src/lib/module-definitions.js
+PASS  JavaScript syntax: src/lib/receiving.js
+PASS  JavaScript syntax: src/lib/specialist-engine.js
+PASS  JavaScript syntax: src/lib/transaction-rules.js
+PASS  JavaScript syntax: src/lib/workspace.js
+PASS  JavaScript syntax: src/routes/admin.js
+PASS  JavaScript syntax: src/routes/atlas.js
+PASS  JavaScript syntax: src/routes/auth.js
+PASS  JavaScript syntax: src/routes/checklists.js
+PASS  JavaScript syntax: src/routes/dashboard.js
+PASS  JavaScript syntax: src/routes/deliveries.js
+PASS  JavaScript syntax: src/routes/enterprise.js
+PASS  JavaScript syntax: src/routes/finance.js
+PASS  JavaScript syntax: src/routes/inventory.js
+PASS  JavaScript syntax: src/routes/masters.js
+PASS  JavaScript syntax: src/routes/planning.js
+PASS  JavaScript syntax: src/routes/procurement.js
+PASS  JavaScript syntax: src/routes/receiving.js
+PASS  JavaScript syntax: src/routes/requisitions.js
+PASS  JavaScript syntax: src/routes/returns.js
+PASS  JavaScript syntax: src/routes/sales.js
+PASS  JavaScript syntax: src/routes/session.js
+PASS  JavaScript syntax: src/routes/shipments.js
+PASS  JavaScript syntax: src/routes/stations.js
+PASS  JavaScript syntax: src/routes/workspace.js
+PASS  JavaScript syntax: public/foundation.js
+PASS  JavaScript syntax: scripts/apply-database.mjs
+PASS  JavaScript syntax: scripts/check-structure.mjs
+PASS  JavaScript syntax: scripts/predeploy-guard.mjs
+PASS  JavaScript syntax: scripts/smoke-test.mjs
+PASS  JavaScript syntax: scripts/verify-empty-d1.mjs
+PASS  JavaScript syntax: test/auth.integration.mjs
+PASS  JavaScript syntax: test/auth.test.mjs
+PASS  JavaScript syntax: test/codes.test.mjs
+PASS  JavaScript syntax: test/finance-integration.test.mjs
+PASS  JavaScript syntax: test/module-definitions.test.mjs
+PASS  JavaScript syntax: test/receiving.test.mjs
+PASS  JavaScript syntax: test/specialist-engine.test.mjs
+PASS  JavaScript syntax: test/transaction-rules.test.mjs
+PASS  Import resolves: src/index.js -> ./lib/db.js
+PASS  Import resolves: src/index.js -> ./lib/auth.js
+PASS  Import resolves: src/index.js -> ./lib/http.js
+PASS  Import resolves: src/index.js -> ./routes/auth.js
+PASS  Import resolves: src/index.js -> ./routes/session.js
+PASS  Import resolves: src/index.js -> ./routes/dashboard.js
+PASS  Import resolves: src/index.js -> ./routes/masters.js
+PASS  Import resolves: src/index.js -> ./routes/atlas.js
+PASS  Import resolves: src/index.js -> ./routes/shipments.js
+PASS  Import resolves: src/index.js -> ./routes/receiving.js
+PASS  Import resolves: src/index.js -> ./routes/inventory.js
+PASS  Import resolves: src/index.js -> ./routes/returns.js
+PASS  Import resolves: src/index.js -> ./routes/procurement.js
+PASS  Import resolves: src/index.js -> ./routes/requisitions.js
+PASS  Import resolves: src/index.js -> ./routes/sales.js
+PASS  Import resolves: src/index.js -> ./routes/deliveries.js
+PASS  Import resolves: src/index.js -> ./routes/stations.js
+PASS  Import resolves: src/index.js -> ./routes/admin.js
+PASS  Import resolves: src/index.js -> ./routes/checklists.js
+PASS  Import resolves: src/index.js -> ./routes/planning.js
+PASS  Import resolves: src/index.js -> ./routes/workspace.js
+PASS  Import resolves: src/index.js -> ./routes/finance.js
+PASS  Import resolves: src/index.js -> ./routes/enterprise.js
+PASS  Import resolves: src/lib/atlas.js -> ./codes.js
+PASS  Import resolves: src/lib/audit.js -> ./db.js
+PASS  Import resolves: src/lib/audit.js -> ./http.js
+PASS  Import resolves: src/lib/auth.js -> ./db.js
+PASS  Import resolves: src/lib/auth.js -> ./crypto.js
+PASS  Import resolves: src/lib/codes.js -> ./db.js
+PASS  Import resolves: src/lib/finance.js -> ./db.js
+PASS  Import resolves: src/lib/finance.js -> ./codes.js
+PASS  Import resolves: src/lib/finance.js -> ./transaction-rules.js
+PASS  Import resolves: src/lib/inventory.js -> ./db.js
+PASS  Import resolves: src/lib/inventory.js -> ./codes.js
+PASS  Import resolves: src/lib/inventory.js -> ./finance.js
+PASS  Import resolves: src/lib/receiving.js -> ./db.js
+PASS  Import resolves: src/lib/receiving.js -> ./codes.js
+PASS  Import resolves: src/lib/specialist-engine.js -> ./db.js
+PASS  Import resolves: src/lib/specialist-engine.js -> ./codes.js
+PASS  Import resolves: src/lib/specialist-engine.js -> ./finance.js
+PASS  Import resolves: src/lib/specialist-engine.js -> ./module-definitions.js
+PASS  Import resolves: src/lib/specialist-engine.js -> ./workspace.js
+PASS  Import resolves: src/lib/transaction-rules.js -> ./codes.js
+PASS  Import resolves: src/lib/workspace.js -> ./db.js
+PASS  Import resolves: src/routes/admin.js -> ../lib/db.js
+PASS  Import resolves: src/routes/admin.js -> ../lib/http.js
+PASS  Import resolves: src/routes/admin.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/admin.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/admin.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/admin.js -> ../lib/crypto.js
+PASS  Import resolves: src/routes/admin.js -> ../lib/workspace.js
+PASS  Import resolves: src/routes/atlas.js -> ../lib/db.js
+PASS  Import resolves: src/routes/atlas.js -> ../lib/http.js
+PASS  Import resolves: src/routes/atlas.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/atlas.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/atlas.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/atlas.js -> ../lib/atlas.js
+PASS  Import resolves: src/routes/auth.js -> ../lib/db.js
+PASS  Import resolves: src/routes/auth.js -> ../lib/http.js
+PASS  Import resolves: src/routes/auth.js -> ../lib/crypto.js
+PASS  Import resolves: src/routes/checklists.js -> ../lib/db.js
+PASS  Import resolves: src/routes/checklists.js -> ../lib/http.js
+PASS  Import resolves: src/routes/checklists.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/checklists.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/checklists.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/dashboard.js -> ../lib/db.js
+PASS  Import resolves: src/routes/dashboard.js -> ../lib/http.js
+PASS  Import resolves: src/routes/dashboard.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/deliveries.js -> ../lib/db.js
+PASS  Import resolves: src/routes/deliveries.js -> ../lib/http.js
+PASS  Import resolves: src/routes/deliveries.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/deliveries.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/deliveries.js -> ../lib/inventory.js
+PASS  Import resolves: src/routes/deliveries.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/deliveries.js -> ../lib/finance.js
+PASS  Import resolves: src/routes/deliveries.js -> ../lib/transaction-rules.js
+PASS  Import resolves: src/routes/enterprise.js -> ../lib/db.js
+PASS  Import resolves: src/routes/enterprise.js -> ../lib/http.js
+PASS  Import resolves: src/routes/enterprise.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/enterprise.js -> ../lib/workspace.js
+PASS  Import resolves: src/routes/enterprise.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/enterprise.js -> ../lib/specialist-engine.js
+PASS  Import resolves: src/routes/finance.js -> ../lib/db.js
+PASS  Import resolves: src/routes/finance.js -> ../lib/http.js
+PASS  Import resolves: src/routes/finance.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/finance.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/finance.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/finance.js -> ../lib/transaction-rules.js
+PASS  Import resolves: src/routes/finance.js -> ../lib/finance.js
+PASS  Import resolves: src/routes/inventory.js -> ../lib/db.js
+PASS  Import resolves: src/routes/inventory.js -> ../lib/http.js
+PASS  Import resolves: src/routes/inventory.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/inventory.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/inventory.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/inventory.js -> ../lib/inventory.js
+PASS  Import resolves: src/routes/inventory.js -> ../lib/finance.js
+PASS  Import resolves: src/routes/inventory.js -> ../lib/transaction-rules.js
+PASS  Import resolves: src/routes/masters.js -> ../lib/db.js
+PASS  Import resolves: src/routes/masters.js -> ../lib/http.js
+PASS  Import resolves: src/routes/masters.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/masters.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/masters.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/planning.js -> ../lib/db.js
+PASS  Import resolves: src/routes/planning.js -> ../lib/http.js
+PASS  Import resolves: src/routes/planning.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/planning.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/procurement.js -> ../lib/db.js
+PASS  Import resolves: src/routes/procurement.js -> ../lib/http.js
+PASS  Import resolves: src/routes/procurement.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/procurement.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/procurement.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/procurement.js -> ../lib/finance.js
+PASS  Import resolves: src/routes/procurement.js -> ../lib/specialist-engine.js
+PASS  Import resolves: src/routes/receiving.js -> ../lib/db.js
+PASS  Import resolves: src/routes/receiving.js -> ../lib/http.js
+PASS  Import resolves: src/routes/receiving.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/receiving.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/receiving.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/receiving.js -> ../lib/inventory.js
+PASS  Import resolves: src/routes/receiving.js -> ../lib/receiving.js
+PASS  Import resolves: src/routes/receiving.js -> ../lib/finance.js
+PASS  Import resolves: src/routes/requisitions.js -> ../lib/db.js
+PASS  Import resolves: src/routes/requisitions.js -> ../lib/http.js
+PASS  Import resolves: src/routes/requisitions.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/requisitions.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/requisitions.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/requisitions.js -> ../lib/inventory.js
+PASS  Import resolves: src/routes/returns.js -> ../lib/db.js
+PASS  Import resolves: src/routes/returns.js -> ../lib/http.js
+PASS  Import resolves: src/routes/returns.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/returns.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/returns.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/returns.js -> ../lib/inventory.js
+PASS  Import resolves: src/routes/returns.js -> ../lib/finance.js
+PASS  Import resolves: src/routes/returns.js -> ../lib/transaction-rules.js
+PASS  Import resolves: src/routes/sales.js -> ../lib/db.js
+PASS  Import resolves: src/routes/sales.js -> ../lib/http.js
+PASS  Import resolves: src/routes/sales.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/sales.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/sales.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/sales.js -> ../lib/inventory.js
+PASS  Import resolves: src/routes/sales.js -> ../lib/specialist-engine.js
+PASS  Import resolves: src/routes/session.js -> ../lib/db.js
+PASS  Import resolves: src/routes/session.js -> ../lib/http.js
+PASS  Import resolves: src/routes/session.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/session.js -> ../lib/workspace.js
+PASS  Import resolves: src/routes/shipments.js -> ../lib/db.js
+PASS  Import resolves: src/routes/shipments.js -> ../lib/http.js
+PASS  Import resolves: src/routes/shipments.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/shipments.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/shipments.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/stations.js -> ../lib/db.js
+PASS  Import resolves: src/routes/stations.js -> ../lib/http.js
+PASS  Import resolves: src/routes/stations.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/stations.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/stations.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/stations.js -> ../lib/inventory.js
+PASS  Import resolves: src/routes/workspace.js -> ../lib/db.js
+PASS  Import resolves: src/routes/workspace.js -> ../lib/http.js
+PASS  Import resolves: src/routes/workspace.js -> ../lib/auth.js
+PASS  Import resolves: src/routes/workspace.js -> ../lib/workspace.js
+PASS  Import resolves: src/routes/workspace.js -> ../lib/module-definitions.js
+PASS  Import resolves: src/routes/workspace.js -> ../lib/codes.js
+PASS  Import resolves: src/routes/workspace.js -> ../lib/audit.js
+PASS  Import resolves: src/routes/workspace.js -> ../lib/specialist-engine.js
+PASS  Route imported: admin
+PASS  Route imported: atlas
+PASS  Route imported: auth
+PASS  Route imported: checklists
+PASS  Route imported: dashboard
+PASS  Route imported: deliveries
+PASS  Route imported: enterprise
+PASS  Route imported: finance
+PASS  Route imported: inventory
+PASS  Route imported: masters
+PASS  Route imported: planning
+PASS  Route imported: procurement
+PASS  Route imported: receiving
+PASS  Route imported: requisitions
+PASS  Route imported: returns
+PASS  Route imported: sales
+PASS  Route imported: session
+PASS  Route imported: shipments
+PASS  Route imported: stations
+PASS  Route imported: workspace
+PASS  Business control present: BATTERY_SWAP
+PASS  Business control present: UNRECONCILED
+PASS  Business control present: ensureItem
+PASS  Business control present: categoryCode
+PASS  Business control present: BarcodeDetector
+PASS  Business control present: erp_stock_ledger
+PASS  Business control present: erp_serial_exceptions
+PASS  Business control present: erp_reconciliation_cases
+PASS  Business control present: requirePermission
+PASS  Business control present: ALLOWED_DOMAIN
+PASS  Business control present: erp_user_credentials
+PASS  Business control present: e88_session
+PASS  Business control present: erp_expected_receipt_matches
+PASS  Business control present: SERIAL_SUBSTITUTED
+PASS  Business control present: EXPECTED_SHIPMENT_ONLY
+PASS  Business control present: erp_record_change_requests
+PASS  Business control present: DELETION_REVERSAL_POLICY
+PASS  Business control present: PARTIALLY_RETURNED
+PASS  Business control present: erp_requisition_context
+PASS  Business control present: erp_lease_contracts
+PASS  Business control present: vw_erp_serial_custody_history
+PASS  Business control present: erp_journal_headers
+PASS  Business control present: erp_finance_source_events
+PASS  Business control present: erp_subledger_documents
+PASS  Business control present: erp_bank_reconciliations
+PASS  Business control present: erp_fixed_asset_books
+PASS  Business control present: vw_erp_inventory_gl_reconciliation
+PASS  Business control present: captureFinanceEvent
+PASS  Business control present: CAPITALIZATION
+PASS  Business control present: JOURNAL_REVERSAL
+PASS  Business control present: erp_transaction_purpose_rules
+PASS  Business control present: erp_return_obligations
+PASS  Business control present: erp_inventory_valuation_exceptions
+PASS  Business control present: vw_erp_operational_finance_reconciliation
+PASS  Business control present: INVENTORY_CONSUMPTION
+PASS  Business control present: WARRANTY_ISSUE
+PASS  Business control present: INVENTORY_VALUATION_ADJUSTMENT
+PASS  Business control present: SALES_RETURN_INVENTORY
+PASS  Business control present: registerPendingFixedAsset
+PASS  Business control present: erp_module_submodules
+PASS  Business control present: renderConnectedModuleWorkspace
+PASS  Business control present: renderModuleReports
+PASS  Business control present: renderModuleSetup
+PASS  Business control present: renderSalesOrderWorkspace
+PASS  Business control present: renderSourcingWorkspace
+PASS  Business control present: access-audit
+PASS  Business control present: erp_specialist_module_config
+PASS  Business control present: erp_approval_matrices
+PASS  Business control present: erp_workflow_approvals
+PASS  Business control present: erp_core_workflow_approvals
+PASS  Business control present: erp_enterprise_record_links
+PASS  Business control present: syncSpecialistRecord
+PASS  Business control present: validateSpecialistAction
+PASS  Business control present: afterSpecialistAction
+PASS  Business control present: rolloutReadiness
+PASS  Business control present: decideWorkflowApproval
+PASS  Business control present: decideCoreWorkflowApproval
+PASS  Business control present: Segregation of duties
+PASS  Business control present: MANUFACTURING_OUTPUT
+PASS  Business control present: PROJECT_BILLING
+PASS  Business control present: PAYROLL_DETAILED
+PASS  Business control present: PLATFORM_INTEGRATION
+PASS  No generic empty module fallback remains
+PASS  Rollout interface control present: E88-ROLLOUT-ERP-20260731-R13.1
+PASS  Rollout interface control present: data-group-toggle
+PASS  Rollout interface control present: column-resizer
+PASS  Rollout interface control present: openInventoryDetail
+PASS  Rollout interface control present: unitClass
+PASS  Rollout interface control present: Exact Serial Inventory Register
+PASS  GitHub workflow exposes database mode
+PASS  GitHub workflow uses the configured R2 bucket
+PASS  GitHub workflow does not strip the R2 binding
+PASS  GitHub workflow verifies the live R2 binding
+PASS  GitHub workflow uses JSON-safe empty-D1 verification
+PASS  Distinct workspace navigation: sd-crm
+PASS  Distinct workspace navigation: sd-demand-planning
+PASS  Distinct workspace navigation: sd-order-management
+PASS  Distinct workspace navigation: sd-lease-contract-management
+PASS  Distinct workspace navigation: sd-warranty-management
+PASS  Distinct workspace navigation: sd-service-management
+PASS  Distinct workspace navigation: sd-pim
+PASS  Distinct workspace navigation: sd-customer-portal
+PASS  Distinct workspace navigation: ip-sourcing-purchasing
+PASS  Distinct workspace navigation: ip-subcontracting
+PASS  Distinct workspace navigation: ip-supplier-portal
+PASS  Item-code category present: MC
+PASS  Item-code category present: BAT
+PASS  Item-code category present: BSS
+PASS  Item-code category present: SP
+PASS  Item-code category present: CHG
+PASS  Item-code category present: OTH
+PASS  Opening manifest contains SQL chunks — 9
+PASS  Opening chunk exists: 0001_opening_data.sql
+PASS  Opening chunk exists: 0002_opening_data.sql
+PASS  Opening chunk exists: 0003_opening_data.sql
+PASS  Opening chunk exists: 0004_opening_data.sql
+PASS  Opening chunk exists: 0005_opening_data.sql
+PASS  Opening chunk exists: 0006_opening_data.sql
+PASS  Opening chunk exists: 0007_opening_data.sql
+PASS  Opening chunk exists: 0008_opening_data.sql
+PASS  Opening chunk exists: 0009_opening_data.sql
+PASS  All shared Excel workbooks bundled — 14

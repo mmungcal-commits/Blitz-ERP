@@ -1,4 +1,4 @@
-const FOUNDATION_BUILD='E88-FULL-ERP-20260731-R5';
+const FOUNDATION_BUILD='E88-ROLLOUT-ERP-20260731-R13.1';
 const state={
   session:null,
   catalog:{groups:[],tools:[],addons:[]},
@@ -10,6 +10,9 @@ const state={
   cycleCount:null,
   scannerStream:null,
   theme:localStorage.getItem('e88-theme')||'light',
+  apiCache:new Map(),
+  apiInflight:new Map(),
+  expandedGroups:new Set(JSON.parse(localStorage.getItem('e88-expanded-groups')||'[]')),
 };
 
 const $=selector=>document.querySelector(selector);
@@ -37,18 +40,42 @@ function statusBadge(value='DRAFT'){
   return `<span class="status ${tone}">${esc(status.replaceAll('_',' '))}</span>`;
 }
 async function api(path,options={}){
-  const response=await fetch('/api'+path,{
-    ...options,
-    credentials:'same-origin',
-    headers:{...(options.body instanceof FormData?{}:{'Content-Type':'application/json'}),...(options.headers||{})},
-  });
-  const data=await response.json().catch(()=>({ok:false,error:`HTTP ${response.status}`}));
-  if(!response.ok||!data.ok){
-    const error=new Error(data.error||`Request failed (${response.status})`);
-    error.status=response.status;
-    throw error;
-  }
-  return data;
+  const method=String(options.method||'GET').toUpperCase();
+  const cacheable=method==='GET'&&!options.noCache;
+  const cacheKey=path;
+  const now=Date.now();
+  const cached=state.apiCache.get(cacheKey);
+  if(cacheable&&cached&&now-cached.at<15000)return cached.data;
+  if(cacheable&&state.apiInflight.has(cacheKey))return state.apiInflight.get(cacheKey);
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),Number(options.timeout||30000));
+  const request=(async()=>{
+    try{
+      const response=await fetch('/api'+path,{
+        ...options,
+        signal:controller.signal,
+        credentials:'same-origin',
+        headers:{...(options.body instanceof FormData?{}:{'Content-Type':'application/json'}),...(options.headers||{})},
+      });
+      const data=await response.json().catch(()=>({ok:false,error:`HTTP ${response.status}`}));
+      if(!response.ok||!data.ok){
+        const error=new Error(data.error||`Request failed (${response.status})`);
+        error.status=response.status;
+        throw error;
+      }
+      if(cacheable)state.apiCache.set(cacheKey,{at:Date.now(),data});
+      else state.apiCache.clear();
+      return data;
+    }catch(error){
+      if(error.name==='AbortError')throw new Error('The request took too long. Please retry or narrow the filters.');
+      throw error;
+    }finally{
+      clearTimeout(timeout);
+      if(cacheable)state.apiInflight.delete(cacheKey);
+    }
+  })();
+  if(cacheable)state.apiInflight.set(cacheKey,request);
+  return request;
 }
 function toast(message,type='success'){
   const element=document.createElement('div');
@@ -277,13 +304,16 @@ function renderLaunchpad(){
   content.innerHTML=`<section class="enterprise-launchpad">
     <div class="launchpad-controls">
       <div><img src="/logo.png" alt="E88"><span>Enterprise Modules</span></div>
-      <div><span>${esc(state.session.user.displayName||state.session.user.email)}</span>${state.session.user.role==='ADMIN'?'<button id="launchAccess">User Access</button>':''}<button id="launchLogout">Sign out</button></div>
+      <div><span>${esc(state.session.user.displayName||state.session.user.email)}</span>${state.session.user.role==='ADMIN'?'<button id="launchAccess">User Access</button>':''}<button id="expandAllGroups">Expand all</button><button id="collapseAllGroups">Collapse all</button><button id="launchLogout">Sign out</button></div>
     </div>
     <div class="enterprise-map">
-      <div class="enterprise-columns">${state.catalog.groups.map(group=>`<section class="enterprise-column">
-        <div class="enterprise-category">${esc(group.title)}</div>
-        <div class="enterprise-module-stack">${group.items.map(item=>enterpriseButton(item)).join('')}</div>
-      </section>`).join('')}</div>
+      <div class="enterprise-columns">${state.catalog.groups.map(group=>{
+        const expanded=state.expandedGroups.has(group.code);
+        return `<section class="enterprise-column ${expanded?'expanded':'collapsed'}" data-enterprise-group="${esc(group.code)}">
+          <button class="enterprise-category" type="button" data-group-toggle="${esc(group.code)}" aria-expanded="${expanded}"><span>${esc(group.title)}</span><i>${expanded?'−':'+'}</i></button>
+          <div class="enterprise-module-stack" ${expanded?'':'hidden'}>${group.items.map(item=>enterpriseButton(item)).join('')}</div>
+        </section>`;
+      }).join('')}</div>
       <div class="enterprise-tools">${state.catalog.tools.map(item=>enterpriseButton(item,'enterprise-tool-button')).join('')}</div>
       <div class="enterprise-addons-title"><span>Enterprise Add-ons</span></div>
       <div class="enterprise-addons">${state.catalog.addons.map(item=>enterpriseButton(item,'enterprise-addon-button')).join('')}</div>
@@ -293,6 +323,14 @@ function renderLaunchpad(){
       </footer>
     </div>
   </section>`;
+  const persistGroups=()=>localStorage.setItem('e88-expanded-groups',JSON.stringify([...state.expandedGroups]));
+  $$('[data-group-toggle]').forEach(button=>button.onclick=()=>{
+    const code=button.dataset.groupToggle;
+    if(state.expandedGroups.has(code))state.expandedGroups.delete(code);else state.expandedGroups.add(code);
+    persistGroups();renderLaunchpad();
+  });
+  $('#expandAllGroups').onclick=()=>{state.catalog.groups.forEach(group=>state.expandedGroups.add(group.code));persistGroups();renderLaunchpad();};
+  $('#collapseAllGroups').onclick=()=>{state.expandedGroups.clear();persistGroups();renderLaunchpad();};
   $$('[data-workspace]').forEach(button=>button.onclick=()=>openWorkspace(button.dataset.workspace));
   $('#launchLogout').onclick=logout;
   if($('#launchAccess'))$('#launchAccess').onclick=renderAccessAdmin;
@@ -358,6 +396,7 @@ function workbenchShell(body,active=state.section){
   const module=state.module;
   const user=state.session.user;
   const tabs=workspaceTabs(module.code);
+  const submodules=state.definition?.submodules||[];
   return `<section class="erp-workbench">
     <header class="workbench-systembar">
       <div><button class="workbench-home" title="Enterprise Modules">▦</button><span class="workbench-user-dot">●</span><b>${esc(user.displayName||user.email)}</b><small>${esc(user.role)}</small></div>
@@ -368,6 +407,7 @@ function workbenchShell(body,active=state.section){
       <div class="workbench-module-chip">${esc(module.label)}</div>
     </div>
     <nav class="workbench-tabs">${tabs.map(([id,label])=>`<button data-workbench-section="${id}" class="${active===id?'active':''}">${esc(label)}</button>`).join('')}</nav>
+    ${submodules.length?`<nav class="workbench-submodules"><span>Submodules</span>${submodules.map(sub=>`<button data-submodule-code="${esc(sub.submodule_code)}" data-submodule-type="${esc(sub.record_type||'')}" data-submodule-connected="${esc(sub.connected_module_code||'')}" title="${esc(sub.posting_event_type||'Operational submodule')}">${esc(sub.submodule_name)}</button>`).join('')}</nav>`:''}
     <main class="workbench-canvas">${body}</main>
     <footer class="workbench-footer"><span>E88 Enterprise System</span><span>Connected Workspace · © 2026 AL23</span></footer>
   </section>`;
@@ -376,7 +416,15 @@ function bindWorkbench(){
   $$('.workbench-home').forEach(button=>button.onclick=renderLaunchpad);
   $$('.workbench-logout').forEach(button=>button.onclick=logout);
   $$('[data-workbench-section]').forEach(button=>button.onclick=()=>openSection(button.dataset.workbenchSection));
+  $$('[data-submodule-code]').forEach(button=>button.onclick=()=>{
+    const connected=button.dataset.submoduleConnected;
+    if(connected&&moduleByCode(connected)&&canWorkspace(connected))return openWorkspace(connected);
+    state.submoduleType=button.dataset.submoduleType||'';
+    state.submoduleLabel=button.textContent||'';
+    return openSection('records');
+  });
   $$('[data-go]').forEach(button=>button.onclick=()=>openSection(button.dataset.go));
+  enhanceTables();
 }
 function miniBars(values){
   const max=Math.max(1,...values.map(value=>Number(value[1]||0)));
@@ -407,15 +455,43 @@ function recordsTable(rows){
 function operationalEmpty(message){
   return `<div class="workspace-empty"><b>${esc(message)}</b></div>`;
 }
-function operationalTable(headers,rows){
-  if(!rows.length)return operationalEmpty('No records');
-  return `<div class="record-table-wrap"><table class="record-table"><thead><tr>${headers.map(header=>`<th>${esc(header)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+function operationalTable(headers,rows,options={}){
+  if(!rows.length)return operationalEmpty(options.emptyMessage||'No records');
+  const key=options.key||headers.join('|').replace(/[^a-z0-9]+/gi,'-').toLowerCase();
+  return `<div class="record-table-wrap" data-table-key="${esc(key)}"><table class="record-table"><thead><tr>${headers.map((header,index)=>`<th data-column-index="${index}">${esc(header)}<span class="column-resizer" aria-hidden="true"></span></th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
+}
+function enhanceTables(){
+  $$('.record-table-wrap').forEach(wrap=>{
+    if(wrap.dataset.enhanced==='1')return;
+    wrap.dataset.enhanced='1';
+    const table=wrap.querySelector('table');
+    const key=wrap.dataset.tableKey||'erp-table';
+    let widths={};
+    try{widths=JSON.parse(localStorage.getItem(`e88-table-widths:${key}`)||'{}');}catch{}
+    table?.querySelectorAll('thead th').forEach((th,index)=>{
+      const saved=Number(widths[index]||0);if(saved>0)th.style.width=`${saved}px`;
+      const handle=th.querySelector('.column-resizer');if(!handle)return;
+      handle.onpointerdown=event=>{
+        event.preventDefault();event.stopPropagation();
+        const startX=event.clientX;const startWidth=th.getBoundingClientRect().width;
+        handle.setPointerCapture?.(event.pointerId);
+        const move=moveEvent=>{const width=Math.max(70,startWidth+moveEvent.clientX-startX);th.style.width=`${width}px`;};
+        const up=()=>{
+          document.removeEventListener('pointermove',move);document.removeEventListener('pointerup',up);
+          widths[index]=Math.round(th.getBoundingClientRect().width);
+          localStorage.setItem(`e88-table-widths:${key}`,JSON.stringify(widths));
+        };
+        document.addEventListener('pointermove',move);document.addEventListener('pointerup',up);
+      };
+    });
+  });
 }
 function workflowStrip(steps,active=0){
   return `<div class="process-strip">${steps.map((step,index)=>`<div class="${index===active?'active':index<active?'complete':''}"><span>${index+1}</span><b>${esc(step)}</b></div>`).join('')}</div>`;
 }
 function bindOperationalShell(){
   bindWorkbench();
+  enhanceTables();
   $$('[data-section-link]').forEach(button=>button.onclick=()=>openSection(button.dataset.sectionLink));
 }
 
@@ -977,18 +1053,19 @@ async function renderInventoryFinanceReconciliation(){
   content.innerHTML='<div class="workspace-loading">Reconciling inventory and finance…</div>';
   try{
     const data=await api('/finance/reports/inventory-reconciliation');
-    const rows=data.byCategory.map(row=>`<tr><td><b>${esc(row.category)}</b></td><td>${row.units}</td><td class="num">${money(row.subledger_value)}</td></tr>`);
+    const rows=data.byCategory.map(row=>`<tr><td><b>${esc(row.class_name||row.category)}</b></td><td>${esc(row.account_code)}</td><td>${esc(row.cogs_account_code)}</td><td>${row.units}</td><td>${row.valued_units}</td><td>${row.unvalued_units}</td><td class="num">${money(row.subledger_value)}</td><td class="num">${money(row.gl_value)}</td><td class="num">${money(row.difference)}</td><td>${statusBadge(row.status)}</td></tr>`);
     const body=`<div class="workspace-kpis">${kpi('Inventory Subledger',money(data.summary.inventory_subledger))}
       ${kpi('Inventory General Ledger',money(data.summary.inventory_general_ledger))}
       ${kpi('Difference',money(data.summary.difference))}${kpi('Status',data.summary.reconciled?'RECONCILED':'REVIEW REQUIRED')}</div>
-      <section class="workspace-card"><header><h2>Inventory Valuation by Class</h2><span>Serial-level quantity and valuation</span></header>
-        ${financeTable(['Class','Units','Subledger Value'],rows)}</section>
+      <section class="workspace-card"><header><h2>Separate Inventory Control Accounts</h2><span>Motorcycles, batteries, lockers/BSS, chargers, spare parts, and other inventory are not combined</span></header>
+        ${financeTable(['Inventory Class','Inventory GL','COGS GL','Units','Valued','Missing Cost','Subledger','General Ledger','Difference','Status'],rows)}</section>
       <section class="workspace-card"><header><h2>Inventory Finance Events</h2></header>
         ${financeTable(['Status','Event Type','Events','Amount'],data.sourceEvents.map(row=>`<tr><td>${financeStatus(row.status)}</td>
           <td>${esc(row.event_type)}</td><td>${row.events}</td><td class="num">${money(row.amount)}</td></tr>`))}</section>`;
     content.innerHTML=workbenchShell(body,'approvals');bindWorkbench();
   }catch(error){showWorkspaceError(error);}
 }
+
 async function renderBudgetActual(){
   content.innerHTML='<div class="workspace-loading">Loading budget versus actual…</div>';
   try{
@@ -1215,7 +1292,7 @@ async function renderPurchaseOrders(){
     $('#createPO').onclick=renderPurchaseOrderForm;
     $$('[data-approve-po]').forEach(button=>button.onclick=async event=>{
       event.stopPropagation();
-      try{await api(`/procurement/purchase-orders/${button.dataset.approvePo}/approve`,{method:'POST',body:'{}'});toast('Purchase order approved');await renderPurchaseOrders();}
+      try{const result=await api(`/procurement/purchase-orders/${button.dataset.approvePo}/approve`,{method:'POST',body:'{}'});toast(result.approved?'Purchase order approved':`Approval step recorded; ${result.approvalDecision?.state?.pending||0} step(s) remain`);await renderPurchaseOrders();}
       catch(error){toast(error.message,'error');}
     });
   }catch(error){showWorkspaceError(error);}
@@ -1649,44 +1726,68 @@ async function renderGoodsIssuance(){
 async function renderDeliveryReturns(){
   content.innerHTML='<div class="workspace-loading">Loading delivery and returns…</div>';
   try{
-    const [data,returnable,lookups]=await Promise.all([
-      api('/requisitions/outbound-workbench'),api('/returns/assignments/active'),api('/masters/lookups'),
+    const [data,assignmentReturns,salesReturns,returnRegister,lookups]=await Promise.all([
+      api('/requisitions/outbound-workbench'),api('/returns/assignments/active'),
+      api('/returns/deliveries/returnable'),api('/returns?size=500'),api('/masters/lookups'),
     ]);
-    const deliveryRows=data.deliveries.filter(row=>['RELEASED','DELIVERED'].includes(row.status)).map(row=>`<tr><td><b>${esc(row.delivery_no)}</b></td><td>${esc(row.requisition_no)}</td>
-      <td>${esc(row.assignment_no)}</td><td>${esc(row.destination)}</td><td>${esc(row.recipient_name)}</td><td>${statusBadge(row.status)}</td>
+    const deliveryRows=data.deliveries.filter(row=>['RELEASED','DELIVERED'].includes(row.status)).map(row=>`<tr><td><b>${esc(row.delivery_no)}</b></td><td>${esc(row.requisition_no||'—')}</td>
+      <td>${esc(row.assignment_no||row.sales_order_no||'—')}</td><td>${esc(row.destination)}</td><td>${esc(row.recipient_name)}</td><td>${statusBadge(row.status)}</td>
       <td>${row.status==='RELEASED'?`<button class="table-action" data-complete-delivery="${row.id}">Confirm Delivery</button>`:'—'}</td></tr>`);
-    const returnRows=data.returns.map(row=>`<tr><td><b>${esc(row.return_no)}</b></td><td>${esc(row.assignment_no)}</td><td>${date(row.return_date)}</td>
-      <td>${esc(row.return_location_code||'—')}</td><td>${esc(row.line_count)}</td><td>${statusBadge(row.status)}</td>
-      <td>${row.status==='DRAFT'?`<button class="table-action" data-post-return="${row.id}">Post Return</button>`:'—'}</td></tr>`);
+    const returnRows=(returnRegister.rows||[]).map(row=>{const source=row.return_type==='SALES_RETURN'
+      ?`${row.sales_order_no||'Sale'} / ${row.delivery_no||'Delivery'}`
+      :(row.assignment_no||'Deployment');return `<tr><td><b>${esc(row.return_no)}</b></td><td>${esc(row.return_type||'CUSTODY_RETURN')}</td>
+      <td>${esc(source)}</td><td>${esc(row.customer_name||row.partner_name||'—')}</td><td>${date(row.return_date)}</td>
+      <td>${esc(row.return_location_code||'—')}</td><td>${esc(row.line_count)}</td><td>${row.return_type==='SALES_RETURN'&&Number(row.refund_gross_amount||0)>0?money(row.refund_gross_amount):'—'}</td>
+      <td>${statusBadge(row.status)}</td><td>${row.status==='DRAFT'?`<button class="table-action" data-post-return="${row.id}">Post Return</button>`:'—'}</td></tr>`;});
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],3)}
       <section class="workspace-card"><header><h2>Delivery Confirmation</h2><span>Released units awaiting proof of delivery</span></header>
-        ${operationalTable(['Delivery','Requisition','Assignment','Destination','Holder','Status','Action'],deliveryRows)}</section>
-      <section class="workspace-card"><header><div><h2>Create Goods Return from Deployment</h2><span>Returns start from the exact serials assigned to an active custody record.</span></div></header>
+        ${operationalTable(['Delivery','Requisition','Assignment / Sale','Destination','Holder','Status','Action'],deliveryRows)}</section>
+      <section class="workspace-card"><header><div><h2>Create Goods Return</h2><span>Return exact serials from a company deployment or completed customer sale. Finance treatment follows the source transaction.</span></div></header>
         <form id="returnForm" class="operational-form grid">
-          <label class="wide"><span>Active Deployment / Assignment</span><select name="assignmentId" id="returnAssignment" required><option value="">Select deployment…</option>${returnable.rows.map(row=>`<option value="${row.id}">${esc(row.assignment_no)} · ${esc(row.assignment_type)} · ${esc(row.holder_name||row.partner_name)} · ${esc(row.asset_count)} units</option>`).join('')}</select></label>
+          <label><span>Return Source</span><select name="sourceType" id="returnSourceType"><option value="ASSIGNMENT">Deployment / Custody</option><option value="CUSTOMER_SALE">Customer Sale</option></select></label>
+          <label class="wide" id="returnAssignmentWrap"><span>Active Deployment / Assignment</span><select name="assignmentId" id="returnAssignment"><option value="">Select deployment…</option>${assignmentReturns.rows.map(row=>`<option value="${row.id}">${esc(row.assignment_no)} · ${esc(row.assignment_type)} · ${esc(row.holder_name||row.partner_name)} · ${esc(row.asset_count)} units</option>`).join('')}</select></label>
+          <label class="wide" id="returnSaleWrap" hidden><span>Delivered Customer Sale</span><select name="deliveryId" id="returnSale"><option value="">Select delivered sale…</option>${salesReturns.rows.map(row=>`<option value="${row.delivery_id}" data-gross="${Number(row.gross_amount||0)}">${esc(row.sales_order_no)} · ${esc(row.delivery_no)} · ${esc(row.customer_name)} · ${esc(row.returnable_assets)}/${esc(row.delivered_assets)} returnable</option>`).join('')}</select></label>
           <label><span>Return Date</span><input name="returnDate" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
           <label><span>Return Location</span><select name="returnLocationCode" id="returnLocation"><option value="RET-QUAR">RET-QUAR · Returns Quarantine</option>${lookups.locations.map(row=>`<option value="${esc(row.code)}" data-name="${esc(row.name)}" data-type="${esc(row.location_type)}">${esc(row.code)} · ${esc(row.name)}</option>`).join('')}</select></label>
-          <label><span>Reason</span><select name="reasonCode"><option>END_OF_LEASE</option><option>REPLACEMENT</option><option>EMPLOYEE_RETURN</option><option>DEMO_COMPLETE</option><option>REPAIR</option><option>OTHER</option></select></label>
-          <div id="returnLines" class="wide return-line-editor">${operationalEmpty('Select an assignment to load its deployed serials.')}</div>
+          <label><span>Reason</span><select name="reasonCode"><option>CUSTOMER_RETURN</option><option>END_OF_LEASE</option><option>REPLACEMENT</option><option>EMPLOYEE_RETURN</option><option>DEMO_COMPLETE</option><option>REPAIR</option><option>OTHER</option></select></label>
+          <label id="returnCreditWrap" hidden><span>Customer Credit</span><select name="issueCredit" id="returnIssueCredit"><option value="true">Create credit memo</option><option value="false">Physical return only</option></select></label>
+          <label id="returnRefundWrap" hidden><span>Credit Gross Amount</span><input name="refundGrossAmount" id="returnRefundGross" type="number" min="0" step="0.01" placeholder="Auto-prorate when blank"></label>
+          <div id="returnLines" class="wide return-line-editor">${operationalEmpty('Select a return source to load its serials.')}</div>
           <label class="wide"><span>Notes</span><textarea name="notes"></textarea></label>
           <button class="command primary">Create Goods Return</button>
         </form>
       </section>
-      <section class="workspace-card"><header><h2>Goods Return Register</h2><span>${data.returns.length} returns</span></header>
-        ${operationalTable(['Return','Assignment','Date','Location','Lines','Status','Action'],returnRows)}</section>`;
+      <section class="workspace-card"><header><h2>Goods Return Register</h2><span>${returnRegister.total||returnRows.length} returns</span></header>
+        ${operationalTable(['Return','Type','Source','Customer / Holder','Date','Location','Lines','Credit','Status','Action'],returnRows)}</section>`;
     content.innerHTML=workbenchShell(body,'setup');bindOperationalShell();
-    $('#returnAssignment').onchange=event=>{
-      const assignmentId=Number(event.target.value);
-      const assets=returnable.assets.filter(row=>row.assignment_id===assignmentId);
+
+    const renderReturnLines=assets=>{
       $('#returnLines').innerHTML=assets.length?assets.map(row=>`<div class="return-line" data-expected="${esc(row.serial_no)}" data-category="${esc(row.category)}">
-        <b>${esc(row.category)} · ${esc(row.item_name)}</b><span>${esc(row.serial_no)}</span>
+        <b>${esc(row.category)} · ${esc(row.item_name||row.item_code)}</b><span>${esc(row.serial_no)}</span>
         <input data-return="actualSerial" value="${esc(row.serial_no)}" placeholder="Scan actual serial">
         <select data-return="condition"><option>GOOD</option><option>DAMAGED</option><option>FOR_REPAIR</option><option>MISSING_PARTS</option></select>
-        <button type="button" class="table-action scan-return">Scan QR</button></div>`).join(''):operationalEmpty('No active serialized units remain on this assignment.');
+        <button type="button" class="table-action scan-return">Scan QR</button></div>`).join(''):operationalEmpty('No unreturned serialized units remain for this source.');
       $$('.scan-return').forEach(button=>button.onclick=()=>scanQrWithCamera(value=>{button.closest('.return-line').querySelector('[data-return="actualSerial"]').value=value;}));
     };
+    const syncReturnSource=()=>{
+      const isSale=$('#returnSourceType').value==='CUSTOMER_SALE';
+      $('#returnAssignmentWrap').hidden=isSale;$('#returnSaleWrap').hidden=!isSale;
+      $('#returnCreditWrap').hidden=!isSale;$('#returnRefundWrap').hidden=!isSale;
+      $('#returnAssignment').required=!isSale;$('#returnSale').required=isSale;
+      if(isSale){$('#returnAssignment').value='';const deliveryId=Number($('#returnSale').value);renderReturnLines(salesReturns.assets.filter(row=>row.delivery_id===deliveryId));}
+      else{$('#returnSale').value='';$('#returnRefundGross').value='';const assignmentId=Number($('#returnAssignment').value);renderReturnLines(assignmentReturns.assets.filter(row=>row.assignment_id===assignmentId));}
+    };
+    $('#returnSourceType').onchange=syncReturnSource;
+    $('#returnAssignment').onchange=syncReturnSource;
+    $('#returnSale').onchange=()=>{const deliveryId=Number($('#returnSale').value);renderReturnLines(salesReturns.assets.filter(row=>row.delivery_id===deliveryId));};
+    syncReturnSource();
+
     $('#returnForm').onsubmit=async event=>{
       event.preventDefault();const payload=formDataObject(event.currentTarget);
+      const isSale=payload.sourceType==='CUSTOMER_SALE';
+      if(isSale){delete payload.assignmentId;payload.deliveryId=Number(payload.deliveryId);payload.issueCredit=payload.issueCredit!=='false';}
+      else{delete payload.deliveryId;delete payload.issueCredit;delete payload.refundGrossAmount;payload.assignmentId=Number(payload.assignmentId);}
+      delete payload.sourceType;
       const location=$('#returnLocation').selectedOptions[0];
       payload.returnLocationName=location?.dataset.name||'Returns Quarantine';
       payload.returnLocationType=location?.dataset.type||'QUARANTINE';
@@ -1697,11 +1798,11 @@ async function renderDeliveryReturns(){
       catch(error){toast(error.message,'error');}
     };
     $$('[data-complete-delivery]').forEach(button=>button.onclick=async()=>{
-      try{await api(`/deliveries/${button.dataset.completeDelivery}/complete`,{method:'POST',body:JSON.stringify({deliveryDate:new Date().toISOString()})});toast('Delivery and custody confirmed');await renderDeliveryReturns();}
+      try{await api(`/deliveries/${button.dataset.completeDelivery}/complete`,{method:'POST',body:JSON.stringify({deliveryDate:new Date().toISOString()})});toast('Delivery, inventory, custody, and Finance source posting prepared');await renderDeliveryReturns();}
       catch(error){toast(error.message,'error');}
     });
     $$('[data-post-return]').forEach(button=>button.onclick=async()=>{
-      try{await api(`/returns/${button.dataset.postReturn}/post`,{method:'POST',body:'{}'});toast('Goods return posted and inventory updated');await renderDeliveryReturns();}
+      try{const result=await api(`/returns/${button.dataset.postReturn}/post`,{method:'POST',body:'{}'});toast(result.returnType==='SALES_RETURN'?'Sales return posted with inventory and Finance entries':'Goods return posted and custody updated');await renderDeliveryReturns();}
       catch(error){toast(error.message,'error');}
     });
   }catch(error){showWorkspaceError(error);}
@@ -1718,52 +1819,96 @@ async function renderWarehouseWorkspace(section){
 async function renderWarehouseOverview(){
   content.innerHTML='<div class="workspace-loading">Loading warehouse visibility…</div>';
   try{
-    const data=await api('/inventory/visibility');
-    const available=data.rows.filter(row=>row.current_status==='AVAILABLE').length;
-    const quarantine=data.rows.filter(row=>row.current_status==='QUARANTINE').length;
-    const assigned=data.rows.filter(row=>row.current_holder_name).length;
-    const locations=data.byLocation.map(row=>`<tr data-location-filter="${row.location_id}"><td><b>${esc(row.location_code)}</b></td><td>${esc(row.location_name)}</td>
+    const [data,classes]=await Promise.all([api('/inventory/visibility?size=1'),api('/inventory/by-class')]);
+    const classOrder=['MC','BAT','BSS','CHG','SP','OTH'];
+    const byCode=new Map((classes.rows||[]).map(row=>[row.cls,row]));
+    const classKpis=classOrder.map(code=>{
+      const row=byCode.get(code)||{class_name:code,total:0,available:0};
+      return kpi(row.class_name,`${Number(row.total||0).toLocaleString()} units`);
+    }).join('');
+    const locations=data.byLocation.map(row=>`<tr class="clickable-row" data-location-filter="${row.location_id}"><td><b>${esc(row.location_code)}</b></td><td>${esc(row.location_name)}</td>
       <td>${esc(row.location_type)}</td><td>${esc(row.total_units)}</td><td>${esc(row.available_units||0)}</td>
       <td>${esc(row.quarantine_units||0)}</td><td>${esc(row.unreconciled_units||0)}</td></tr>`);
-    const body=`<div class="workspace-kpis">${kpi('Visible Units',data.total)}${kpi('Locations',data.byLocation.length)}
-      ${kpi('Available',available)}${kpi('Quarantine',quarantine)}${kpi('Assigned',assigned)}</div>
+    const items=(classes.items||[]).map(row=>`<tr class="clickable-row" data-item-filter="${esc(row.item_code)}" data-class-filter="${esc(row.class_code)}">
+      <td>${esc(row.class_name)}</td><td><b>${esc(row.item_code)}</b></td><td>${esc(row.item_name)}</td>
+      <td>${Number(row.total||0).toLocaleString()}</td><td>${Number(row.available||0).toLocaleString()}</td><td>${Number(row.deployed||0).toLocaleString()}</td>
+      <td>${Number(row.quarantine||0).toLocaleString()}</td><td>${Number(row.unvalued||0).toLocaleString()}</td><td class="num">${money(row.inventory_value)}</td></tr>`);
+    const body=`<div class="workspace-kpis inventory-class-kpis">${classKpis}</div>
+      <section class="workspace-card"><header><div><h2>Inventory by Exact Material Code</h2><span>Separate class, item, serial quantity, status, and value from the STAR item master</span></div><button class="ramco-primary" data-section-link="records">Open Serial Register</button></header>
+        ${operationalTable(['Inventory Class','Material Code','Tagged Item / Description','Total Serials','Available','Deployed','Quarantine','Missing Cost','Inventory Value'],items,{key:'warehouse-items',emptyMessage:'No classified inventory records. Apply migration 0022 and verify opening data.'})}</section>
       <div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
-        <header><div><h2>Warehouse & Retail Location Visibility</h2><span>All confirmed serials by current location</span></div><button class="ramco-primary" data-section-link="records">Open Unit Register</button></header>
-        ${operationalTable(['Location','Name','Type','Total Units','Available','Quarantine','Unreconciled'],locations)}
+        <header><div><h2>Warehouse & Retail Location Visibility</h2><span>Click a location to open its exact serial records</span></div></header>
+        ${operationalTable(['Location','Name','Type','Total Units','Available','Quarantine','Unreconciled'],locations,{key:'warehouse-locations'})}
       </section></div><aside class="ramco-rail">
         <section><header>Visibility Actions</header><div class="ramco-action-links"><button data-section-link="records">Find Units</button>
           <button data-section-link="approvals">Move Units</button><button data-section-link="reports">QR Trace</button><button data-section-link="setup">Location Master</button></div></section>
-        <section><header>Unit Position</header>${horizontalBars([['Available',available,'green'],['Assigned',assigned,'blue'],['Quarantine',quarantine,'orange']])}</section>
+        <section><header>Valuation Control</header><div class="definition-list"><div><b>Missing cost</b><span>${Number(data.summary?.unvalued_units||0).toLocaleString()}</span></div><div><b>Inventory value</b><span>${money(data.summary?.inventory_value)}</span></div></div></section>
       </aside></div>`;
     content.innerHTML=workbenchShell(body,'center');
     bindOperationalShell();
     $$('[data-location-filter]').forEach(row=>row.onclick=()=>renderWarehouseVisibility(row.dataset.locationFilter));
-    try{const __bc=await api('/inventory/by-class');const __agg={};(__bc.rows||[]).forEach(r=>{const k=r.cls||'OTH';__agg[k]={t:(r.total||0),a:(r.available||0)};});const __nm={MC:'Motorcycle',BAT:'Battery',BSS:'Battery Station',CHG:'Charger',SP:'Spare Parts',OTH:'Other'};const __rows=Object.keys(__agg).sort((x,y)=>__agg[y].t-__agg[x].t).map(k=>`<tr><td><b>${esc(__nm[k]||k)}</b></td><td>${__agg[k].t}</td><td>${__agg[k].a}</td></tr>`);const __sec=document.createElement('section');__sec.className='workspace-card';__sec.innerHTML=`<header><div><h2>Stock by Class</h2><span>Serialized units grouped by class.</span></div></header>${operationalTable(['Class','Total Units','Available'],__rows)}`;__sec.id='stock-by-class-panel';const __canvas=document.querySelector('.workbench-canvas');if(__canvas&&!__canvas.querySelector('#stock-by-class-panel'))__canvas.insertBefore(__sec,__canvas.firstChild);}catch(e){}
+    $$('[data-item-filter]').forEach(row=>row.onclick=()=>renderWarehouseVisibility('',row.dataset.itemFilter,'',row.dataset.classFilter));
   }catch(error){showWorkspaceError(error);}
 }
 
-async function renderWarehouseVisibility(locationId='',search='',status=''){
+async function renderWarehouseVisibility(locationId='',search='',status='',category='',page=1){
   content.innerHTML='<div class="workspace-loading">Loading unit register…</div>';
   try{
+    const size=100;
     const [data,lookups]=await Promise.all([
-      api(`/inventory/visibility?${new URLSearchParams({locationId,q:search,status})}`),
+      api(`/inventory/visibility?${new URLSearchParams({locationId,q:search,status,category,page,size})}`),
       api('/masters/lookups'),
     ]);
-    const rows=data.rows.map(row=>`<tr><td><b>${esc(row.serial_no)}</b></td><td>${esc(row.item_code||'—')}</td><td>${esc(row.item_name||'—')}</td>
+    const rows=data.rows.map(row=>`<tr class="clickable-row" data-inventory-serial="${esc(row.serial_no)}"><td><b>${esc(row.serial_no)}</b></td><td>${esc(row.item_code||'—')}</td><td>${esc(row.item_name||'—')}</td>
       <td>${esc(row.category)}</td><td>${esc(row.location_code||'UNASSIGNED')}</td><td>${esc(row.location_name||'—')}</td>
-      <td>${statusBadge(row.current_status)}</td><td>${esc(row.current_holder_name||'—')}</td><td>${statusBadge(row.reconciliation_status)}</td></tr>`);
+      <td>${statusBadge(row.current_status)}</td><td>${esc(row.current_holder_name||'—')}</td><td class="num">${money(row.unit_cost)}</td><td>${statusBadge(row.valuation_status||'UNVALUED')}</td><td>${statusBadge(row.reconciliation_status)}</td></tr>`);
+    const pages=Math.max(1,Math.ceil(Number(data.total||0)/size));
     const body=`<div class="workspace-commandbar">
-      <input id="unitSearch" placeholder="Serial, item, holder, or location" value="${esc(search)}">
+      <input id="unitSearch" placeholder="Serial, material code, item, holder, or location" value="${esc(search)}">
+      <select id="unitClass"><option value="">All inventory classes</option>${[['MC','Motorcycles'],['BAT','Batteries'],['BSS','Lockers / BSS'],['CHG','Chargers'],['SP','Spare Parts'],['OTH','Other']].map(([value,label])=>`<option value="${value}" ${value===category?'selected':''}>${label}</option>`).join('')}</select>
       <select id="unitLocation"><option value="">All locations</option>${lookups.locations.map(row=>`<option value="${row.id}" ${Number(row.id)===Number(locationId)?'selected':''}>${esc(row.code)} · ${esc(row.name)}</option>`).join('')}</select>
       <select id="unitStatus"><option value="">All statuses</option>${['AVAILABLE','ASSIGNED','QUARANTINE','UNDER_REPAIR','LEASED','SOLD'].map(value=>`<option ${value===status?'selected':''}>${value}</option>`).join('')}</select>
-      <button class="command primary" id="applyUnitFilter">Apply</button><span class="command-spacer"></span><span class="workspace-mode">${data.total} UNITS</span>
-    </div><section class="workspace-card"><header><h2>Unit Location Register</h2><span>Live serial-level visibility</span></header>
-      ${operationalTable(['Serial','Item Code','Item','Class','Location','Location Name','Status','Assigned To','Reconciliation'],rows)}</section>`;
+      <button class="command primary" id="applyUnitFilter">Apply</button><span class="command-spacer"></span><span class="workspace-mode">${Number(data.total||0).toLocaleString()} UNITS · PAGE ${page}/${pages}</span>
+    </div><div class="workspace-kpis">${kpi('Matching Units',Number(data.summary?.total_units||0).toLocaleString())}${kpi('Available',Number(data.summary?.available_units||0).toLocaleString())}${kpi('Missing Cost',Number(data.summary?.unvalued_units||0).toLocaleString())}${kpi('Inventory Value',money(data.summary?.inventory_value))}</div>
+    <section class="workspace-card"><header><h2>Exact Serial Inventory Register</h2><span>Click any row for movement, custody, delivery, return, and Finance details</span></header>
+      ${operationalTable(['Serial','Material Code','Tagged Item','Class','Location','Location Name','Status','Assigned To','Unit Cost','Valuation','Reconciliation'],rows,{key:'serial-inventory',emptyMessage:'No serial records match the filters. Confirm D1 migrations and opening data were loaded.'})}
+      <div class="table-pager"><button class="command" id="previousUnitPage" ${page<=1?'disabled':''}>Previous</button><span>Page ${page} of ${pages}</span><button class="command" id="nextUnitPage" ${page>=pages?'disabled':''}>Next</button></div>
+    </section>`;
     content.innerHTML=workbenchShell(body,'records');
     bindOperationalShell();
-    $('#applyUnitFilter').onclick=()=>renderWarehouseVisibility($('#unitLocation').value,$('#unitSearch').value,$('#unitStatus').value);
-    $('#unitSearch').onkeydown=event=>{if(event.key==='Enter')$('#applyUnitFilter').click();};
+    const apply=()=>renderWarehouseVisibility($('#unitLocation').value,$('#unitSearch').value,$('#unitStatus').value,$('#unitClass').value,1);
+    $('#applyUnitFilter').onclick=apply;
+    $('#unitSearch').onkeydown=event=>{if(event.key==='Enter')apply();};
+    if($('#previousUnitPage'))$('#previousUnitPage').onclick=()=>renderWarehouseVisibility(locationId,search,status,category,page-1);
+    if($('#nextUnitPage'))$('#nextUnitPage').onclick=()=>renderWarehouseVisibility(locationId,search,status,category,page+1);
+    $$('[data-inventory-serial]').forEach(row=>row.onclick=()=>openInventoryDetail(row.dataset.inventorySerial));
   }catch(error){showWorkspaceError(error);}
+}
+
+async function openInventoryDetail(serial){
+  modal(`Inventory Serial · ${serial}`,'<div class="workspace-loading">Loading connected records…</div>','Exact item, custody, movement, delivery, return, and reconciliation history');
+  try{
+    const data=await api(`/inventory/${encodeURIComponent(serial)}/history`,{noCache:true});
+    const asset=data.asset||{};
+    const movements=(data.movements||[]).map(row=>`<tr><td>${date(row.movement_date)}</td><td>${esc(row.movement_type)}</td><td>${esc(row.from_location_code||'—')}</td><td>${esc(row.to_location_code||'—')}</td><td>${esc(row.to_status||'—')}</td><td>${esc(row.source_doc_no||'—')}</td></tr>`);
+    const assignments=(data.assignments||[]).map(row=>`<tr><td>${esc(row.assignment_no)}</td><td>${esc(row.assignment_type)}</td><td>${esc(row.holder_name)}</td><td>${date(row.start_date)}</td><td>${statusBadge(row.status)}</td></tr>`);
+    const deliveries=(data.deliveries||[]).map(row=>`<tr><td>${esc(row.delivery_no)}</td><td>${date(row.scheduled_date)}</td><td>${esc(row.destination||'—')}</td><td>${statusBadge(row.status)}</td></tr>`);
+    const returns=(data.returns||[]).map(row=>`<tr><td>${esc(row.return_no)}</td><td>${date(row.return_date)}</td><td>${esc(row.expected_serial||'—')}</td><td>${esc(row.actual_serial||'—')}</td><td>${statusBadge(row.acceptance_status||row.status)}</td></tr>`);
+    const reconciliation=(data.reconciliation||[]).map(row=>`<tr><td>${esc(row.case_no||row.id)}</td><td>${esc(row.case_type||'SERIAL')}</td><td>${esc(row.expected_serial||'—')}</td><td>${esc(row.actual_serial||'—')}</td><td>${statusBadge(row.status)}</td></tr>`);
+    $('#modalBody').innerHTML=`<div class="inventory-detail-grid">
+      <div><small>Inventory Class</small><b>${esc(asset.category||'—')}</b></div><div><small>Material Code</small><b>${esc(asset.item_code||'—')}</b></div>
+      <div><small>Tagged Item</small><b>${esc(asset.item_name||'—')}</b></div><div><small>Serial</small><b>${esc(asset.serial_no||'—')}</b></div>
+      <div><small>Status</small><b>${esc(asset.current_status||'—')}</b></div><div><small>Location</small><b>${esc(asset.current_location_code||'UNASSIGNED')}</b></div>
+      <div><small>Assigned To</small><b>${esc(asset.current_holder_name||'—')}</b></div><div><small>Unit Cost</small><b>${money(asset.unit_cost)}</b></div>
+      <div><small>Cost Source</small><b>${esc(asset.cost_source||'—')}</b></div><div><small>Valuation</small><b>${esc(asset.valuation_status||'UNVALUED')}</b></div>
+    </div>
+    <h3>Stock Movements</h3>${operationalTable(['Date','Movement','From','To','Resulting Status','Source Document'],movements,{key:'inventory-detail-movements'})}
+    <h3>Assignments and Custody</h3>${operationalTable(['Assignment','Type','Holder','Start','Status'],assignments,{key:'inventory-detail-assignments'})}
+    <h3>Deliveries</h3>${operationalTable(['Delivery','Scheduled','Destination','Status'],deliveries,{key:'inventory-detail-deliveries'})}
+    <h3>Returns</h3>${operationalTable(['Return','Date','Expected Serial','Actual Serial','Status'],returns,{key:'inventory-detail-returns'})}
+    <h3>Reconciliation Cases</h3>${operationalTable(['Case','Type','Expected','Actual','Status'],reconciliation,{key:'inventory-detail-reconciliation'})}`;
+    enhanceTables();
+  }catch(error){$('#modalBody').innerHTML=`<div class="workspace-error"><b>Unable to load serial details</b><span>${esc(error.message)}</span></div>`;}
 }
 
 async function renderStockMovement(){
@@ -2016,22 +2161,54 @@ async function renderInventoryAnalysisWorkspace(section){
 async function renderInventoryAnalysisOverview(){
   content.innerHTML='<div class="workspace-loading">Loading inventory analysis…</div>';
   try{
-    const [analysis,plans]=await Promise.all([api('/inventory/analysis'),api('/inventory/plans')]);
+    const [analysis,plans,valuation]=await Promise.all([api('/inventory/analysis'),api('/inventory/plans'),api('/inventory/valuation')]);
     const actions=analysis.rows.filter(row=>Number(row.available_qty)===0||Number(row.quarantine_qty)>0||Number(row.open_po_qty)>0).slice(0,20);
     const rows=actions.map(row=>`<tr><td><b>${esc(row.item_code)}</b></td><td>${esc(row.item_name)}</td><td>${esc(row.category)}</td>
       <td>${esc(row.on_hand_qty)}</td><td>${esc(row.available_qty)}</td><td>${esc(row.incoming_qty)}</td><td>${esc(row.open_po_qty)}</td>
       <td>${esc(row.quarantine_qty)}</td><td>${Number(row.available_qty)===0?statusBadge('REVIEW ORDER'):Number(row.quarantine_qty)>0?statusBadge('QUALITY HOLD'):statusBadge('INCOMING')}</td></tr>`);
+    const valuationRows=valuation.rows.filter(row=>['BLOCKED_MISSING_COST','PROVISIONAL_REVIEW_REQUIRED'].includes(row.finance_readiness)).slice(0,30).map(row=>{
+      const canDecide=row.exception_id&&row.exception_status==='OPEN'&&Number(row.proposed_unit_cost||0)>0&&row.requested_by!==state.session.user.email&&can('INVENTORY','APPROVE');
+      const action=canDecide?`<button class="table-action" data-approve-valuation="${row.exception_id}">Approve</button>
+        <button class="table-action danger" data-reject-valuation="${row.exception_id}">Reject</button>`:
+        row.exception_status==='PENDING_POSTING'?'<small>Finance journal pending</small>':
+        row.exception_status==='OPEN'&&Number(row.proposed_unit_cost||0)>0?`<small>Requested by ${esc(row.requested_by||'user')}</small>`:
+        `<button class="table-action" data-request-valuation="${row.id}" data-current-cost="${row.unit_cost||0}">Set Cost</button>`;
+      return `<tr><td><b>${esc(row.serial_no)}</b></td><td>${esc(row.item_code)}</td><td>${esc(row.item_name)}</td><td>${esc(row.category)}</td>
+        <td class="num">${money(row.unit_cost)}</td><td>${statusBadge(row.valuation_status)}</td><td>${statusBadge(row.finance_readiness)}</td>
+        <td class="num">${row.proposed_unit_cost?money(row.proposed_unit_cost):'—'}</td><td>${action}</td></tr>`;
+    });
     const body=`<div class="workspace-kpis">${kpi('On-hand Units',analysis.totals.onHand)}${kpi('Available',analysis.totals.available)}
-      ${kpi('ATLAS Incoming',analysis.totals.incoming)}${kpi('Open PO Qty',analysis.totals.openPO)}${kpi('Quarantine',analysis.totals.quarantine)}</div>
+      ${kpi('ATLAS Incoming',analysis.totals.incoming)}${kpi('Open PO Qty',analysis.totals.openPO)}${kpi('Unvalued Serials',valuation.summary.unvalued_assets||0)}
+      ${kpi('Provisional Costs',valuation.summary.provisional_assets||0)}</div>
       <div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
-        <header><div><h2>Supply Chain Inventory Monitor</h2><span>Ordering, replenishment, and deployment decisions</span></div><button class="ramco-primary" data-section-link="approvals">Create Plan</button></header>
+        <header><div><h2>Supply Chain Inventory Monitor</h2><span>Ordering, replenishment, deployment, and finance readiness</span></div><button class="ramco-primary" data-section-link="approvals">Create Plan</button></header>
         ${operationalTable(['Item','Description','Class','On Hand','Available','Incoming','Open PO','Quarantine','Action'],rows)}
+      </section>
+      <section class="workspace-card"><header><div><h2>Inventory Valuation Worklist</h2><span>Zero-cost posting is blocked; proposed costs require another approver and Finance posting</span></div></header>
+        ${operationalTable(['Serial','Item','Description','Class','Current Cost','Valuation','Finance Readiness','Proposed','Action'],valuationRows)}
       </section></div><aside class="ramco-rail">
         <section><header>Planning Actions</header><div class="ramco-action-links"><button data-section-link="records">Analyze Inventory</button>
           <button data-section-link="approvals">Ordering / Deployment Plans</button><button data-section-link="reports">Planning Reports</button></div></section>
-        <section><header>Plan Register</header>${horizontalBars([['Draft',plans.rows.filter(row=>row.status==='DRAFT').length,'orange'],['Approved',plans.rows.filter(row=>row.status==='APPROVED').length,'green']])}</section>
+        <section><header>Finance Readiness</header>${horizontalBars([['Valued',valuation.summary.valued_assets||0,'green'],['Unvalued',valuation.summary.unvalued_assets||0,'orange'],['Provisional',valuation.summary.provisional_assets||0,'blue']])}</section>
+        <section><header>Valuation</header><div class="definition-list"><div><b>Inventory Value</b><span>${money(valuation.summary.inventory_value||0)}</span></div>
+          <div><b>Fixed Asset NBV</b><span>${money(valuation.summary.fixed_asset_nbv||0)}</span></div><div><b>Pending Finance Posting</b><span>${esc(valuation.summary.pending_posting||0)}</span></div></div></section>
       </aside></div>`;
     content.innerHTML=workbenchShell(body,'center');bindOperationalShell();
+    $$('[data-request-valuation]').forEach(button=>button.onclick=async()=>{
+      const proposed=prompt('Enter the proposed unit cost',button.dataset.currentCost||'');if(proposed===null)return;
+      const reason=prompt('Enter the invoice, landed-cost basis, or supporting reason');if(!reason)return;
+      try{await api(`/inventory/valuation/${button.dataset.requestValuation}/request`,{method:'POST',body:JSON.stringify({proposedUnitCost:Number(proposed),reason,costSource:'USER_SUPPORTING_DOCUMENT'})});
+        toast('Valuation submitted for independent approval');await renderInventoryAnalysisOverview();}catch(error){toast(error.message,'error');}
+    });
+    $$('[data-approve-valuation]').forEach(button=>button.onclick=async()=>{
+      try{const result=await api(`/inventory/valuation/exceptions/${button.dataset.approveValuation}/decision`,{method:'POST',body:JSON.stringify({decision:'APPROVE',notes:'Reviewed supporting valuation'})});
+        toast(result.journalId?'Valuation approved; Finance journal submitted':'Valuation approved');await renderInventoryAnalysisOverview();}catch(error){toast(error.message,'error');}
+    });
+    $$('[data-reject-valuation]').forEach(button=>button.onclick=async()=>{
+      const notes=prompt('Reason for rejection');if(!notes)return;
+      try{await api(`/inventory/valuation/exceptions/${button.dataset.rejectValuation}/decision`,{method:'POST',body:JSON.stringify({decision:'REJECT',notes})});
+        toast('Valuation request rejected');await renderInventoryAnalysisOverview();}catch(error){toast(error.message,'error');}
+    });
   }catch(error){showWorkspaceError(error);}
 }
 
@@ -2041,17 +2218,19 @@ async function renderStockAnalysis(search=''){
     const analysis=await api('/inventory/analysis');
     const q=search.toLowerCase();
     const filtered=analysis.rows.filter(row=>!q||`${row.item_code} ${row.item_name} ${row.category}`.toLowerCase().includes(q));
-    const rows=filtered.map(row=>`<tr><td><b>${esc(row.item_code)}</b></td><td>${esc(row.item_name)}</td><td>${esc(row.category)}</td>
+    const rows=filtered.map(row=>`<tr class="clickable-row" data-analysis-item="${esc(row.item_code)}" data-analysis-class="${esc(row.category)}"><td><b>${esc(row.item_code)}</b></td><td>${esc(row.item_name)}</td><td>${esc(row.category)}</td>
       <td>${esc(row.location_count)}</td><td>${esc(row.on_hand_qty)}</td><td>${esc(row.available_qty)}</td><td>${esc(row.deployed_qty)}</td>
-      <td>${esc(row.quarantine_qty)}</td><td>${esc(row.incoming_qty)}</td><td>${esc(row.open_po_qty)}</td>
-      <td class="num">${money(Number(row.on_hand_qty||0)*Number(row.standard_cost||0))}</td></tr>`);
-    const body=`<div class="workspace-commandbar"><input id="analysisSearch" value="${esc(search)}" placeholder="Search item or class">
-      <button class="command primary" id="runAnalysisSearch">Apply</button><span class="command-spacer"></span><span class="workspace-mode">${filtered.length} ITEMS</span></div>
-      <section class="workspace-card"><header><h2>Inventory Analysis</h2><span>Live, expected, and committed supply</span></header>
-        ${operationalTable(['Item','Description','Class','Locations','On Hand','Available','Deployed','Quarantine','ATLAS Incoming','Open PO','Stock Value'],rows)}</section>`;
+      <td>${esc(row.quarantine_qty)}</td><td>${esc(row.unvalued_qty||0)}</td><td>${esc(row.incoming_qty)}</td><td>${esc(row.open_po_qty)}</td>
+      <td class="num">${money(row.inventory_value)}</td></tr>`);
+    const body=`<div class="workspace-commandbar"><input id="analysisSearch" value="${esc(search)}" placeholder="Search exact material code, item, or class">
+      <button class="command primary" id="runAnalysisSearch">Apply</button><span class="command-spacer"></span><span class="workspace-mode">${filtered.length} TAGGED ITEMS</span></div>
+      <div class="workspace-kpis">${kpi('Tagged Items',analysis.totals.items)}${kpi('Serials On Hand',analysis.totals.onHand)}${kpi('Missing Cost',analysis.totals.unvalued)}${kpi('Inventory Value',money(analysis.totals.inventoryValue))}</div>
+      <section class="workspace-card"><header><h2>Inventory Analysis by Material Code</h2><span>Click an item to open its exact serial register</span></header>
+        ${operationalTable(['Material Code','Tagged Item','Class','Locations','On Hand','Available','Deployed','Quarantine','Missing Cost','ATLAS Incoming','Open PO','Inventory Value'],rows,{key:'inventory-analysis'})}</section>`;
     content.innerHTML=workbenchShell(body,'records');bindOperationalShell();
     $('#runAnalysisSearch').onclick=()=>renderStockAnalysis($('#analysisSearch').value);
     $('#analysisSearch').onkeydown=event=>{if(event.key==='Enter')$('#runAnalysisSearch').click();};
+    $$('[data-analysis-item]').forEach(row=>row.onclick=()=>renderWarehouseVisibility('',row.dataset.analysisItem,'',row.dataset.analysisClass));
   }catch(error){showWorkspaceError(error);}
 }
 
@@ -2208,12 +2387,14 @@ async function renderModuleReports(){
   }catch(error){showWorkspaceError(error);}
 }
 
-function renderModuleSetup(){
+async function renderModuleSetup(){
   const definition=state.definition;
   const actionRows=definition.workflow.actions.map(action=>`<tr><td><b>${esc(action.label)}</b></td><td>${action.from.map(status=>statusBadge(status)).join(' ')}</td>
     <td>${statusBadge(action.to)}</td><td>${esc(action.permission)}</td></tr>`);
   const fieldRows=definition.fields.map(field=>`<tr><td><b>${esc(field.label)}</b></td><td>${esc(field.type)}</td>
     <td>${field.required?'Required':'Optional'}</td><td>${field.list?'Register + form':'Form'}</td></tr>`);
+  const submoduleRows=(definition.submodules||[]).map(sub=>`<tr><td><b>${esc(sub.submodule_name)}</b></td><td>${esc(sub.record_type||'—')}</td>
+    <td>${esc(sub.connected_module_code||'Within module')}</td><td>${esc(sub.posting_event_type||'No direct posting')}</td></tr>`);
   const connections=definition.connections.map(code=>{
     const module=moduleByCode(code);
     return `<button class="connected-module-link" data-connected-module="${esc(code)}" ${module&&canWorkspace(code)?'':'disabled'}>
@@ -2227,11 +2408,38 @@ function renderModuleSetup(){
     <section class="workspace-card wide-card"><header><h2>Approval-Controlled Workflow</h2><span>Requester and approver separation applies</span></header>
       ${operationalTable(['Action','Allowed From','Result','Required Authority'],actionRows)}
       <div class="control-note"><b>Protected history</b><p>Posted, active, completed, closed, terminated, expired, or reversed records cannot be edited. Void and reversal require a reason and approval by another authorized user.</p></div></section>
+    ${submoduleRows.length?`<section class="workspace-card wide-card"><header><h2>Functional Submodules</h2><span>${submoduleRows.length} connected process areas</span></header>
+      ${operationalTable(['Submodule','Primary Record','Connected Module','Finance Event'],submoduleRows)}</section>`:''}
+    <section class="workspace-card wide-card"><header><h2>Amount-Based Approval Matrix</h2><span>Role, department, document type and threshold</span></header>
+      <div id="approvalMatrixHost"><div class="workspace-loading">Loading approval authority…</div></div></section>
     <section class="workspace-card wide-card"><header><h2>Module Data Dictionary</h2><span>${definition.fields.length} operational fields</span></header>
       ${operationalTable(['Field','Data Type','Validation','Used In'],fieldRows)}</section>
   </div>`;
   content.innerHTML=workbenchShell(body,'setup');bindOperationalShell();
   $$('[data-connected-module]').forEach(button=>button.onclick=()=>openWorkspace(button.dataset.connectedModule));
+  const host=$('#approvalMatrixHost');
+  if(state.session.user.role_code!=='ADMIN'){
+    host.innerHTML='<div class="control-note"><b>Configured by the system administrator</b><p>The applicable approval steps are displayed on each transaction and enforced by amount, document type, department, role, and requester/approver segregation.</p></div>';
+    return;
+  }
+  try{
+    const data=await api('/enterprise/approval-matrices');
+    const rows=data.rows.filter(row=>row.module_code==='*'||row.module_code===state.module.code);
+    const matrixRows=rows.map(row=>`<tr><td><b>${esc(row.matrix_code)}</b></td><td>${esc(row.module_code)}</td><td>${esc(row.document_type)}</td><td>${esc(row.department)}</td>
+      <td class="num">${money(row.amount_from)}</td><td class="num">${row.amount_to==null?'No limit':money(row.amount_to)}</td><td>${esc(row.step_no)}</td><td>${esc(row.approver_email||row.approver_role_code)}</td><td>${statusBadge(row.active?'ACTIVE':'INACTIVE')}</td></tr>`).join('');
+    host.innerHTML=`${operationalTable(['Matrix','Module','Document Type','Department','From','To','Step','Approver','Status'],matrixRows)}
+      <form id="approvalMatrixForm" class="operational-form grid"><label><span>Document Type</span><select name="documentType"><option value="*">All Types</option>${definition.recordTypes.map(type=>`<option>${esc(type)}</option>`).join('')}</select></label>
+      <label><span>Department</span><input name="department" value="*"></label><label><span>Amount From</span><input name="amountFrom" type="number" step="0.01" value="0"></label>
+      <label><span>Amount To</span><input name="amountTo" type="number" step="0.01" placeholder="No limit"></label><label><span>Step</span><input name="stepNo" type="number" min="1" value="1"></label>
+      <label><span>Approver Role</span><select name="approverRoleCode"><option>SCM_MANAGER</option><option>FINANCE</option><option>ADMIN</option></select></label>
+      <button class="command primary">Add Module Approval Rule</button></form>`;
+    $('#approvalMatrixForm').onsubmit=async event=>{
+      event.preventDefault();const form=formDataObject(event.currentTarget);
+      form.moduleCode=state.module.code;form.matrixCode=`APR-${state.module.code.toUpperCase()}-${Date.now()}`;
+      try{await api('/enterprise/approval-matrices',{method:'POST',body:JSON.stringify(form)});toast('Approval rule saved');await renderModuleSetup();}
+      catch(error){toast(error.message,'error');}
+    };
+  }catch(error){host.innerHTML=`<div class="control-note error"><b>Approval matrix unavailable</b><p>${esc(error.message)}</p></div>`;}
 }
 
 async function renderSalesOrderWorkspace(section){
@@ -2280,7 +2488,7 @@ function bindSalesOrderRows(){
   $$('[data-approve-sales]').forEach(button=>button.onclick=async event=>{
     event.stopPropagation();
     try{const result=await api(`/sales/${button.dataset.approveSales}/approve`,{method:'POST',body:'{}'});
-      toast(`Approved; ${result.deliveryNo} created`);await renderSalesOrderWorkspace(state.section);}
+      toast(result.approved?`Approved; ${result.deliveryNo} created`:`Approval step recorded; ${result.approvalDecision?.state?.pending||0} step(s) remain`);await renderSalesOrderWorkspace(state.section);}
     catch(error){toast(error.message,'error');}
   });
   $$('[data-sales-order]').forEach(row=>row.onclick=async()=>{
@@ -2380,7 +2588,7 @@ async function renderSourcingWorkspace(section){
 function bindProcurementRows(){
   $$('[data-approve-po]').forEach(button=>button.onclick=async event=>{
     event.stopPropagation();
-    try{await api(`/procurement/purchase-orders/${button.dataset.approvePo}/approve`,{method:'POST',body:'{}'});toast('Purchase order approved');await renderSourcingWorkspace(state.section);}
+    try{const result=await api(`/procurement/purchase-orders/${button.dataset.approvePo}/approve`,{method:'POST',body:'{}'});toast(result.approved?'Purchase order approved':`Approval step recorded; ${result.approvalDecision?.state?.pending||0} step(s) remain`);await renderSourcingWorkspace(state.section);}
     catch(error){toast(error.message,'error');}
   });
   $$('[data-post-landed]').forEach(button=>button.onclick=async()=>{
@@ -2486,11 +2694,11 @@ async function renderRecords(defaultStatus=''){
   const definition=state.definition;
   const body=`<div class="workspace-commandbar">
     <button class="command primary" id="newRecord" ${can(state.module.permission,'CREATE')?'':'disabled'}>New ${esc(definition.noun)}</button>
-    <select id="recordType"><option value="">All types</option>${definition.recordTypes.map(type=>`<option>${esc(type)}</option>`).join('')}</select>
+    <select id="recordType"><option value="">All types</option>${definition.recordTypes.map(type=>`<option ${state.submoduleType===type?'selected':''}>${esc(type)}</option>`).join('')}</select>
     <input id="recordSearch" placeholder="Search ${esc(definition.plural.toLowerCase())}">
     <select id="recordStatus"><option value="">All Statuses</option>${definition.workflow.stages.map(status=>`<option value="${status}" ${defaultStatus===status?'selected':''}>${esc(definition.statusLabels[status])}</option>`).join('')}</select>
     <button class="command" id="runSearch">Search</button>
-  </div><div class="ramco-layout records-layout"><section class="workspace-card"><header><h2>${defaultStatus?'Approval Worklist':esc(definition.plural)+' Register'}</h2><span id="recordCount"></span></header><div id="recordsHost"><div class="workspace-loading">Loading records…</div></div></section><aside class="ramco-rail"><section><header>Record Types</header><div class="ramco-action-links">${definition.recordTypes.map(type=>`<button>${esc(type)}</button>`).join('')}</div></section><section><header>Actions</header><div class="ramco-action-links"><button id="railNew" ${can(state.module.permission,'CREATE')?'':'disabled'}>Create ${esc(definition.noun)}</button><button data-go="reports">Reports</button><button data-go="setup">Setup</button></div></section></aside></div>`;
+  </div><div class="ramco-layout records-layout"><section class="workspace-card"><header><h2>${defaultStatus?'Approval Worklist':esc(state.submoduleLabel||definition.plural)+' Register'}</h2><span id="recordCount"></span></header><div id="recordsHost"><div class="workspace-loading">Loading records…</div></div></section><aside class="ramco-rail"><section><header>Record Types</header><div class="ramco-action-links">${definition.recordTypes.map(type=>`<button>${esc(type)}</button>`).join('')}</div></section><section><header>Actions</header><div class="ramco-action-links"><button id="railNew" ${can(state.module.permission,'CREATE')?'':'disabled'}>Create ${esc(definition.noun)}</button><button data-go="reports">Reports</button><button data-go="setup">Setup</button></div></section></aside></div>`;
   content.innerHTML=workbenchShell(body,defaultStatus?'approvals':'records');
   bindWorkbench();
   $('#newRecord').onclick=()=>renderRecordForm();
@@ -2538,6 +2746,49 @@ function moduleField(field,value){
   const constraints=['min','max','step'].filter(key=>field[key]!==undefined).map(key=>`${key}="${esc(field[key])}"`).join(' ');
   return recordField(field.label,field.key,field.type,value??field.default??'',`${required} ${constraints}`);
 }
+
+function specialistLineField(field){
+  const required=field.required?'required':'';
+  if(field.type==='select')return `<label><span>${esc(field.label)}</span><select name="${esc(field.key)}" ${required}><option value="">Select…</option>${(field.options||[]).map(option=>`<option value="${esc(option)}">${esc(option.replaceAll('_',' '))}</option>`).join('')}</select></label>`;
+  if(field.type==='checkbox')return `<label class="record-check"><input name="${esc(field.key)}" type="checkbox"><span>${esc(field.label)}</span></label>`;
+  return `<label><span>${esc(field.label)}</span><input name="${esc(field.key)}" type="${esc(field.type||'text')}" ${field.type==='number'?'step="0.01"':''} ${required}></label>`;
+}
+function approvalWorkflowSection(approvals,editing){
+  if(!editing||!approvals?.required)return '';
+  const rows=(approvals.steps||[]).map(step=>`<tr><td>${esc(step.cycle_no)}</td><td>${esc(step.step_no)}</td>
+    <td><b>${esc(step.required_role_code)}</b></td><td>${esc(step.assigned_user_name||step.assigned_user_email||'Role queue')}</td>
+    <td>${statusBadge(step.status)}</td><td>${esc(step.decided_by||'—')}</td><td>${date(step.decided_at||step.requested_at)}</td></tr>`).join('');
+  return `<section class="record-sublist connected-record-section approval-matrix-section">
+    <header><div><h3>Approval Matrix</h3><p>Amount-based authority and requester/approver segregation are enforced.</p></div>
+      <span>${approvals.pending} pending · ${approvals.approved} approved</span></header>
+    ${operationalTable(['Cycle','Step','Required Role','Assigned User','Status','Decision By','Activity Date'],rows)}
+  </section>`;
+}
+function specialistLineSection(specialist,editing,immutable,allowed){
+  if(!editing||!specialist?.config)return '';
+  const config=specialist.config;
+  if(String(config.engine_code||'').startsWith('CORE_'))return `<section class="record-sublist connected-record-section specialist-engine-status"><header><div><h3>Connected Transaction Engine</h3><p>${esc(config.notes||config.engine_code)}</p></div><span>${esc(config.rollout_level)}</span></header><div class="control-note"><b>${esc(config.engine_code)}</b><p>This module uses the dedicated core transaction engine and the connected Finance, inventory, document-flow, approval, and audit controls.</p></div></section>`;
+  const lines=specialist.lines||[];
+  const rows=lines.map(line=>`<tr><td><b>${esc(line.lineNo||'—')}</b></td><td>${esc(line.lineType||'—')}</td><td>${esc(line.referenceCode||'—')}</td>
+    <td>${esc(line.description||'—')}</td><td class="num">${esc(line.quantity??line.hours??'—')}</td><td class="num">${money(line.rate||0)}</td>
+    <td class="num">${money(line.amount||line.billableAmount||0)}</td><td>${statusBadge(line.status||line.resultCode||'OPEN')}</td>
+    <td>${allowed&&!immutable?`<button type="button" class="table-action danger" data-delete-specialist-line="${line.id}">Remove</button>`:''}</td></tr>`).join('');
+  const links=(specialist.links||[]).map(link=>{
+    const outbound=link.source_module_code===state.module.code;
+    const code=outbound?link.target_module_code:link.source_module_code;
+    const id=outbound?link.target_record_id:link.source_record_id;
+    const no=outbound?link.target_record_no:link.source_record_no;
+    return `<button type="button" class="connected-module-link" data-specialist-link-module="${esc(code)}" data-specialist-link-id="${id}"><b>${esc(no)}</b><span>${esc(code)} · ${esc(link.link_type)}</span></button>`;
+  }).join('');
+  const form=specialist.lineSchema?.length&&allowed&&!immutable?`<form id="specialistLineForm" class="operational-form grid specialist-line-form">
+      ${specialist.lineSchema.map(specialistLineField).join('')}<button class="command primary">Add Operational Line</button></form>`:'';
+  return `<section class="record-sublist connected-record-section specialist-engine-section">
+    <header><div><h3>${esc(config.domain_code)} Specialist Engine</h3><p>${esc(config.notes||config.engine_code)}. Detail lines are validated before approval, completion, or posting.</p></div>
+      <span>${lines.length} lines · ${esc(config.rollout_level)}</span></header>
+    ${form}${operationalTable(['Line','Type','Reference','Description','Qty / Hours','Rate','Amount','Status','Action'],rows)}
+    <div class="specialist-flow"><h4>Connected Document Flow</h4><div class="connected-module-grid">${links||operationalEmpty('Links appear automatically when related project, contract, customer, serial, employee, work-order, site, or invoice references are found.')}</div></div>
+  </section>`;
+}
 function renderRecordForm(record=null,documents=[],connected={}){
   const editing=!!record;
   const immutable=editing&&['POSTED','CLOSED','COMPLETED','REVERSED','VOIDED','TERMINATED','EXPIRED'].includes(record.status);
@@ -2547,6 +2798,7 @@ function renderRecordForm(record=null,documents=[],connected={}){
   const documentRows=documents.map(document=>`<tr><td><b>${esc(document.document_no)}</b></td><td>${esc(document.document_type)}</td>
     <td><a href="/api/workspace/documents/${document.id}/file" target="_blank" rel="noopener">${esc(document.file_name)}</a></td>
     <td>${esc(Math.ceil(Number(document.file_size||0)/1024))} KB</td><td>${esc(document.uploaded_by||'—')}</td><td>${date(document.uploaded_at)}</td></tr>`);
+  const specialist=connected.specialist||null;
   const leaseUnitRows=(connected.units||[]).map(unit=>`<tr><td><b>${esc(unit.serial_no)}</b></td><td>${esc(unit.item_code)}</td>
     <td>${esc(unit.item_name)}</td><td>${esc(unit.category)}</td><td>${esc(unit.current_location_code||'—')}</td>
     <td>${statusBadge(unit.status)}</td></tr>`);
@@ -2593,6 +2845,8 @@ function renderRecordForm(record=null,documents=[],connected={}){
       <button type="button" class="command primary" id="uploadDocument">Upload Document</button></div>
       ${operationalTable(['Document','Type','File','Size','Uploaded By','Uploaded At'],documentRows)}`:operationalEmpty(`Save the ${definition.noun.toLowerCase()} before uploading supporting documents.`)}</section>
     ${leaseUnitSection}
+    ${approvalWorkflowSection(specialist?.approvals,editing)}
+    ${specialistLineSection(specialist,editing,immutable,allowed)}
   </form>`;
   content.innerHTML=workbenchShell(body,'records');
   bindWorkbench();
@@ -2609,8 +2863,12 @@ function renderRecordForm(record=null,documents=[],connected={}){
   };
   $('#saveRecord').onclick=save;
   $$('.workflow-action').forEach(button=>button.onclick=async()=>{
-    try{await api(`/workspace/modules/${state.module.code}/records/${record.id}/action`,{method:'POST',body:JSON.stringify({action:button.dataset.action})});toast(`${button.textContent.trim()} completed`);await openRecord(record.id);}
-    catch(error){toast(error.message,'error');}
+    try{
+      const result=await api(`/workspace/modules/${state.module.code}/records/${record.id}/action`,{method:'POST',body:JSON.stringify({action:button.dataset.action})});
+      if(result.approvalDecision&&!result.approvalDecision.completed)toast(`Approval step recorded; ${result.approvalDecision.state.pending} step(s) remain`);
+      else toast(`${button.textContent.trim()} completed`);
+      await openRecord(record.id);
+    }catch(error){toast(error.message,'error');}
   });
   if($('#requestDelete'))$('#requestDelete').onclick=()=>openRecordChangeRequest(record,'DELETE');
   if($('#requestReverse'))$('#requestReverse').onclick=()=>openRecordChangeRequest(record,'REVERSE');
@@ -2638,6 +2896,21 @@ function renderRecordForm(record=null,documents=[],connected={}){
       await openRecord(record.id);
     }catch(error){toast(error.message,'error');}
   };
+  if($('#specialistLineForm'))$('#specialistLineForm').onsubmit=async event=>{
+    event.preventDefault();
+    const body=formDataObject(event.currentTarget);
+    (specialist?.lineSchema||[]).filter(field=>field.type==='checkbox').forEach(field=>{body[field.key]=event.currentTarget.elements[field.key].checked;});
+    try{await api(`/enterprise/modules/${state.module.code}/records/${record.id}/lines`,{method:'POST',body:JSON.stringify(body)});toast('Operational detail line added');await openRecord(record.id);}
+    catch(error){toast(error.message,'error');}
+  };
+  $$('[data-delete-specialist-line]').forEach(button=>button.onclick=async()=>{
+    try{await api(`/enterprise/modules/${state.module.code}/records/${record.id}/lines/${button.dataset.deleteSpecialistLine}`,{method:'DELETE'});toast('Operational detail line removed');await openRecord(record.id);}
+    catch(error){toast(error.message,'error');}
+  });
+  $$('[data-specialist-link-module]').forEach(button=>button.onclick=async()=>{
+    const moduleCode=button.dataset.specialistLinkModule;const targetId=button.dataset.specialistLinkId;
+    await openWorkspace(moduleCode);await openRecord(targetId);
+  });
 }
 function openRecordChangeRequest(record,actionType){
   modal(`${actionType==='REVERSE'?'Reverse':'Void'} ${record.record_no}`,`<form id="changeRequestForm" class="operational-form grid">

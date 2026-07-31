@@ -1,25 +1,11 @@
-# E88 FinSys v8.1 Data Load Report
+# E88 Enterprise System v13.0 Rollout Data Load Report
 
-Generated: 2026-07-30T00:59:12
+Generated: 2026-07-31T10:54:22
 
 ## Actual source workbooks
 
 | Source | Archived operational rows |
 |---|---:|
-| 2026 SCM Warehouse Documents.xlsx | 286 |
-| ATLAS - Asset Manifest (1).xlsx | 2,033 |
-| Detailed_Receipts_2026.xlsx | 931 |
-| E88_AM_FINAL_v5A.xlsx | 711 |
-| E88_ApprovedBudget2026 (4)(1).xlsx | 1,357 |
-| E88_ProcurementMonitoring_2026.xlsx | 6,003 |
-| E88_SalesMonitoring_2026.xlsx | 960 |
-| Pre-release Unit Checklist.xlsx | 292 |
-| SATURN _ DELIVERY MONITORING _ LAST MILE (3).xlsx | 1,161 |
-| SCM Live Dashboard (3).xlsx | 262 |
-| SCM Requisition Slip 1226.xlsx | 208 |
-| STAKU - SALES_LEASE B2B (4).xlsx | 265 |
-| STAR _ E88 SCM Inventory2026 (4).xlsx | 9,600 |
-| STELLAR _ Shipment.xlsx | 49 |
 
 ## Canonicalization policy
 

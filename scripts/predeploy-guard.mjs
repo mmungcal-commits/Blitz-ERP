@@ -16,7 +16,7 @@ if (!databaseId || /REPLACE|YOUR_|PLACEHOLDER/i.test(databaseId)) {
 }
 if (databaseId === knownPreviousLive && !confirmed) {
   console.error('Deployment stopped: wrangler.toml still points to the previous live D1 database.');
-  console.error('Create/bootstrap the v7 database first, or explicitly set E88_DEPLOY_CONFIRM=CONNECTED_SCHEMA_INSTALLED only after the connected migrations are verified.');
+  console.error('Create/bootstrap the v13 rollout database first, or explicitly set E88_DEPLOY_CONFIRM=CONNECTED_SCHEMA_INSTALLED only after the connected migrations are verified.');
   process.exit(2);
 }
 console.log(`Pre-deploy guard passed for D1 ${databaseId}.`);

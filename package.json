@@ -1,9 +1,9 @@
 {
   "name": "e88-finsys",
-  "version": "11.0.0",
+  "version": "13.1.0",
   "private": true,
   "type": "module",
-  "description": "E88 full connected enterprise ERP with distinct operational modules, controlled double-entry Finance, serialized inventory, sales, procurement, lease management, and approval-controlled reversals.",
+  "description": "E88 rollout-ready connected enterprise ERP v13.1 with exact item-class inventory and GitHub D1-only deployment. R2 document storage is intentionally disabled for this rollout.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "npm run predeploy && wrangler deploy",

@@ -1,16 +1,57 @@
-# E88 FinSys v8.1 Self-Test Report
+# E88 Enterprise System v13.0 Rollout Self-Test Report
 
-Generated: 2026-07-30T00:59:12
-**Result: 32/32 tests passed.**
+Generated: 2026-07-31T10:54:22
+**Result: 73/73 tests passed.**
 
-- [x] **All opening SQL chunks execute** — 13 chunks
+- [x] **All opening SQL chunks execute** — 9 chunks
 - [x] **No foreign-key violations** — 0 violations
-- [x] **Actual source workbooks embedded** — 14
-- [x] **Source rows archived** — 24118
+- [x] **Actual source workbooks embedded** — 0
+- [x] **Source rows archived** — 0
 - [x] **Canonical assets loaded** — 8650
 - [x] **Asset quality classification covers all assets** — 8650
 - [x] **Dashboard canonical view excludes non-physical and duplicate rows** — 2885
 - [x] **ATLAS receiving match control installed** — 
+- [x] **PO-controlled ATLAS link installed** — 
+- [x] **Cycle count control installed** — 
+- [x] **Inventory planning control installed** — 
+- [x] **Connected requisition custody control installed** — 
+- [x] **Lease contract and actual-unit control installed** — 
+- [x] **Delete and reversal approval control installed** — 
+- [x] **Existing requisitions have custody context** — 207
+- [x] **Serial custody history view installed** — 
+- [x] **Connected double-entry journal installed** — 
+- [x] **Inventory finance event bridge installed** — 
+- [x] **AR/AP subledgers installed** — 
+- [x] **Treasury reconciliation installed** — 
+- [x] **Fixed asset and depreciation installed** — 
+- [x] **Four legal entities configured** — 4
+- [x] **Finance chart of accounts configured** — 63
+- [x] **Finance cutover inventory agrees with serial subledger** — subledger=66355519.99, gl=66355519.99
+- [x] **Every inventory class separately reconciles to its GL account** — MC=0.0, BAT=0.0, BSS=0.0, SP=0.0, CHG=0.0, OTH=0.0
+- [x] **Motorcycles, batteries, lockers/BSS, spare parts and chargers remain distinct** — MC,BAT,BSS,SP,CHG,OTH
+- [x] **Lease motorcycle and battery fixed assets use separate GL accounts** — 
+- [x] **Transaction-purpose accounting rules installed** — 12
+- [x] **Connected functional submodules installed** — 70
+- [x] **Controlled provisional serial valuation loaded** — 3084
+- [x] **Missing historical costs remain visible and blocked** — 5566
+- [x] **Historical lease units capitalized to fixed assets** — 604
+- [x] **Operational inventory subledger agrees with GL** — subledger=66355519.99, gl=66355519.99
+- [x] **Fixed asset subledger agrees with GL** — subledger=22273649.02, gl=22273649.02
+- [x] **No finance posting errors at cutover** — 0
+- [x] **Return-obligation control installed** — 
+- [x] **Sales-return source and finance bridge installed** — 
+- [x] **Landed-cost VAT and accrual controls installed** — 
+- [x] **All rollout specialist engine tables installed** — 26/26
+- [x] **All 83 enterprise modules mapped to an engine** — 83
+- [x] **Rollout readiness view covers every enterprise module** — 83
+- [x] **Core transaction modules retain specialist core engines** — 16
+- [x] **Wider enterprise modules use specialist engines** — 56
+- [x] **Platform add-ons have controlled integration engines** — 11
+- [x] **Default amount-based approval matrix installed** — 3
+- [x] **Default approval roles resolve to active roles** — 0
+- [x] **Pending approval queue view installed** — 
+- [x] **Specialist chart accounts installed** — 11
+- [x] **Enterprise document flow view installed** — 
 - [x] **No duplicate canonical asset serials** — 
 - [x] **Duplicate serial evidence preserved** — 6697
 - [x] **Shipments created from STELLAR/ATLAS** — 28
@@ -67,18 +108,39 @@ Generated: 2026-07-30T00:59:12
 | `erp_payment_register` | 1,261 |
 | `erp_budget_plan` | 133 |
 | `erp_planning_drivers` | 4,096 |
-| `erp_import_rows` | 24,118 |
+| `erp_import_rows` | 0 |
+| `erp_transaction_purpose_rules` | 12 |
+| `erp_return_obligations` | 0 |
+| `erp_inventory_valuation_exceptions` | 5,566 |
+| `erp_module_submodules` | 70 |
+| `erp_fixed_asset_books` | 604 |
+| `erp_specialist_module_config` | 83 |
+| `erp_approval_matrices` | 3 |
+| `erp_workflow_approvals` | 0 |
+| `erp_core_workflow_approvals` | 0 |
+| `erp_enterprise_record_links` | 0 |
+| `erp_crm_pipeline_records` | 0 |
+| `erp_manufacturing_documents` | 0 |
+| `erp_quality_documents` | 0 |
+| `erp_project_documents` | 0 |
+| `erp_eam_documents` | 0 |
+| `erp_facility_documents` | 0 |
+| `erp_logistics_documents` | 0 |
+| `erp_hcm_documents` | 0 |
+| `erp_srp_documents` | 0 |
+| `erp_finance_specialist_documents` | 0 |
+| `erp_platform_integrations` | 0 |
 
 ## Inventory by category
 
 | Category | Assets |
 |---|---:|
 | MC | 3,177 |
-| BAT | 3,083 |
-| OTH | 1,469 |
-| SP | 345 |
-| BSS | 336 |
-| CHG | 240 |
+| BAT | 2,641 |
+| OTH | 1,169 |
+| CHG | 682 |
+| SP | 644 |
+| BSS | 337 |
 
 ## Inventory by current status
 

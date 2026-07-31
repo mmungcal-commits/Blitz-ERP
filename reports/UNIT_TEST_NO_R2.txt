@@ -1,0 +1,158 @@
+TAP version 13
+# Subtest: password credentials are salted and verifiable without storing plaintext
+ok 1 - password credentials are salted and verifiable without storing plaintext
+  ---
+  duration_ms: 98.246847
+  type: 'test'
+  ...
+# Subtest: password policy requires length, letter cases, and a number
+ok 2 - password policy requires length, letter cases, and a number
+  ---
+  duration_ms: 0.470343
+  type: 'test'
+  ...
+# Subtest: session and activation tokens are random and stored through one-way hashes
+ok 3 - session and activation tokens are random and stored through one-way hashes
+  ---
+  duration_ms: 3.368117
+  type: 'test'
+  ...
+# Subtest: categoryCode classifies E88 operational inventory
+ok 4 - categoryCode classifies E88 operational inventory
+  ---
+  duration_ms: 0.75047
+  type: 'test'
+  ...
+# Subtest: normalizeSerial makes serial comparison deterministic
+ok 5 - normalizeSerial makes serial comparison deterministic
+  ---
+  duration_ms: 0.197539
+  type: 'test'
+  ...
+# Subtest: normalizers remove visual and whitespace differences
+ok 6 - normalizers remove visual and whitespace differences
+  ---
+  duration_ms: 0.180226
+  type: 'test'
+  ...
+# (node:28420) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: full finance lifecycle posts and reverses connected records
+ok 7 - full finance lifecycle posts and reverses connected records
+  ---
+  duration_ms: 17790.847286
+  type: 'test'
+  ...
+# Subtest: every enterprise module has a specific functional definition
+ok 8 - every enterprise module has a specific functional definition
+  ---
+  duration_ms: 2.217382
+  type: 'test'
+  ...
+# Subtest: posted ledger reversal is defined but must be approval-gated by the route
+ok 9 - posted ledger reversal is defined but must be approval-gated by the route
+  ---
+  duration_ms: 0.159552
+  type: 'test'
+  ...
+# Subtest: lease contracts collect commercial terms and connect actual units
+ok 10 - lease contracts collect commercial terms and connect actual units
+  ---
+  duration_ms: 0.271271
+  type: 'test'
+  ...
+# Subtest: expected serial lifecycle closes matched and substituted records
+ok 11 - expected serial lifecycle closes matched and substituted records
+  ---
+  duration_ms: 0.522161
+  type: 'test'
+  ...
+# Subtest: only exact receiving matches are released as available
+ok 12 - only exact receiving matches are released as available
+  ---
+  duration_ms: 0.587075
+  type: 'test'
+  ...
+# (node:28473) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: all 83 enterprise modules are mapped to rollout engines
+ok 13 - all 83 enterprise modules are mapped to rollout engines
+  ---
+  duration_ms: 81.311858
+  type: 'test'
+  ...
+# Subtest: specialist headers and detail engines execute for every operational domain
+ok 14 - specialist headers and detail engines execute for every operational domain
+  ---
+  duration_ms: 99.26728
+  type: 'test'
+  ...
+# Subtest: amount-based approval matrix enforces role authority and segregation of duties
+ok 15 - amount-based approval matrix enforces role authority and segregation of duties
+  ---
+  duration_ms: 124.695892
+  type: 'test'
+  ...
+# Subtest: specialist domains expose line schemas and new finance events remain balanced
+ok 16 - specialist domains expose line schemas and new finance events remain balanced
+  ---
+  duration_ms: 1.524065
+  type: 'test'
+  ...
+# Subtest: operational purpose aliases normalize consistently
+ok 17 - operational purpose aliases normalize consistently
+  ---
+  duration_ms: 1.138296
+  type: 'test'
+  ...
+# Subtest: sale issues inventory and requires valuation
+ok 18 - sale issues inventory and requires valuation
+  ---
+  duration_ms: 0.444189
+  type: 'test'
+  ...
+# Subtest: lease deployment capitalizes durable units and returns them later
+ok 19 - lease deployment capitalizes durable units and returns them later
+  ---
+  duration_ms: 0.240582
+  type: 'test'
+  ...
+# Subtest: demo and inventory transfer preserve ownership without GL effect
+ok 20 - demo and inventory transfer preserve ownership without GL effect
+  ---
+  duration_ms: 0.164421
+  type: 'test'
+  ...
+# Subtest: consumables and warranty issues use expense treatment
+ok 21 - consumables and warranty issues use expense treatment
+  ---
+  duration_ms: 0.170448
+  type: 'test'
+  ...
+# Subtest: category accounts distinguish batteries/BSS and fixed assets
+ok 22 - category accounts distinguish batteries/BSS and fixed assets
+  ---
+  duration_ms: 0.214478
+  type: 'test'
+  ...
+# Subtest: finance event lines are balanced for core operational postings
+ok 23 - finance event lines are balanced for core operational postings
+  ---
+  duration_ms: 2.43
+  type: 'test'
+  ...
+# Subtest: landed cost allocation accrues capitalizable cost without capitalizing VAT
+ok 24 - landed cost allocation accrues capitalizable cost without capitalizing VAT
+  ---
+  duration_ms: 0.2225
+  type: 'test'
+  ...
+1..24
+# tests 24
+# suites 0
+# pass 24
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 17873.760619

@@ -1,0 +1,68 @@
+{
+  "build": "13.0.0-rollout-specialist",
+  "generated_at": "2026-07-31T16:56:44+08:00",
+  "status": "PASSED_WITH_DEPLOYMENT_BOUNDARIES",
+  "validation": {
+    "javascript_syntax": {
+      "status": "PASS",
+      "scope": "src, public, scripts, test"
+    },
+    "structural_checks": {
+      "passed": 357,
+      "total": 357,
+      "status": "PASS"
+    },
+    "unit_and_database_lifecycle_tests": {
+      "passed": 24,
+      "total": 24,
+      "status": "PASS"
+    },
+    "workbook_data_security_reconciliation_tests": {
+      "passed": 70,
+      "total": 70,
+      "status": "PASS"
+    },
+    "predeploy_configuration_guard": {
+      "status": "PASS"
+    },
+    "module_engine_mapping": {
+      "mapped": 83,
+      "total": 83,
+      "core": 16,
+      "specialist": 56,
+      "platform": 11,
+      "status": "PASS"
+    },
+    "uploaded_workbook_sha256_matches": {
+      "matched": 9,
+      "total": 9,
+      "status": "PASS"
+    },
+    "inventory_gl_difference": 0.0,
+    "fixed_asset_gl_difference": 0.0,
+    "cutover_finance_posting_errors": 0
+  },
+  "data_counts": {
+    "serialized_assets": 8650,
+    "inventory_movements": 5807,
+    "valued_serialized_assets": 3084,
+    "fixed_assets": 604,
+    "historical_valuation_exceptions": 5566
+  },
+  "security": {
+    "production_secret_findings": 0,
+    "test_fixture_secret_like_literals": 6,
+    "status": "PASS",
+    "note": "The six pattern matches are isolated test passwords in test files, not production credentials."
+  },
+  "environment_boundary": {
+    "npm_dependency_install": "NOT_COMPLETED_IN_THIS_CONTAINER",
+    "reason": "The execution environment internal package mirror did not provide youch-core@0.3.3, a Wrangler transitive dependency.",
+    "required_action": "Run npm install and npm run build in the deployment environment with normal npm registry access."
+  },
+  "production_boundary": [
+    "No authenticated Cloudflare deployment was performed.",
+    "No live D1/R2/Cloudflare Access smoke test was performed.",
+    "Master data, opening balances, approval limits, payroll/statutory settings, external providers, UAT, training, and business sign-off remain production rollout activities."
+  ]
+}

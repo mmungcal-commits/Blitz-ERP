@@ -11,7 +11,10 @@ POST_LOAD_FILES=[
     'migrations/0012_ramco_enterprise.sql','migrations/0013_atlas_receiving_workbench.sql',
     'migrations/0014_application_auth.sql','migrations/0015_user_access_station_connections.sql',
     'migrations/0016_clean_module_workspace.sql','migrations/0017_inbound_logistics_control.sql',
-    'migrations/0018_sales_distribution_custody.sql','migrations/0019_connected_finance_engine.sql'
+    'migrations/0018_sales_distribution_custody.sql','migrations/0019_connected_finance_engine.sql',
+    'migrations/0020_operational_submodules_and_posting_rules.sql',
+    'migrations/0021_rollout_specialist_engines.sql',
+  'migrations/0022_inventory_class_r2_rollout.sql'
 ]
 
 def scalar(db,sql,args=()): return db.execute(sql,args).fetchone()[0]
@@ -57,6 +60,51 @@ def main():
     test('Finance cutover inventory agrees with serial subledger',
          abs(float(inventory_recon['inventory_subledger'] or 0)-float(inventory_recon['inventory_general_ledger'] or 0))<0.01,
          f"subledger={inventory_recon['inventory_subledger']}, gl={inventory_recon['inventory_general_ledger']}")
+    class_recon=db.execute('select class_code,difference from vw_erp_inventory_class_reconciliation').fetchall()
+    test('Every inventory class separately reconciles to its GL account',
+         all(abs(float(row['difference'] or 0))<0.01 for row in class_recon),
+         ', '.join(f"{row['class_code']}={row['difference']}" for row in class_recon))
+    test('Motorcycles, batteries, lockers/BSS, spare parts and chargers remain distinct',
+         {row['class_code'] for row in class_recon}>={'MC','BAT','BSS','SP','CHG'},
+         ','.join(row['class_code'] for row in class_recon))
+    test('Lease motorcycle and battery fixed assets use separate GL accounts',
+         abs(float(scalar(db,"select coalesce(sum(debit-credit),0) from vw_erp_general_ledger where account_code='1310'"))-
+             float(scalar(db,"select coalesce(sum(f.net_book_value),0) from erp_fixed_asset_books f join erp_assets a on a.id=f.asset_id where a.category='MC' and f.status in ('ACTIVE','PENDING_APPROVAL')")))<0.01
+         and abs(float(scalar(db,"select coalesce(sum(debit-credit),0) from vw_erp_general_ledger where account_code='1330'"))-
+             float(scalar(db,"select coalesce(sum(f.net_book_value),0) from erp_fixed_asset_books f join erp_assets a on a.id=f.asset_id where a.category='BAT' and f.status in ('ACTIVE','PENDING_APPROVAL')")))<0.01)
+
+    operational_recon=db.execute('select * from vw_erp_operational_finance_reconciliation').fetchone()
+    test('Transaction-purpose accounting rules installed',scalar(db,'select count(*) from erp_transaction_purpose_rules')==12,scalar(db,'select count(*) from erp_transaction_purpose_rules'))
+    test('Connected functional submodules installed',scalar(db,'select count(*) from erp_module_submodules')>=70,scalar(db,'select count(*) from erp_module_submodules'))
+    test('Controlled provisional serial valuation loaded',int(operational_recon['valued_assets'] or 0)>=3000,operational_recon['valued_assets'])
+    test('Missing historical costs remain visible and blocked',int(operational_recon['open_valuation_exceptions'] or 0)>0,operational_recon['open_valuation_exceptions'])
+    test('Historical lease units capitalized to fixed assets',scalar(db,'select count(*) from erp_fixed_asset_books')>=600,scalar(db,'select count(*) from erp_fixed_asset_books'))
+    test('Operational inventory subledger agrees with GL',abs(float(operational_recon['inventory_subledger'] or 0)-float(operational_recon['inventory_general_ledger'] or 0))<0.01,f"subledger={operational_recon['inventory_subledger']}, gl={operational_recon['inventory_general_ledger']}")
+    test('Fixed asset subledger agrees with GL',abs(float(operational_recon['fixed_asset_subledger'] or 0)-float(operational_recon['fixed_asset_general_ledger'] or 0))<0.01,f"subledger={operational_recon['fixed_asset_subledger']}, gl={operational_recon['fixed_asset_general_ledger']}")
+    test('No finance posting errors at cutover',int(operational_recon['posting_errors'] or 0)==0,operational_recon['posting_errors'])
+    test('Return-obligation control installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_return_obligations'")==1)
+    test('Sales-return source and finance bridge installed',scalar(db,"select count(*) from pragma_table_info('erp_return_orders') where name in ('source_delivery_id','refund_gross_amount','customer_credit_event_id','inventory_return_event_id')")==4)
+    test('Landed-cost VAT and accrual controls installed',scalar(db,"select count(*) from pragma_table_info('erp_landed_cost_headers') where name in ('input_vat_amount','invoice_total')")==2)
+
+    specialist_tables=['erp_specialist_module_config','erp_approval_matrices','erp_workflow_approvals','erp_core_workflow_approvals','erp_enterprise_record_links',
+      'erp_crm_pipeline_records','erp_manufacturing_documents','erp_manufacturing_lines',
+      'erp_quality_documents','erp_quality_results','erp_project_documents','erp_project_lines',
+      'erp_eam_documents','erp_eam_lines','erp_facility_documents','erp_facility_lines',
+      'erp_logistics_documents','erp_logistics_stops','erp_hcm_documents','erp_hcm_lines',
+      'erp_srp_documents','erp_srp_lines','erp_finance_specialist_documents','erp_finance_specialist_lines',
+      'erp_platform_integrations','erp_platform_integration_runs']
+    installed_specialist_tables=sum(scalar(db,"select count(*) from sqlite_master where type='table' and name=?",(table,)) for table in specialist_tables)
+    test('All rollout specialist engine tables installed',installed_specialist_tables==len(specialist_tables),f'{installed_specialist_tables}/{len(specialist_tables)}')
+    test('All 83 enterprise modules mapped to an engine',scalar(db,'select count(*) from erp_specialist_module_config where active=1')==83,scalar(db,'select count(*) from erp_specialist_module_config where active=1'))
+    test('Rollout readiness view covers every enterprise module',scalar(db,'select count(*) from vw_erp_rollout_module_readiness')==83,scalar(db,'select count(*) from vw_erp_rollout_module_readiness'))
+    test('Core transaction modules retain specialist core engines',scalar(db,"select count(*) from erp_specialist_module_config where rollout_level='CORE'")>=15,scalar(db,"select count(*) from erp_specialist_module_config where rollout_level='CORE'"))
+    test('Wider enterprise modules use specialist engines',scalar(db,"select count(*) from erp_specialist_module_config where rollout_level='SPECIALIST'")>=50,scalar(db,"select count(*) from erp_specialist_module_config where rollout_level='SPECIALIST'"))
+    test('Platform add-ons have controlled integration engines',scalar(db,"select count(*) from erp_specialist_module_config where rollout_level='PLATFORM'")==11,scalar(db,"select count(*) from erp_specialist_module_config where rollout_level='PLATFORM'"))
+    test('Default amount-based approval matrix installed',scalar(db,'select count(*) from erp_approval_matrices where active=1')>=3,scalar(db,'select count(*) from erp_approval_matrices where active=1'))
+    test('Default approval roles resolve to active roles',scalar(db,"select count(*) from erp_approval_matrices m left join erp_roles r on r.code=m.approver_role_code and r.active=1 where m.active=1 and r.code is null")==0,scalar(db,"select count(*) from erp_approval_matrices m left join erp_roles r on r.code=m.approver_role_code and r.active=1 where m.active=1 and r.code is null"))
+    test('Pending approval queue view installed',scalar(db,"select count(*) from sqlite_master where type='view' and name='vw_erp_pending_approvals'")==1)
+    test('Specialist chart accounts installed',scalar(db,"select count(*) from erp_chart_accounts where account_code in ('1230','1240','1110','2230','2240','4040','5100','6510','6520','6530','6540')") == 11,scalar(db,"select count(*) from erp_chart_accounts where account_code in ('1230','1240','1110','2230','2240','4040','5100','6510','6520','6530','6540')"))
+    test('Enterprise document flow view installed',scalar(db,"select count(*) from sqlite_master where type='view' and name='vw_erp_enterprise_document_flow'")==1)
 
     test('No duplicate canonical asset serials',scalar(db,'select count(*) from (select serial_no from erp_assets group by serial_no having count(*)>1)')==0)
     test('Duplicate serial evidence preserved',scalar(db,"select count(*) from erp_serial_exceptions where exception_type='DUPLICATE_MASTER_SERIAL'")>0,scalar(db,'select count(*) from erp_serial_exceptions'))
@@ -121,7 +169,7 @@ def main():
     test('Bundled source workbooks contain no readable passwords',len(source_password_leaks)==0,len(source_password_leaks))
 
     counts={}
-    for t in ['erp_items','erp_assets','erp_serial_exceptions','erp_shipments','erp_expected_assets','erp_receipts','erp_receipt_lines','erp_stock_ledger','erp_sales_orders','erp_sales_lines','erp_deliveries','erp_delivery_assets','erp_return_orders','erp_return_lines','erp_reconciliation_cases','erp_requisitions','erp_requisition_lines','erp_pre_release_checks','erp_purchase_orders','erp_landed_cost_headers','erp_station_projects','erp_station_project_assets','erp_sales_receipts','erp_procurement_register','erp_payment_register','erp_budget_plan','erp_planning_drivers','erp_import_rows']:
+    for t in ['erp_items','erp_assets','erp_serial_exceptions','erp_shipments','erp_expected_assets','erp_receipts','erp_receipt_lines','erp_stock_ledger','erp_sales_orders','erp_sales_lines','erp_deliveries','erp_delivery_assets','erp_return_orders','erp_return_lines','erp_reconciliation_cases','erp_requisitions','erp_requisition_lines','erp_pre_release_checks','erp_purchase_orders','erp_landed_cost_headers','erp_station_projects','erp_station_project_assets','erp_sales_receipts','erp_procurement_register','erp_payment_register','erp_budget_plan','erp_planning_drivers','erp_import_rows','erp_transaction_purpose_rules','erp_return_obligations','erp_inventory_valuation_exceptions','erp_module_submodules','erp_fixed_asset_books','erp_specialist_module_config','erp_approval_matrices','erp_workflow_approvals','erp_core_workflow_approvals','erp_enterprise_record_links','erp_crm_pipeline_records','erp_manufacturing_documents','erp_quality_documents','erp_project_documents','erp_eam_documents','erp_facility_documents','erp_logistics_documents','erp_hcm_documents','erp_srp_documents','erp_finance_specialist_documents','erp_platform_integrations']:
         counts[t]=scalar(db,f'select count(*) from {t}')
     inventory_status={r['current_status']:r['n'] for r in db.execute('select current_status,count(*) n from erp_assets group by current_status order by n desc')}
     categories={r['category']:r['n'] for r in db.execute('select category,count(*) n from erp_assets group by category order by n desc')}
@@ -129,7 +177,7 @@ def main():
 
     passed=sum(1 for _,ok,_ in tests if ok); total=len(tests)
     REPORTS.mkdir(exist_ok=True)
-    lines=['# E88 Enterprise System v11.0 Self-Test Report','',f'Generated: {datetime.now().isoformat(timespec="seconds")}',f'**Result: {passed}/{total} tests passed.**','']
+    lines=['# E88 Enterprise System v13.0 Rollout Self-Test Report','',f'Generated: {datetime.now().isoformat(timespec="seconds")}',f'**Result: {passed}/{total} tests passed.**','']
     for name,ok,detail in tests:
         lines.append(f'- [{"x" if ok else " "}] **{name}** — {detail}')
     lines += ['','## Loaded operational counts','', '| Table | Rows |','|---|---:|']+[f'| `{k}` | {v:,} |' for k,v in counts.items()]
@@ -138,7 +186,7 @@ def main():
     lines += ['','## Test boundary','', 'The package was tested locally against SQLite using the complete schema, legacy opening data, connected ERP migrations, and all generated opening-data chunks. Live Cloudflare Access, R2 uploads, D1 concurrency, and the production Workers deployment must still be smoke-tested after deployment because those services are not available in the local container.']
     (REPORTS/'SELF_TEST_REPORT.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
 
-    dl=['# E88 Enterprise System v11.0 Data Load Report','',f'Generated: {datetime.now().isoformat(timespec="seconds")}', '', '## Actual source workbooks', '', '| Source | Archived operational rows |','|---|---:|']
+    dl=['# E88 Enterprise System v13.0 Rollout Data Load Report','',f'Generated: {datetime.now().isoformat(timespec="seconds")}', '', '## Actual source workbooks', '', '| Source | Archived operational rows |','|---|---:|']
     dl += [f'| {k} | {v:,} |' for k,v in source_rows.items()]
     dl += ['','## Canonicalization policy','', '- One canonical asset is retained for each normalized serial number.', '- Duplicate master occurrences are preserved as open serial exceptions; they are not deleted.', '- Operational references across STAR, STAKU, SATURN, ATLAS, requisitions, checklists, and warehouse documents link back to the canonical asset.', '- Battery serial swaps on return are accepted into quarantine and remain `UNRECONCILED` until reviewed.', '- Missing item descriptions automatically receive category-based item codes. Runtime sequences are advanced past every migrated code.', '- Legacy password columns are redacted from both the database source archive and the deployable workbook copy. All non-credential operational fields remain included.']
     (REPORTS/'DATA_LOAD_REPORT.md').write_text('\n'.join(dl)+'\n',encoding='utf-8')

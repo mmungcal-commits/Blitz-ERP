@@ -1,79 +1,86 @@
-# E88 Enterprise System v11.0 — Full Connected ERP
+# E88 Enterprise ERP v13.1
+
+**Build:** `E88-ROLLOUT-ERP-20260731-R13.1`  
+**Deployment:** GitHub Actions to Cloudflare Workers, D1, and R2  
+**Detailed guide:** `DEPLOY_GITHUB_R2_V13_1.md`
+
+## Operational model
+
+`ATLAS → STELLAR → Procurement → Receiving → STAR Serialized Inventory → Requisition → PDI → Warehouse Release → SATURN Delivery / Return → STAKU Sale / Lease → Finance`
+
+The uploaded operational Excel workbooks are retained under `source_data/` as source evidence. The application converts them into canonical ERP documents, exact item/material records, serialized assets, movements, custody, exceptions, commercial records, and accounting controls.
+
+## Exact inventory policy
+
+Inventory is never presented or posted as one combined motorcycle/battery/locker/spare-parts amount. It remains separate by:
+
+- inventory class;
+- material code;
+- item description;
+- serial number;
+- warehouse or deployment location;
+- custody and transaction purpose;
+- unit cost and valuation status;
+- inventory GL and COGS GL.
+
+| Class | Inventory GL | COGS GL |
+|---|---:|---:|
+| Motorcycles | 1200 | 5000 |
+| Batteries | 1220 | 5020 |
+| Lockers / BSS | 1225 | 5030 |
+| Spare parts | 1235 | 5040 |
+| Chargers | 1245 | 5050 |
+| Other inventory | 1248 | 5090 |
+
+Durable lease assets also remain separate: motorcycles in 1310, BSS/RideBox equipment in 1320, lease batteries in 1330, and charging equipment in 1340.
+
+## Connected controls
+
+- Purchase order, shipment, serialized receipt, GRNI, supplier billing, input VAT, EWT, AP, payment, and landed cost.
+- Sale, AR, output VAT, COGS, inventory issue, delivery, customer return, credit memo, and COGS reversal.
+- Lease deployment, custody, billing, deposits, return obligations, fixed-asset capitalization, and depreciation.
+- Demo, pilot, employee use, project deployment, dealer custody, transfer, warranty replacement, donation, consumption, and write-off.
+- Approval-controlled void, cancellation, reversal, valuation change, period close, and deletion request. Posted history is not physically deleted.
+- Role permissions, segregation of duties, audit history, source-document links, R2 attachments, and Finance reconciliation.
+
+## Interface corrections in v13.1
+
+- Gray enterprise group headers expand and collapse the blue submodule buttons.
+- Exact material-code inventory replaces the broad combined inventory view.
+- Serial rows and item rows open connected transaction details.
+- Table headers remain visible while scrolling.
+- Table columns are drag-resizable and saved in the browser.
+- The serial register is paginated.
+- Summary screens no longer load thousands of serial rows at once.
+- Repeated GET calls are cached briefly and duplicate in-flight calls are combined.
+
+## Records after deployment
+
+For an existing live ERP, run the workflow using `upgrade_existing`. This preserves the configured D1 records and applies migrations `0021` and `0022`.
+
+For a newly created and truly empty D1 database, use `bootstrap_empty_database`. This loads the Excel-derived opening records, including 8,650 serialized assets and 5,807 stock movements. A safety script stops bootstrap when serialized records already exist.
+
+Specialist modules such as Manufacturing, HCM, Projects, EAM, and SRP have functional engines and forms, but they do not contain invented opening transactions. Their registers remain empty until actual records are entered or approved migration data is supplied.
+
+## Validation
+
+- Structural, route, workflow, source, and interface checks: **374 passed**
+- Executable Node transaction and lifecycle tests: **24 passed**
+- Workbook, migrated-data, accounting, and reconciliation checks: **73 passed**
+- Operational workbooks uploaded in this chat: **9 of 9 exact SHA-256 matches**
+- Inventory classes MC, BAT, BSS, SP, CHG, and OTH: **zero class-to-GL difference**
+- Fixed-asset motorcycle and lease-battery control accounts: **reconciled**
+- Cutover Finance posting errors: **zero**
+
+The live Cloudflare Worker, intended D1 database, R2 bucket, access policy, and production users must still pass the GitHub smoke test and user acceptance checks after deployment.
+
+## Main files
+
+- `.github/workflows/deploy-e88-erp.yml`
+- `DEPLOY_GITHUB_R2_V13_1.md`
+- `BUILD_COMPLETION_REPORT_V13_1.md`
+- `reports/BUILD_VALIDATION_V13_1.md`
+- `migrations/0022_inventory_class_r2_rollout.sql`
+- `wrangler.toml`
 
 **Copyright © 2026 AL23. All rights reserved.**
-
-E88 FinSys is a Cloudflare Workers and D1 enterprise application for E88 supply chain, inventory, logistics, sales, lease, project planning, budgeting, and finance controls.
-
-## Full operational modules
-
-- Every enterprise module has its own record types, fields, auto-numbered documents, workflow actions, approval worklist, live reports, data dictionary, controls, and connected-module navigation.
-- Sales & Distribution includes CRM, demand planning, connected sales orders, lease contracts and document storage, outbound logistics, warranty, service, PIM, and customer requests.
-- Inventory & Procurement includes inventory planning, warehouse visibility, mobile QR cycle counting, sourcing and RFQ, purchase orders, ATLAS expected shipments, QR goods receipt, subcontracting, and supplier submissions.
-- Connected sales-order approval reserves only clear available serials and creates assignments and outbound deliveries.
-- Approved purchase orders are selectable by ATLAS; goods receipt creates serial inventory and Finance entries; landed costs increase inventory and Accounts Payable.
-- User administration includes selectable module access, role-level action permissions, password activation/reset, and immutable access audit.
-
-## Connected Finance
-
-- Every operational transaction is retained as a source-to-ledger event with its source document and serial reference.
-- Goods receipts debit inventory and credit GRNI; landed costs increase inventory; delivered sales create revenue, VAT, and COGS.
-- Lease deployment remains a custody movement; recurring lease billing creates Accounts Receivable and lease revenue.
-- Approved count shortages, losses, damage, and write-offs create inventory-variance journals.
-- Capitalized motorcycles, batteries, and BSS equipment move from inventory to the fixed-asset register and depreciate by controlled monthly runs.
-- Finance includes legal entities, chart of accounts, periods, journals, AR/AP aging, Requests for Payment, tax controls, treasury, bank reconciliation, fixed assets, budget versus actual, GL, trial balance, P&L, balance sheet, and cash flow.
-- System journals are prepared automatically, but Finance validates and posts them. Preparers cannot approve their own work.
-- Void, reversal, period close, depreciation, bank reconciliation, and payment workflows preserve independent approval and audit evidence.
-
-## Core transaction flow
-
-`ATLAS supplier upload → expected shipment → receiving workbench → actual serial validation → inventory / quarantine → stock movement → requisition / sale / lease → delivery → return → reconciliation`
-
-ATLAS is the basis of what E88 expects to receive. Inventory is created only from the actual receipt posted by Receiving.
-
-## Connected ERP controls
-
-- Receiving must select an expected shipment reference.
-- Expected and actual serials are stored separately.
-- Same item with a different actual serial is classified as `SERIAL_SUBSTITUTED`.
-- Substituted, unplanned, excess, or unexpected receipts are accepted into quarantine and remain unreconciled.
-- Exact matches become available inventory.
-- QR or barcode images can populate actual serials before validation.
-- Expected quantities, prior receipts, current receipts, total receipts, and remaining quantities are visible in one workbench.
-- Dashboard counts use classified physical assets, not all raw imported rows.
-- Obvious suffixed duplicates are excluded from operational KPI counts while source evidence remains retained.
-- Budget and Forecast uses an Excel-style monthly grid with editable cells and consistent corporate number formatting.
-- All 83 enterprise modules use their own record types, fields, workflows, reports, and module connections.
-- Sales and Distribution connects CRM, demand, sales orders, lease contracts, outbound custody, delivery, and returns.
-- Requisitions support customers, employees, demos, pilots, departments, dealers, projects, and lease deployments.
-- Lease contracts store signed documents, commercial terms, and the actual serialized units in Annex A.
-- A delete or reversal is never physical deletion: it requires a reason and approval by another authorized user.
-
-See `DELIVERY_NOTES_V8_1.md` for the complete release scope.
-
-## Verification
-
-```bash
-npm install
-python -m pip install openpyxl
-npm run build
-```
-
-The release runs structure, unit, complete opening-data, authentication, permission, Finance, and inventory-to-ledger integration tests before deployment.
-
-## Upgrade the existing live database
-
-The live database is configured as:
-
-- Binding: `DB`
-- Database: `e88-v7`
-- Database ID: `37da8de0-9574-43d0-8bde-69719342cbbd`
-
-Use GitHub Actions:
-
-1. Open **Actions**.
-2. Select **Full Build E88 Connected ERP**.
-3. Click **Run workflow** on branch `main`.
-4. Enter `E88_COMPLETE_CONNECTED_ERP`.
-5. Run the workflow.
-
-This installs the non-destructive connected Finance migration and deploys the Worker. Do not run the opening-data bootstrap again.

@@ -1,4 +1,28 @@
+# v13.1.0 - Exact Inventory and R2 Rollout
+
+- Replaced the old GitHub workflow that stripped R2.
+- Added controlled existing-D1 upgrade and empty-D1 bootstrap modes.
+- Added exact item/material-code inventory and paginated serial details.
+- Separated motorcycle, battery, locker/BSS, charger, spare-parts, and other inventory accounts.
+- Added auditable opening-balance reclassification for BSS inventory and lease battery assets.
+- Added collapsible enterprise groups, frozen headers, resizable columns, clickable serial details, and request caching.
+- Added live D1 and R2 readiness verification.
+
 # Changelog
+
+## 12.0.0
+- Added purpose-based transaction accounting for sale, lease, demo, pilot, employee use, internal use, project deployment, dealer custody, replacement, transfer, write-off, and donation.
+- Added controlled serial valuation, valuation exceptions, requester/approver separation, and journal-posting dependency before unit costs change.
+- Added provisional valuation for identifiable R280, D400, battery, and BSS assets while blocking unknown-cost financial issues.
+- Reclassified historical leased serials to the fixed-asset subledger and reconciled fixed assets to the General Ledger.
+- Added serial-level return obligations for lease, demo, employee, project, dealer, pilot, and replacement transactions.
+- Added connected submodule navigation and operational submodules for core Finance, Sales, Procurement, Inbound, Warehouse, Inventory, Quality, EAM, and Payroll functions.
+- Corrected recoverable landed-cost VAT so it is not capitalized into inventory.
+- Added a separate landed-cost accrual account and linked supplier-bill settlement path.
+- Added PO receipt validation before supplier invoices clear GRNI, with advance/prepayment treatment when receipt has not occurred.
+- Added duplicate supplier-invoice checks, controlled fixed-asset capitalization, and reversal side effects for valuation, capitalization, depreciation, and subledger documents.
+- Added v12 deployment, completion, go-live, reconciliation, and source-data boundary documentation.
+- Expanded automated validation to 318 structure checks, 20 unit and database-lifecycle tests, and 59 full data/reconciliation tests.
 
 ## 11.0.0
 - Removed the generic empty Reports and Setup fallback from every enterprise module.

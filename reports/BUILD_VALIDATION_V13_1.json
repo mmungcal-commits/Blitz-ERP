@@ -1,0 +1,93 @@
+{
+  "release": "E88 Enterprise ERP v13.1",
+  "build": "E88-ROLLOUT-ERP-20260731-R13.1",
+  "generated_at": "2026-07-31T10:35:00Z",
+  "suites": {
+    "structure": {
+      "passed": 374,
+      "total": 374,
+      "failed": 0,
+      "log": "reports/STRUCTURE_CHECK_V13_1.txt"
+    },
+    "node_unit_lifecycle": {
+      "passed": 24,
+      "total": 24,
+      "failed": 0,
+      "log": "reports/UNIT_TEST_V13_1.txt"
+    },
+    "workbook_data_accounting": {
+      "passed": 73,
+      "total": 73,
+      "failed": 0,
+      "log": "reports/DATA_TEST_V13_1.json"
+    }
+  },
+  "controls": {
+    "inventory_classes": [
+      "MC",
+      "BAT",
+      "BSS",
+      "SP",
+      "CHG",
+      "OTH"
+    ],
+    "class_to_gl_difference": "0.00 for every class",
+    "fixed_asset_to_gl": "reconciled for motorcycles and lease batteries",
+    "source_workbook_sha256_matches": "9/9",
+    "r2_binding": "DOCS",
+    "r2_bucket": "e88-erp-documents",
+    "d1_binding": "DB"
+  },
+  "opening_data_counts": {
+    "erp_items": 761,
+    "erp_assets": 8650,
+    "erp_serial_exceptions": 6697,
+    "erp_shipments": 28,
+    "erp_expected_assets": 2015,
+    "erp_receipts": 15,
+    "erp_receipt_lines": 2015,
+    "erp_stock_ledger": 5807,
+    "erp_sales_orders": 264,
+    "erp_sales_lines": 1053,
+    "erp_deliveries": 143,
+    "erp_delivery_assets": 1115,
+    "erp_return_orders": 46,
+    "erp_return_lines": 324,
+    "erp_reconciliation_cases": 323,
+    "erp_requisitions": 207,
+    "erp_requisition_lines": 624,
+    "erp_pre_release_checks": 289,
+    "erp_purchase_orders": 20,
+    "erp_landed_cost_headers": 8,
+    "erp_station_projects": 44,
+    "erp_station_project_assets": 389,
+    "erp_sales_receipts": 140,
+    "erp_procurement_register": 1261,
+    "erp_payment_register": 1261,
+    "erp_budget_plan": 133,
+    "erp_planning_drivers": 4096,
+    "erp_import_rows": 0,
+    "erp_transaction_purpose_rules": 12,
+    "erp_return_obligations": 0,
+    "erp_inventory_valuation_exceptions": 5566,
+    "erp_module_submodules": 70,
+    "erp_fixed_asset_books": 604,
+    "erp_specialist_module_config": 83,
+    "erp_approval_matrices": 3,
+    "erp_workflow_approvals": 0,
+    "erp_core_workflow_approvals": 0,
+    "erp_enterprise_record_links": 0,
+    "erp_crm_pipeline_records": 0,
+    "erp_manufacturing_documents": 0,
+    "erp_quality_documents": 0,
+    "erp_project_documents": 0,
+    "erp_eam_documents": 0,
+    "erp_facility_documents": 0,
+    "erp_logistics_documents": 0,
+    "erp_hcm_documents": 0,
+    "erp_srp_documents": 0,
+    "erp_finance_specialist_documents": 0,
+    "erp_platform_integrations": 0
+  },
+  "live_boundary": "Cloudflare deployment, intended D1 binding, R2 upload, Access policy, and production UAT require the supplied GitHub workflow."
+}
