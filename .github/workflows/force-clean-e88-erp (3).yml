@@ -2229,7 +2229,7 @@ jobs:
           python3 /tmp/strip_r2.py
 
       - name: Deploy complete E88 connected ERP
-        run: npx wrangler deploy
+        run: npx wrangler deploy --name e88-erp26
         env:
           E88_DEPLOY_CONFIRM: CONNECTED_SCHEMA_INSTALLED
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -2243,7 +2243,7 @@ jobs:
           import time
           import urllib.request
 
-          base = 'https://e88-finsys.nrd-e88.workers.dev'
+          base = 'https://e88-erp26.nrd-e88.workers.dev'
           headers = {
               'User-Agent': 'Mozilla/5.0 (GitHub Actions; E88 deployment verifier)',
               'Accept': 'text/html,application/json,*/*',
