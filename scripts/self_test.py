@@ -7,7 +7,12 @@ from openpyxl import load_workbook
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 REPORTS=ROOT/'reports'
 SCHEMA_FILES=['schema.sql','schema2.sql','schema4.sql','schema7.sql','alter_users.sql','data.sql','migrations/0008_connected_erp.sql','migrations/0010_procurement_sales_controls.sql','migrations/0011_finance_planning_registers.sql']
-POST_LOAD_FILES=['migrations/0012_ramco_enterprise.sql','migrations/0013_atlas_receiving_workbench.sql']
+POST_LOAD_FILES=[
+    'migrations/0012_ramco_enterprise.sql','migrations/0013_atlas_receiving_workbench.sql',
+    'migrations/0014_application_auth.sql','migrations/0015_user_access_station_connections.sql',
+    'migrations/0016_clean_module_workspace.sql','migrations/0017_inbound_logistics_control.sql',
+    'migrations/0018_sales_distribution_custody.sql','migrations/0019_connected_finance_engine.sql'
+]
 
 def scalar(db,sql,args=()): return db.execute(sql,args).fetchone()[0]
 
@@ -33,6 +38,25 @@ def main():
     test('Asset quality classification covers all assets',scalar(db,'select count(*) from erp_asset_quality')==scalar(db,'select count(*) from erp_assets'),scalar(db,'select count(*) from erp_asset_quality'))
     test('Dashboard canonical view excludes non-physical and duplicate rows',scalar(db,'select count(*) from vw_erp_serialized_assets')<scalar(db,'select count(*) from erp_assets'),scalar(db,'select count(*) from vw_erp_serialized_assets'))
     test('ATLAS receiving match control installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_expected_receipt_matches'")==1)
+    test('PO-controlled ATLAS link installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_atlas_po_links'")==1)
+    test('Cycle count control installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_cycle_counts'")==1)
+    test('Inventory planning control installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_inventory_plans'")==1)
+    test('Connected requisition custody control installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_requisition_context'")==1)
+    test('Lease contract and actual-unit control installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_lease_contracts'")==1)
+    test('Delete and reversal approval control installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_record_change_requests'")==1)
+    test('Existing requisitions have custody context',scalar(db,'select count(*) from erp_requisition_context')==scalar(db,'select count(*) from erp_requisitions'),scalar(db,'select count(*) from erp_requisition_context'))
+    test('Serial custody history view installed',scalar(db,"select count(*) from sqlite_master where type='view' and name='vw_erp_serial_custody_history'")==1)
+    test('Connected double-entry journal installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_journal_headers'")==1)
+    test('Inventory finance event bridge installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_finance_source_events'")==1)
+    test('AR/AP subledgers installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_subledger_documents'")==1)
+    test('Treasury reconciliation installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_bank_reconciliations'")==1)
+    test('Fixed asset and depreciation installed',scalar(db,"select count(*) from sqlite_master where type='table' and name='erp_fixed_asset_books'")==1)
+    test('Four legal entities configured',scalar(db,'select count(*) from erp_legal_entities where active=1')==4,scalar(db,'select count(*) from erp_legal_entities where active=1'))
+    test('Finance chart of accounts configured',scalar(db,'select count(*) from erp_chart_accounts where active=1')>=25,scalar(db,'select count(*) from erp_chart_accounts where active=1'))
+    inventory_recon=db.execute('select inventory_subledger,inventory_general_ledger from vw_erp_inventory_gl_reconciliation').fetchone()
+    test('Finance cutover inventory agrees with serial subledger',
+         abs(float(inventory_recon['inventory_subledger'] or 0)-float(inventory_recon['inventory_general_ledger'] or 0))<0.01,
+         f"subledger={inventory_recon['inventory_subledger']}, gl={inventory_recon['inventory_general_ledger']}")
 
     test('No duplicate canonical asset serials',scalar(db,'select count(*) from (select serial_no from erp_assets group by serial_no having count(*)>1)')==0)
     test('Duplicate serial evidence preserved',scalar(db,"select count(*) from erp_serial_exceptions where exception_type='DUPLICATE_MASTER_SERIAL'")>0,scalar(db,'select count(*) from erp_serial_exceptions'))
@@ -105,7 +129,7 @@ def main():
 
     passed=sum(1 for _,ok,_ in tests if ok); total=len(tests)
     REPORTS.mkdir(exist_ok=True)
-    lines=['# E88 FinSys v8.1 Self-Test Report','',f'Generated: {datetime.now().isoformat(timespec="seconds")}',f'**Result: {passed}/{total} tests passed.**','']
+    lines=['# E88 Enterprise System v11.0 Self-Test Report','',f'Generated: {datetime.now().isoformat(timespec="seconds")}',f'**Result: {passed}/{total} tests passed.**','']
     for name,ok,detail in tests:
         lines.append(f'- [{"x" if ok else " "}] **{name}** — {detail}')
     lines += ['','## Loaded operational counts','', '| Table | Rows |','|---|---:|']+[f'| `{k}` | {v:,} |' for k,v in counts.items()]
@@ -114,7 +138,7 @@ def main():
     lines += ['','## Test boundary','', 'The package was tested locally against SQLite using the complete schema, legacy opening data, connected ERP migrations, and all generated opening-data chunks. Live Cloudflare Access, R2 uploads, D1 concurrency, and the production Workers deployment must still be smoke-tested after deployment because those services are not available in the local container.']
     (REPORTS/'SELF_TEST_REPORT.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
 
-    dl=['# E88 FinSys v8.1 Data Load Report','',f'Generated: {datetime.now().isoformat(timespec="seconds")}', '', '## Actual source workbooks', '', '| Source | Archived operational rows |','|---|---:|']
+    dl=['# E88 Enterprise System v11.0 Data Load Report','',f'Generated: {datetime.now().isoformat(timespec="seconds")}', '', '## Actual source workbooks', '', '| Source | Archived operational rows |','|---|---:|']
     dl += [f'| {k} | {v:,} |' for k,v in source_rows.items()]
     dl += ['','## Canonicalization policy','', '- One canonical asset is retained for each normalized serial number.', '- Duplicate master occurrences are preserved as open serial exceptions; they are not deleted.', '- Operational references across STAR, STAKU, SATURN, ATLAS, requisitions, checklists, and warehouse documents link back to the canonical asset.', '- Battery serial swaps on return are accepted into quarantine and remain `UNRECONCILED` until reviewed.', '- Missing item descriptions automatically receive category-based item codes. Runtime sequences are advanced past every migrated code.', '- Legacy password columns are redacted from both the database source archive and the deployable workbook copy. All non-credential operational fields remain included.']
     (REPORTS/'DATA_LOAD_REPORT.md').write_text('\n'.join(dl)+'\n',encoding='utf-8')

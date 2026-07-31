@@ -20,12 +20,72 @@ returnRoutes.get('/', requirePermission('RETURNS','VIEW'), async(c)=>{
   return ok(c,{rows,page,size,total:total?.n||0});
 });
 
+returnRoutes.get('/assignments/active', requirePermission('RETURNS','VIEW'), async c=>{
+  const rows=await all(c.env.DB,`SELECT a.*,p.name partner_name,r.id requisition_id,
+    rc.holder_type,rc.holder_name,rc.expected_return_date,
+    (SELECT COUNT(*) FROM erp_assignment_assets aa WHERE aa.assignment_id=a.id) asset_count
+    FROM erp_assignments a
+    LEFT JOIN erp_partners p ON p.id=a.partner_id
+    LEFT JOIN erp_requisitions r ON r.requisition_no=a.source_request_no
+    LEFT JOIN erp_requisition_context rc ON rc.requisition_id=r.id
+    WHERE a.status IN ('APPROVED','ACTIVE','PARTIALLY_RETURNED') AND EXISTS(
+      SELECT 1 FROM erp_assignment_assets aa
+      WHERE aa.assignment_id=a.id
+        AND NOT EXISTS(
+          SELECT 1
+          FROM erp_return_lines rl
+          JOIN erp_return_orders ro ON ro.id=rl.return_id
+          WHERE ro.assignment_id=a.id
+            AND ro.status='POSTED'
+            AND rl.expected_serial=aa.serial_no
+        )
+    )
+    ORDER BY COALESCE(a.expected_return_date,a.start_date) ASC,a.id DESC`);
+  const assets=await all(c.env.DB,`SELECT aa.assignment_id,aa.asset_id,aa.serial_no,aa.role_code,
+    a.item_code,a.item_name,a.category,a.current_status,a.current_location_code,a.condition_code
+    FROM erp_assignment_assets aa JOIN erp_assets a ON a.id=aa.asset_id
+    JOIN erp_assignments h ON h.id=aa.assignment_id
+    WHERE h.status IN ('APPROVED','ACTIVE','PARTIALLY_RETURNED')
+      AND NOT EXISTS(
+        SELECT 1
+        FROM erp_return_lines rl
+        JOIN erp_return_orders ro ON ro.id=rl.return_id
+        WHERE ro.assignment_id=aa.assignment_id
+          AND ro.status='POSTED'
+          AND rl.expected_serial=aa.serial_no
+      )
+    ORDER BY aa.assignment_id,a.category,a.item_name,aa.serial_no`);
+  return ok(c,{rows,assets});
+});
+
 returnRoutes.post('/', requirePermission('RETURNS','CREATE'), async(c)=>{
   const b=await jsonBody(c); const actual=(Array.isArray(b.lines)?b.lines:[]).map(x=>({...x,expectedSerial:normalizeSerial(x.expectedSerial),actualSerial:normalizeSerial(x.actualSerial)}));
   if(!actual.length)return fail(c,'At least one return line is required');
+  const assignmentId=Number(b.assignmentId||0);
+  if(!assignmentId)return fail(c,'Select the deployment or assignment being returned.');
+  const assignment=await first(c.env.DB,`SELECT * FROM erp_assignments WHERE id=? AND status IN ('APPROVED','ACTIVE','PARTIALLY_RETURNED')`,[assignmentId]);
+  if(!assignment)return fail(c,'The selected deployment is not active or returnable.',409);
+  const assigned=await all(c.env.DB,`SELECT aa.*,a.category FROM erp_assignment_assets aa
+    LEFT JOIN erp_assets a ON a.id=aa.asset_id
+    WHERE aa.assignment_id=?
+      AND NOT EXISTS(
+        SELECT 1
+        FROM erp_return_lines rl
+        JOIN erp_return_orders ro ON ro.id=rl.return_id
+        WHERE ro.assignment_id=aa.assignment_id
+          AND ro.status='POSTED'
+          AND rl.expected_serial=aa.serial_no
+      )`,[assignmentId]);
+  const assignedMap=new Map(assigned.map(row=>[row.serial_no,row]));
+  for(const line of actual){
+    if(!line.expectedSerial||!assignedMap.has(line.expectedSerial)){
+      return fail(c,`Expected serial ${line.expectedSerial||'(blank)'} is not part of ${assignment.assignment_no}.`,409);
+    }
+    line.itemCategory=line.itemCategory||assignedMap.get(line.expectedSerial).category;
+  }
   const loc=await ensureLocation(c.env.DB,b.returnLocationName||'Returns Quarantine',b.returnLocationType||'QUARANTINE',b.returnLocationCode||'RET-QUAR');
   const no=await nextCode(c.env.DB,'RETURN','RET',6);
-  const rr=await run(c.env.DB,`INSERT INTO erp_return_orders(return_no,assignment_id,partner_id,return_date,return_location_id,status,reason_code,notes,created_by) VALUES(?,?,?,?,?,'DRAFT',?,?,?)`,[no,b.assignmentId||null,b.partnerId||null,b.returnDate||new Date().toISOString(),loc.id,b.reasonCode||'',b.notes||'',c.get('erpUser').email]);
+  const rr=await run(c.env.DB,`INSERT INTO erp_return_orders(return_no,assignment_id,partner_id,return_date,return_location_id,status,reason_code,notes,created_by) VALUES(?,?,?,?,?,'DRAFT',?,?,?)`,[no,assignmentId,assignment.partner_id||b.partnerId||null,b.returnDate||new Date().toISOString(),loc.id,b.reasonCode||'',b.notes||'',c.get('erpUser').email]);
   const returnId=rr.meta.last_row_id; const results=[];
 
   for(const line of actual){
@@ -38,10 +98,15 @@ returnRoutes.post('/', requirePermission('RETURNS','CREATE'), async(c)=>{
     let caseNo='';
     if(acceptance!=='MATCHED'){
       caseNo=await nextCode(c.env.DB,'RECON','REC',6);
-      await run(c.env.DB,`INSERT INTO erp_reconciliation_cases(case_no,case_type,return_id,assignment_id,expected_serial,actual_serial,related_motorcycle_serial,current_location_code,status,opened_by) VALUES(?,?,?,?,?,?,?,?, 'UNRECONCILED',?)`,[caseNo,acceptance,returnId,b.assignmentId||null,line.expectedSerial||'',line.actualSerial||'',normalizeSerial(line.relatedMotorcycleSerial||''),loc.code,c.get('erpUser').email]);
+      await run(c.env.DB,`INSERT INTO erp_reconciliation_cases(case_no,case_type,return_id,assignment_id,expected_serial,actual_serial,related_motorcycle_serial,current_location_code,status,opened_by) VALUES(?,?,?,?,?,?,?,?, 'UNRECONCILED',?)`,[caseNo,acceptance,returnId,assignmentId,line.expectedSerial||'',line.actualSerial||'',normalizeSerial(line.relatedMotorcycleSerial||''),loc.code,c.get('erpUser').email]);
     }
     results.push({returnLineId:lr.meta.last_row_id,expectedSerial:line.expectedSerial,actualSerial:line.actualSerial,acceptance,caseNo});
   }
+  await run(c.env.DB,`INSERT INTO erp_document_flow_links(
+    source_type,source_id,source_no,target_type,target_id,target_no,relation_type,created_by)
+    VALUES('ASSIGNMENT',?,?, 'RETURN',?,?, 'RETURNED_BY',?)`,[
+    assignmentId,assignment.assignment_no,returnId,no,c.get('erpUser').email,
+  ]);
   await audit(c,{action:'CREATE_RETURN',module:'RETURNS',recordType:'RETURN',recordId:returnId,recordNo:no,after:{lines:results}});
   return ok(c,{returnId,returnNo:no,lines:results},201);
 });
@@ -65,7 +130,24 @@ returnRoutes.post('/:id/post', requirePermission('RETURNS','POST'), async(c)=>{
     }catch(e){return fail(c,`Unable to post ${line.actual_serial}: ${e.message}`,409);}
   }
   await run(c.env.DB,`UPDATE erp_return_orders SET status='POSTED',posted_by=?,posted_at=datetime('now') WHERE id=?`,[c.get('erpUser').email,id]);
-  if(header.assignment_id)await run(c.env.DB,`UPDATE erp_assignments SET status='RETURNED',actual_return_date=? WHERE id=?`,[header.return_date,header.assignment_id]);
+  if(header.assignment_id){
+    const expected=(await first(c.env.DB,`SELECT COUNT(*) n FROM erp_assignment_assets WHERE assignment_id=?`,[header.assignment_id]))?.n||0;
+    const returned=(await first(c.env.DB,`SELECT COUNT(DISTINCT rl.expected_serial) n
+      FROM erp_return_lines rl JOIN erp_return_orders ro ON ro.id=rl.return_id
+      WHERE ro.assignment_id=? AND ro.status='POSTED'`,[header.assignment_id]))?.n||0;
+    await run(c.env.DB,`UPDATE erp_assignments SET status=?,actual_return_date=CASE WHEN ?>=?
+      THEN ? ELSE actual_return_date END WHERE id=?`,[
+      returned>=expected?'RETURNED':'PARTIALLY_RETURNED',returned,expected,header.return_date,header.assignment_id,
+    ]);
+    const assignment=await first(c.env.DB,`SELECT source_request_no FROM erp_assignments WHERE id=?`,[header.assignment_id]);
+    if(assignment?.source_request_no){
+      await run(c.env.DB,`UPDATE erp_requisition_allocations SET allocation_status='RETURNED',released_at=datetime('now')
+        WHERE serial_no IN (SELECT actual_serial FROM erp_return_lines WHERE return_id=?)
+          AND requisition_id=(SELECT id FROM erp_requisitions WHERE requisition_no=?)`,[
+        id,assignment.source_request_no,
+      ]);
+    }
+  }
   await audit(c,{action:'POST_RETURN',module:'RETURNS',recordType:'RETURN',recordId:id,recordNo:header.return_no,after:{posted}});
   return ok(c,{posted});
 });

@@ -37,6 +37,9 @@ async function main() {
     'migrations/0014_application_auth.sql','src/routes/auth.js','src/lib/crypto.js',
     'migrations/0015_user_access_station_connections.sql',
     'migrations/0016_clean_module_workspace.sql','src/lib/workspace.js','src/routes/workspace.js',
+    'migrations/0017_inbound_logistics_control.sql',
+    'migrations/0018_sales_distribution_custody.sql','src/lib/module-definitions.js',
+    'migrations/0019_connected_finance_engine.sql','src/lib/finance.js','src/routes/finance.js',
     'migrations/opening/manifest.json','scripts/generate_opening_data.py','scripts/self_test.py'
   ];
   for (const rel of required) check(await exists(join(ROOT, rel)), `Required file: ${rel}`);
@@ -74,8 +77,23 @@ async function main() {
     'BATTERY_SWAP','UNRECONCILED','ensureItem','categoryCode','BarcodeDetector',
     'erp_stock_ledger','erp_serial_exceptions','erp_reconciliation_cases',
     'requirePermission','ALLOWED_DOMAIN','erp_user_credentials','e88_session',
-    'erp_expected_receipt_matches','SERIAL_SUBSTITUTED','EXPECTED_SHIPMENT_ONLY'
+    'erp_expected_receipt_matches','SERIAL_SUBSTITUTED','EXPECTED_SHIPMENT_ONLY',
+    'erp_record_change_requests','DELETION_REVERSAL_POLICY','PARTIALLY_RETURNED',
+    'erp_requisition_context','erp_lease_contracts','vw_erp_serial_custody_history',
+    'erp_journal_headers','erp_finance_source_events','erp_subledger_documents',
+    'erp_bank_reconciliations','erp_fixed_asset_books','vw_erp_inventory_gl_reconciliation',
+    'captureFinanceEvent','CAPITALIZATION','JOURNAL_REVERSAL',
+    'renderConnectedModuleWorkspace','renderModuleReports','renderModuleSetup',
+    'renderSalesOrderWorkspace','renderSourcingWorkspace','access-audit'
   ]) check(allSource.includes(token), `Business control present: ${token}`);
+
+  const foundation = await readFile(join(ROOT, 'public/foundation.js'), 'utf8');
+  check(!foundation.includes('renderEmptyWorkspace'), 'No generic empty module fallback remains');
+  for (const code of [
+    'sd-crm','sd-demand-planning','sd-order-management','sd-lease-contract-management',
+    'sd-warranty-management','sd-service-management','sd-pim','sd-customer-portal',
+    'ip-sourcing-purchasing','ip-subcontracting','ip-supplier-portal',
+  ]) check(foundation.includes(`'${code}'`), `Distinct workspace navigation: ${code}`);
 
   const codes = await readFile(join(ROOT, 'src/lib/codes.js'), 'utf8');
   for (const prefix of ['MC','BAT','BSS','SP','CHG','OTH']) {

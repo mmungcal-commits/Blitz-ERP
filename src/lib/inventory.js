@@ -1,5 +1,6 @@
 import { first, run } from './db.js';
 import { nextCode, normalizeSerial } from './codes.js';
+import { captureFinanceEvent } from './finance.js';
 
 export async function getAsset(db, serialOrId) {
   if (typeof serialOrId === 'number' || /^\d+$/.test(String(serialOrId))) {
@@ -49,6 +50,26 @@ export async function postMovement(db, payload, userEmail) {
   if (!results[1]?.success || results[1]?.meta?.changes !== 1) {
     throw new Error(`Serial ${serial} was updated by another user. Refresh and try again.`);
   }
+  const writeOff = ['WRITE_OFF','LOSS','DAMAGE'].includes(String(payload.movementType || '').toUpperCase());
+  const movement = await first(db, `SELECT id FROM erp_stock_ledger WHERE movement_no=?`, [movementNo]);
+  await captureFinanceEvent(db, {
+    eventKey:`STOCK_MOVEMENT:${movement?.id || movementNo}`,
+    eventType:writeOff ? 'INVENTORY_WRITE_OFF' : 'INVENTORY_MOVEMENT',
+    sourceModule:'INVENTORY',
+    sourceType:'STOCK_MOVEMENT',
+    sourceId:movement?.id || null,
+    sourceNo:movementNo,
+    eventDate:payload.movementDate || new Date().toISOString().slice(0, 10),
+    amount:Number(asset.unit_cost || 0) * Number(payload.qty || 1),
+    financialEffect:writeOff ? 'ACCOUNTING' : 'NONE',
+    businessLine:String(payload.reasonCode || '').toUpperCase(),
+    description:`${String(payload.movementType || 'MOVEMENT').replaceAll('_',' ')} ${serial}`,
+    payload:{
+      costAmount:Number(asset.unit_cost || 0) * Number(payload.qty || 1),
+      category:asset.category,assetId:asset.id,serialNo:serial,itemId:asset.item_id,
+      adjustmentDirection:'DECREASE',
+    },
+  }, userEmail || 'system');
   return { movementNo, assetId: asset.id, serialNo: serial, fromStatus: asset.current_status, toStatus };
 }
 

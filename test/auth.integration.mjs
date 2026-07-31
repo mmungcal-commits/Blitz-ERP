@@ -35,9 +35,12 @@ try {
     }
   };
   await applySql('migrations/0008_connected_erp.sql');
+  await applySql('migrations/0010_procurement_sales_controls.sql');
   await applySql('migrations/0014_application_auth.sql');
   await applySql('migrations/0015_user_access_station_connections.sql');
   await applySql('migrations/0016_clean_module_workspace.sql');
+  await applySql('migrations/0018_sales_distribution_custody.sql');
+  await applySql('migrations/0019_connected_finance_engine.sql');
   await db.prepare(
     `INSERT INTO erp_users(email,display_name,role_code,department,live_access,active)
      VALUES(?,?,?,?,1,1)`,
@@ -84,7 +87,7 @@ try {
   });
   const workspaceRecordBody = await createWorkspaceRecord.json();
   assert.equal(createWorkspaceRecord.status, 201, JSON.stringify(workspaceRecordBody));
-  assert.match(workspaceRecordBody.record.record_no, /^FA-/);
+  assert.match(workspaceRecordBody.record.record_no, /^JE-/);
 
   const listWorkspaceRecords = await mf.dispatchFetch('https://e88.test/api/workspace/modules/fa-general-accounting/records', { headers: { Cookie: cookie } });
   const listWorkspaceBody = await listWorkspaceRecords.json();
@@ -100,6 +103,8 @@ try {
       entityName: 'B2B Customer',
       department: 'Sales',
       businessChannel: 'B2B',
+      clientName: 'B2B Customer',
+      contractStartDate: '2026-07-30',
       contractEndDate: '2029-07-29',
       billingFrequency: 'MONTHLY',
       unitCount: 25,
@@ -115,6 +120,46 @@ try {
   assert.equal(leaseContracts.status, 200, JSON.stringify(leaseContractsBody));
   assert.equal(leaseContractsBody.rows.length, 1);
   assert.equal(leaseContractsBody.rows[0].business_channel, 'B2B');
+
+  const requestVoid = await mf.dispatchFetch(
+    `https://e88.test/api/workspace/modules/fa-general-accounting/records/${workspaceRecordBody.record.id}/change-requests`,
+    {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ actionType:'DELETE', reason:'Duplicate test journal created during validation' }),
+    },
+  );
+  const requestVoidBody = await requestVoid.json();
+  assert.equal(requestVoid.status, 201, JSON.stringify(requestVoidBody));
+
+  const selfApproval = await mf.dispatchFetch(
+    `https://e88.test/api/workspace/modules/fa-general-accounting/change-requests/${requestVoidBody.request.id}/decision`,
+    {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision:'APPROVE', notes:'Self approval attempt' }),
+    },
+  );
+  assert.equal(selfApproval.status, 409);
+
+  await db.prepare(
+    `INSERT INTO erp_users(email,display_name,role_code,department,live_access,active)
+     VALUES('approver@nrdev.ph','Independent Approver','ADMIN','Internal Audit',1,1)`,
+  ).run();
+  const approvedVoid = await mf.dispatchFetch(
+    `https://e88.test/api/workspace/modules/fa-general-accounting/change-requests/${requestVoidBody.request.id}/decision`,
+    {
+      method: 'POST',
+      headers: {
+        'Cf-Access-Authenticated-User-Email':'approver@nrdev.ph',
+        'Content-Type':'application/json',
+      },
+      body: JSON.stringify({ decision:'APPROVE', notes:'Confirmed duplicate; retain as voided audit evidence' }),
+    },
+  );
+  const approvedVoidBody = await approvedVoid.json();
+  assert.equal(approvedVoid.status, 200, JSON.stringify(approvedVoidBody));
+  assert.equal(approvedVoidBody.record.status, 'VOIDED');
 
   const users = await mf.dispatchFetch('https://e88.test/api/admin/users', { headers: { Cookie: cookie } });
   const usersText = await users.text();
@@ -210,6 +255,79 @@ try {
   assert.equal(stationDetailBody.summary.disconnected, 1);
   assert.equal(stationDetailBody.connectedAssets[0].serial_no, 'BAT-TEST-CONNECTED');
   assert.equal(stationDetailBody.disconnectedAssets[0].serial_no, 'BAT-TEST-SOLD');
+
+  const createJournalResponse = await mf.dispatchFetch('https://e88.test/api/finance/journals', {
+    method:'POST',
+    headers:{ Cookie:cookie, 'Content-Type':'application/json' },
+    body:JSON.stringify({
+      entityCode:'E88', journalDate:'2026-07-31', description:'Finance engine integration test',
+      department:'Finance and Accounting', costCenter:'FIN-HQ',
+      lines:[
+        { accountCode:'6990', description:'Test expense', debit:1250, credit:0 },
+        { accountCode:'3000', description:'Test funding', debit:0, credit:1250 },
+      ],
+    }),
+  });
+  const createdJournal = await createJournalResponse.json();
+  assert.equal(createJournalResponse.status, 201, JSON.stringify(createdJournal));
+  const journalId = createdJournal.journal.id;
+  const submitJournalResponse = await mf.dispatchFetch(`https://e88.test/api/finance/journals/${journalId}/action`, {
+    method:'POST', headers:{ Cookie:cookie, 'Content-Type':'application/json' },
+    body:JSON.stringify({ action:'SUBMIT' }),
+  });
+  assert.equal(submitJournalResponse.status, 200, await submitJournalResponse.text());
+  const selfApproveJournal = await mf.dispatchFetch(`https://e88.test/api/finance/journals/${journalId}/action`, {
+    method:'POST', headers:{ Cookie:cookie, 'Content-Type':'application/json' },
+    body:JSON.stringify({ action:'APPROVE' }),
+  });
+  assert.equal(selfApproveJournal.status, 409);
+  const approveJournalResponse = await mf.dispatchFetch(`https://e88.test/api/finance/journals/${journalId}/action`, {
+    method:'POST',
+    headers:{ 'Cf-Access-Authenticated-User-Email':'approver@nrdev.ph', 'Content-Type':'application/json' },
+    body:JSON.stringify({ action:'APPROVE' }),
+  });
+  assert.equal(approveJournalResponse.status, 200, await approveJournalResponse.text());
+  const postJournalResponse = await mf.dispatchFetch(`https://e88.test/api/finance/journals/${journalId}/action`, {
+    method:'POST', headers:{ Cookie:cookie, 'Content-Type':'application/json' },
+    body:JSON.stringify({ action:'POST' }),
+  });
+  assert.equal(postJournalResponse.status, 200, await postJournalResponse.text());
+
+  const financeAsset = await db.prepare(
+    `INSERT INTO erp_assets(
+      asset_no,serial_no,serial_type,item_code,item_name,category,current_status,unit_cost,reconciliation_status
+    ) VALUES('AST-FIN-0001','MC-FIN-0001','CHASSIS','MC-FIN','Finance Test Motorcycle','MC','AVAILABLE',120000,'CLEAR')`,
+  ).run();
+  const capitalizeResponse = await mf.dispatchFetch('https://e88.test/api/finance/fixed-assets/capitalize', {
+    method:'POST', headers:{ Cookie:cookie, 'Content-Type':'application/json' },
+    body:JSON.stringify({
+      entityCode:'E88', assetId:financeAsset.meta.last_row_id, assetClass:'MOTORCYCLE_HELD_FOR_LEASE',
+      capitalizationDate:'2026-07-31', acquisitionCost:120000, residualValue:20000,
+      usefulLifeMonths:48, businessLine:'LEASE',
+    }),
+  });
+  const capitalized = await capitalizeResponse.json();
+  assert.equal(capitalizeResponse.status, 201, JSON.stringify(capitalized));
+  assert.ok(capitalized.journalId);
+  const capitalizationJournal = await db.prepare(
+    `SELECT h.status,
+      SUM(CASE WHEN a.account_code='1310' THEN l.base_debit ELSE 0 END) fixed_asset_debit,
+      SUM(CASE WHEN a.account_code='1200' THEN l.base_credit ELSE 0 END) inventory_credit
+      FROM erp_journal_headers h JOIN erp_journal_lines l ON l.journal_id=h.id
+      JOIN erp_chart_accounts a ON a.id=l.account_id WHERE h.id=?`,
+  ).bind(capitalized.journalId).first();
+  assert.equal(capitalizationJournal.status, 'SUBMITTED');
+  assert.equal(capitalizationJournal.fixed_asset_debit, 120000);
+  assert.equal(capitalizationJournal.inventory_credit, 120000);
+
+  const financeStatements = await mf.dispatchFetch(
+    'https://e88.test/api/finance/reports/financial-statements?entity=E88&dateFrom=2026-01-01&dateTo=2026-07-31',
+    { headers:{ Cookie:cookie } },
+  );
+  const financeStatementsBody = await financeStatements.json();
+  assert.equal(financeStatements.status, 200, JSON.stringify(financeStatementsBody));
+  assert.equal(financeStatementsBody.pnl.operatingExpenses, 1250);
+  assert.equal(financeStatementsBody.balanceSheet.balanced, true);
 
   const logout = await mf.dispatchFetch('https://e88.test/api/auth/logout', {
     method: 'POST',

@@ -7,6 +7,7 @@ test('password credentials are salted and verifiable without storing plaintext',
   const credential = await hashPassword(password);
   assert.notEqual(credential.hash, password);
   assert.ok(credential.salt);
+  assert.equal(credential.iterations, 100000);
   assert.equal(await verifyPassword(password, credential.hash, credential.salt, credential.iterations), true);
   assert.equal(await verifyPassword('Incorrect-Password-2026', credential.hash, credential.salt, credential.iterations), false);
 });

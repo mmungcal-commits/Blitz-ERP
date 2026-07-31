@@ -5,6 +5,7 @@ const DOMAIN = 'nrdev.ph';
 export const ERP_MODULES = [
   'DASHBOARD','PROCUREMENT','SHIPMENTS','RECEIVING','INVENTORY','RETURNS',
   'REQUISITIONS','DELIVERIES','SALES','CUSTOMERS','STATIONS','PLANNING','ADMIN',
+  'FINANCE',
 ];
 const FULL_PERMISSION = {
   can_view: 1, can_create: 1, can_edit: 1, can_approve: 1,

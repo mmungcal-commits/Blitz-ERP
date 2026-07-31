@@ -3,9 +3,10 @@ import { all, first, run } from '../lib/db.js';
 import { ok, fail, jsonBody, pageParams } from '../lib/http.js';
 import { requirePermission } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
-import { ensureItem, ensureLocation, nextCode, normalizeSerial } from '../lib/codes.js';
+import { ensureItem, nextCode } from '../lib/codes.js';
 import { createAssetFromReceipt } from '../lib/inventory.js';
 import { classifyReceivingLines, getReceivingWorkbench, receivingAssetControl } from '../lib/receiving.js';
+import { captureFinanceEvent } from '../lib/finance.js';
 
 export const receivingRoutes = new Hono();
 
@@ -23,10 +24,12 @@ receivingRoutes.get('/', requirePermission('RECEIVING','VIEW'), async(c)=>{
 
 receivingRoutes.get('/open-shipments', requirePermission('RECEIVING','VIEW'), async(c)=>{
   const rows=await all(c.env.DB,`
-    SELECT * FROM vw_erp_shipment_receiving_summary
-    WHERE status NOT IN ('CLOSED','CANCELLED')
-      AND (remaining_qty>0 OR open_variances>0 OR status IN ('MANIFESTED','IN_TRANSIT','ARRIVED','RECEIVING','PARTIALLY_RECEIVED','RECEIVED_WITH_EXCEPTIONS'))
-    ORDER BY COALESCE((SELECT eta FROM erp_shipments x WHERE x.id=shipment_id),'9999-12-31'),shipment_no`);
+    SELECT v.*,s.purchase_order_ref,s.eta
+    FROM vw_erp_shipment_receiving_summary v
+    JOIN erp_shipments s ON s.id=v.shipment_id
+    WHERE v.status NOT IN ('CLOSED','CANCELLED')
+      AND (v.remaining_qty>0 OR v.open_variances>0 OR v.status IN ('MANIFESTED','IN_TRANSIT','ARRIVED','RECEIVING','PARTIALLY_RECEIVED','RECEIVED_WITH_EXCEPTIONS'))
+    ORDER BY COALESCE(s.eta,'9999-12-31'),v.shipment_no`);
   return ok(c,{rows});
 });
 
@@ -34,6 +37,52 @@ receivingRoutes.get('/shipment/:id', requirePermission('RECEIVING','VIEW'), asyn
   const data=await getReceivingWorkbench(c.env.DB,Number(c.req.param('id')));
   if(!data)return fail(c,'Shipment not found',404);
   return ok(c,data);
+});
+
+receivingRoutes.get('/reports/reconciliation', requirePermission('RECEIVING','VIEW'), async(c)=>{
+  const status=String(c.req.query('status')||'').trim().toUpperCase();
+  const args=[]; const where=[];
+  if(status){where.push('reconciliation_status=?');args.push(status);}
+  const rows=await all(c.env.DB,`
+    SELECT * FROM vw_erp_inbound_shipment_report
+    ${where.length?`WHERE ${where.join(' AND ')}`:''}
+    ORDER BY COALESCE(eta,expected_delivery_date,order_date) DESC,shipment_no DESC`,args);
+  const totals=rows.reduce((out,row)=>{
+    out.shipments+=1;
+    out.expected+=Number(row.expected_qty||0);
+    out.received+=Number(row.received_qty||0);
+    out.openVariances+=Number(row.open_variances||0);
+    if(row.reconciliation_status==='MATCHED')out.matched+=1;
+    else out.withDiscrepancies+=1;
+    return out;
+  },{shipments:0,expected:0,received:0,openVariances:0,matched:0,withDiscrepancies:0});
+  return ok(c,{rows,totals});
+});
+
+receivingRoutes.get('/reports/discrepancies', requirePermission('RECEIVING','VIEW'), async(c)=>{
+  const status=String(c.req.query('status')||'OPEN').trim().toUpperCase();
+  const rows=await all(c.env.DB,`
+    SELECT * FROM vw_erp_inbound_serial_discrepancies
+    WHERE (?='' OR status=?)
+    ORDER BY created_at DESC,variance_no DESC`,[status,status]);
+  return ok(c,{rows,total:rows.length});
+});
+
+receivingRoutes.post('/variances/:id/resolve', requirePermission('RECEIVING','APPROVE'), async(c)=>{
+  const id=Number(c.req.param('id'));
+  const b=await jsonBody(c);
+  const before=await first(c.env.DB,`SELECT * FROM erp_receiving_variances WHERE id=?`,[id]);
+  if(!before)return fail(c,'Receiving variance not found',404);
+  if(before.status!=='OPEN')return fail(c,'Only an open discrepancy can be resolved',409);
+  if(!String(b.resolution||'').trim())return fail(c,'Resolution is required');
+  await run(c.env.DB,`
+    UPDATE erp_receiving_variances
+    SET status='RESOLVED',resolution=?,approved_by=?,approved_at=datetime('now')
+    WHERE id=?`,[String(b.resolution).trim(),c.get('erpUser').email,id]);
+  const after=await first(c.env.DB,`SELECT * FROM erp_receiving_variances WHERE id=?`,[id]);
+  await audit(c,{action:'RESOLVE_VARIANCE',module:'RECEIVING',recordType:'RECEIVING_VARIANCE',
+    recordId:id,recordNo:after.variance_no,before,after});
+  return ok(c,{variance:after});
 });
 
 receivingRoutes.post('/validate', requirePermission('RECEIVING','CREATE'), async(c)=>{
@@ -71,7 +120,10 @@ receivingRoutes.post('/', requirePermission('RECEIVING','POST'), async(c)=>{
   const classified=await classifyReceivingLines(c.env.DB,shipment,rawLines);
   if(classified.some(x=>x.acceptance==='INVALID'))return fail(c,'One or more actual serials are blank or invalid.');
 
-  const location=await ensureLocation(c.env.DB,b.locationName||'E88 Asgard Warehouse',b.locationType||'WAREHOUSE',b.locationCode||'');
+  if(!b.locationId)return fail(c,'Select the warehouse or retail receiving location.');
+  const location=await first(c.env.DB,`
+    SELECT * FROM erp_locations WHERE id=? AND active=1`,[Number(b.locationId)]);
+  if(!location)return fail(c,'The selected receiving location is not active.',409);
   const receiptNo=await nextCode(c.env.DB,'RECEIPT','RCV',6);
   const user=c.get('erpUser').email;
   const receivedAt=b.receivedAt||new Date().toISOString();
@@ -164,8 +216,64 @@ receivingRoutes.post('/', requirePermission('RECEIVING','POST'), async(c)=>{
   let status='PARTIALLY_RECEIVED';
   if(Number(lineTotals?.received_qty||0)>=Number(lineTotals?.expected_qty||0)) status=(openVariance?.n||0)>0?'RECEIVED_WITH_EXCEPTIONS':'RECEIVED';
   await run(c.env.DB,`UPDATE erp_shipments SET status=?,warehouse_arrival=COALESCE(warehouse_arrival,?),updated_at=datetime('now') WHERE id=?`,[status,receivedAt,shipment.id]);
+  if(shipment.purchase_order_ref){
+    const purchaseOrder=await first(c.env.DB,`
+      SELECT * FROM erp_purchase_orders WHERE purchase_order_no=?`,[shipment.purchase_order_ref]);
+    if(purchaseOrder){
+      await run(c.env.DB,`
+        UPDATE erp_purchase_order_lines
+        SET received_qty=(
+          SELECT COUNT(*)
+          FROM erp_receipt_lines rl
+          JOIN erp_receipts r ON r.id=rl.receipt_id
+          JOIN erp_shipments s ON s.id=r.shipment_id
+          WHERE s.purchase_order_ref=?
+            AND rl.item_id=erp_purchase_order_lines.item_id
+            AND rl.acceptance_status NOT IN ('DUPLICATE_SERIAL','DUPLICATE_IN_RECEIPT','EXPECTED_ALREADY_CLOSED','DIFFERENT_ITEM')
+        ),
+        status=CASE
+          WHEN ordered_qty<=(
+            SELECT COUNT(*)
+            FROM erp_receipt_lines rl
+            JOIN erp_receipts r ON r.id=rl.receipt_id
+            JOIN erp_shipments s ON s.id=r.shipment_id
+            WHERE s.purchase_order_ref=?
+              AND rl.item_id=erp_purchase_order_lines.item_id
+              AND rl.acceptance_status NOT IN ('DUPLICATE_SERIAL','DUPLICATE_IN_RECEIPT','EXPECTED_ALREADY_CLOSED','DIFFERENT_ITEM')
+          ) THEN 'RECEIVED' ELSE 'OPEN' END
+        WHERE purchase_order_id=?`,[shipment.purchase_order_ref,shipment.purchase_order_ref,purchaseOrder.id]);
+      const poTotals=await first(c.env.DB,`
+        SELECT COALESCE(SUM(ordered_qty),0) ordered_qty,COALESCE(SUM(received_qty),0) received_qty
+        FROM erp_purchase_order_lines WHERE purchase_order_id=?`,[purchaseOrder.id]);
+      const poStatus=Number(poTotals?.received_qty||0)>=Number(poTotals?.ordered_qty||0)?'RECEIVED':'PARTIALLY_RECEIVED';
+      await run(c.env.DB,`
+        UPDATE erp_purchase_orders SET status=?,updated_at=datetime('now') WHERE id=?`,
+        [poStatus,purchaseOrder.id]);
+    }
+  }
+  const receiptValue=await first(c.env.DB,`
+    SELECT COALESCE(SUM(a.unit_cost),0) amount
+    FROM erp_assets a WHERE a.receipt_id=?`,[receiptId]);
+  const purchaseOrder=shipment.purchase_order_ref?await first(c.env.DB,`
+    SELECT * FROM erp_purchase_orders WHERE purchase_order_no=?`,[shipment.purchase_order_ref]):null;
+  await captureFinanceEvent(c.env.DB,{
+    eventKey:`RECEIPT:${receiptId}`,
+    eventType:'GOODS_RECEIPT',
+    sourceModule:'RECEIVING',
+    sourceType:'RECEIPT',
+    sourceId:receiptId,
+    sourceNo:receiptNo,
+    eventDate:receivedAt,
+    partnerId:purchaseOrder?.vendor_id||null,
+    amount:Number(receiptValue?.amount||0),
+    currency:purchaseOrder?.currency||'PHP',
+    description:`Goods receipt ${receiptNo} against ${shipment.purchase_order_ref||'unlinked PO'}`,
+    payload:{netAmount:Number(receiptValue?.amount||0)},
+  },user);
   await audit(c,{action:'POST_RECEIPT',module:'RECEIVING',recordType:'RECEIPT',recordId:receiptId,recordNo:receiptNo,after:{shipmentNo:shipment.shipment_no,summary,results}});
-  return ok(c,{receiptId,receiptNo,shipmentStatus:status,results,summary},201);
+  return ok(c,{receiptId,receiptNo,shipmentStatus:status,
+    location:{id:location.id,code:location.code,name:location.name,type:location.location_type},
+    results,summary},201);
 });
 
 receivingRoutes.get('/:id', requirePermission('RECEIVING','VIEW'), async(c)=>{

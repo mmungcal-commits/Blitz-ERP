@@ -8,6 +8,33 @@ import { getAsset, isAvailable } from '../lib/inventory.js';
 
 export const salesRoutes = new Hono();
 
+salesRoutes.get('/lookups', requirePermission('SALES','VIEW'), async c => {
+  const [customers,employees,items,assets]=await Promise.all([
+    all(c.env.DB,`SELECT id,partner_code,name,credit_status,overdue_balance
+      FROM erp_partners WHERE partner_type='CUSTOMER' AND active=1 ORDER BY name`),
+    all(c.env.DB,`SELECT id,partner_code,name,'CLEAR' credit_status,0 overdue_balance
+      FROM erp_partners WHERE partner_type='EMPLOYEE' AND active=1 ORDER BY name`),
+    all(c.env.DB,`SELECT id,item_code,item_name,category,serialized,standard_cost
+      FROM erp_items WHERE active=1 ORDER BY category,item_name`),
+    all(c.env.DB,`SELECT a.id,a.serial_no,a.item_id,a.item_code,a.item_name,a.category,
+        a.current_location_code,a.current_status,a.unit_cost
+      FROM erp_assets a
+      WHERE a.active=1 AND a.current_status IN ('AVAILABLE','IN_STOCK')
+        AND a.reconciliation_status='CLEAR'
+        AND NOT EXISTS(
+          SELECT 1 FROM erp_sales_lines l JOIN erp_sales_orders s ON s.id=l.sales_order_id
+          WHERE l.asset_id=a.id AND s.status IN ('DRAFT','APPROVED','FULFILMENT')
+        )
+        AND NOT EXISTS(
+          SELECT 1 FROM erp_requisition_allocations ra JOIN erp_requisitions r ON r.id=ra.requisition_id
+          WHERE ra.asset_id=a.id AND ra.allocation_status IN ('SELECTED','RESERVED','ISSUED')
+            AND r.status NOT IN ('CANCELLED','FULFILLED')
+        )
+      ORDER BY a.category,a.item_name,a.serial_no`),
+  ]);
+  return ok(c,{customers,employees,items,assets});
+});
+
 salesRoutes.get('/', requirePermission('SALES','VIEW'), async c => {
   const {page,size,offset}=pageParams(c); const q=`%${normalizeText(c.req.query('q'))}%`; const status=normalizeText(c.req.query('status')); const type=normalizeText(c.req.query('type'));
   const where=[];const args=[];if(q!=='%%'){where.push('(s.sales_order_no LIKE ? OR p.name LIKE ?)');args.push(q,q);}if(status){where.push('s.status=?');args.push(status);}if(type){where.push('s.transaction_type=?');args.push(type);}const w=where.length?`WHERE ${where.join(' AND ')}`:'';

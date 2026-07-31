@@ -4,6 +4,7 @@ import { ok, fail, jsonBody, pageParams, numberValue } from '../lib/http.js';
 import { requirePermission } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { ensurePartner, ensureItem, nextCode, normalizeText } from '../lib/codes.js';
+import { captureFinanceEvent } from '../lib/finance.js';
 
 export const procurementRoutes = new Hono();
 
@@ -64,5 +65,14 @@ procurementRoutes.post('/landed-cost/:id/post', requirePermission('PROCUREMENT',
   const assets=await all(c.env.DB,`SELECT * FROM erp_assets WHERE (? IS NOT NULL AND shipment_id=?) OR (? IS NOT NULL AND shipment_id IN (SELECT id FROM erp_shipments WHERE purchase_order_ref=(SELECT purchase_order_no FROM erp_purchase_orders WHERE id=?)))`,[header.shipment_id,header.shipment_id,header.purchase_order_id,header.purchase_order_id]); if(!assets.length)return fail(c,'No received assets are available for allocation');
   const basis=assets.map(a=>header.allocation_method==='VALUE'?Math.max(numberValue(a.unit_cost),1):1); const totalBasis=basis.reduce((s,x)=>s+x,0); let allocated=0;
   for(let i=0;i<assets.length;i++){const amount=i===assets.length-1?header.total_cost-allocated:Math.round((header.total_cost*basis[i]/totalBasis)*100)/100;allocated+=amount;await run(c.env.DB,`INSERT INTO erp_landed_cost_allocations(landed_cost_id,asset_id,serial_no,item_id,allocation_basis,allocated_amount) VALUES(?,?,?,?,?,?)`,[id,assets[i].id,assets[i].serial_no,assets[i].item_id,basis[i],amount]);await run(c.env.DB,`UPDATE erp_assets SET landed_cost=landed_cost+?,unit_cost=unit_cost+?,updated_at=datetime('now') WHERE id=?`,[amount,amount,assets[i].id]);}
-  await run(c.env.DB,`UPDATE erp_landed_cost_headers SET status='POSTED',posted_by=?,posted_at=datetime('now') WHERE id=?`,[c.get('erpUser').email,id]); await audit(c,{action:'POST',module:'PROCUREMENT',recordType:'LANDED_COST',recordId:id,recordNo:header.landed_cost_no,after:{assets:assets.length,total:header.total_cost}}); return ok(c,{allocatedAssets:assets.length,totalAllocated:allocated});
+  const user=c.get('erpUser').email;
+  await run(c.env.DB,`UPDATE erp_landed_cost_headers SET status='POSTED',posted_by=?,posted_at=datetime('now') WHERE id=?`,[user,id]);
+  await captureFinanceEvent(c.env.DB,{
+    eventKey:`LANDED_COST:${id}`,eventType:'LANDED_COST',sourceModule:'PROCUREMENT',
+    sourceType:'LANDED_COST',sourceId:id,sourceNo:header.landed_cost_no,
+    eventDate:new Date().toISOString().slice(0,10),amount:header.total_cost,
+    currency:header.currency||'PHP',description:`Landed cost ${header.landed_cost_no}`,
+    payload:{grossAmount:header.total_cost},
+  },user);
+  await audit(c,{action:'POST',module:'PROCUREMENT',recordType:'LANDED_COST',recordId:id,recordNo:header.landed_cost_no,after:{assets:assets.length,total:header.total_cost}}); return ok(c,{allocatedAssets:assets.length,totalAllocated:allocated});
 });

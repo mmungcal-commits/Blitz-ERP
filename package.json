@@ -1,9 +1,9 @@
 {
   "name": "e88-finsys",
-  "version": "8.1.1",
+  "version": "11.0.0",
   "private": true,
   "type": "module",
-  "description": "E88 FinSys Ramco-style connected ERP with ATLAS expected shipments and controlled actual receiving.",
+  "description": "E88 full connected enterprise ERP with distinct operational modules, controlled double-entry Finance, serialized inventory, sales, procurement, lease management, and approval-controlled reversals.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "npm run predeploy && wrangler deploy",

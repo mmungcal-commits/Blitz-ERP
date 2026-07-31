@@ -4,14 +4,14 @@ const item = (code, label, permission, action = 'VIEW') => ({ code, label, permi
 
 export const WORKSPACE_GROUPS = [
   { code:'fa', title:'Finance & Accounting', items:[
-    item('fa-general-accounting','General Accounting','PLANNING'),
-    item('fa-receivables-payables','Receivables & Payables Mgmt.','PLANNING'),
-    item('fa-fixed-assets','Fixed Assets Management','INVENTORY'),
-    item('fa-management-accounting','Management Accounting','PLANNING'),
-    item('fa-consolidation-reporting','Consolidation & Reporting','PLANNING'),
-    item('fa-financial-services','Financial Services','PLANNING'),
-    item('fa-planning-budgeting','Planning & Budgeting','PLANNING'),
-    item('fa-grants-funds','Grants & Funds Management','PLANNING'),
+    item('fa-general-accounting','General Accounting','FINANCE'),
+    item('fa-receivables-payables','Receivables & Payables Mgmt.','FINANCE'),
+    item('fa-fixed-assets','Fixed Assets Management','FINANCE'),
+    item('fa-management-accounting','Management Accounting','FINANCE'),
+    item('fa-consolidation-reporting','Consolidation & Reporting','FINANCE'),
+    item('fa-financial-services','Financial Services','FINANCE'),
+    item('fa-planning-budgeting','Planning & Budgeting','FINANCE'),
+    item('fa-grants-funds','Grants & Funds Management','FINANCE'),
   ]},
   { code:'sd', title:'Sales & Distribution', items:[
     item('sd-crm','CRM','CUSTOMERS'),

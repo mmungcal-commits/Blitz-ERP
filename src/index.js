@@ -20,6 +20,7 @@ import { adminRoutes } from './routes/admin.js';
 import { checklistRoutes } from './routes/checklists.js';
 import { planningRoutes } from './routes/planning.js';
 import { workspaceRoutes } from './routes/workspace.js';
+import { financeRoutes } from './routes/finance.js';
 
 const app = new Hono();
 
@@ -29,7 +30,7 @@ app.use('/api/*', async (c,next)=>{
   return next();
 });
 
-app.get('/api/health', c=>ok(c,{service:'E88 Enterprise System',version:'9.0.0-foundation',build:'E88-CLEAN-FOUNDATION-20260730',time:new Date().toISOString()}));
+app.get('/api/health', c=>ok(c,{service:'E88 Enterprise System',version:'11.0.0-full-connected-erp',build:'E88-FULL-ERP-20260731-R5',time:new Date().toISOString()}));
 app.route('/api/auth',authRoutes);
 app.use('/api/*', requireUser);
 app.route('/api/session',sessionRoutes);
@@ -48,6 +49,7 @@ app.route('/api/stations',stationRoutes);
 app.route('/api/admin',adminRoutes);
 app.route('/api/checklists',checklistRoutes);
 app.route('/api/planning',planningRoutes);
+app.route('/api/finance',financeRoutes);
 app.route('/api/workspace',workspaceRoutes);
 app.all('/api/*',c=>fail(c,'Unknown endpoint',404));
 
@@ -66,7 +68,7 @@ export default {
     const headers=new Headers(asset.headers);
     headers.set('Cache-Control','no-store, no-cache, must-revalidate');
     headers.set('Pragma','no-cache');
-    headers.set('X-E88-Build','E88-CLEAN-FOUNDATION-20260730');
+    headers.set('X-E88-Build','E88-FULL-ERP-20260731-R5');
     return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
   }
 };

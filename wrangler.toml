@@ -21,7 +21,7 @@ ALLOWED_DOMAIN = "nrdev.ph"
 APP_ADMIN_EMAIL = "mmungcal@nrdev.ph"
 APP_TIMEZONE = "Asia/Manila"
 
-# Optional: bind an R2 bucket as DOCS for uploaded ATLAS, QR, PO, receiving, and delivery files.
-# [[r2_buckets]]
-# binding = "DOCS"
-# bucket_name = "e88-finsys-documents"
+# Controlled document storage for lease contracts and ERP supporting files.
+[[r2_buckets]]
+binding = "DOCS"
+bucket_name = "e88-finsys-documents"
