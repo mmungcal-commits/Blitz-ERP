@@ -400,6 +400,7 @@ function workbenchShell(body,active=state.section){
   const tabs=workspaceTabs(module.code);
   const submodules=state.definition?.submodules||[];
   return `<section class="erp-workbench">
+    <div class="workbench-headwrap">
     <header class="workbench-systembar">
       <div><button class="workbench-home" title="Enterprise Modules">▦</button><span class="workbench-user-dot">●</span><b>${esc(user.displayName||user.email)}</b><small>${esc(user.role)}</small></div>
       <div><span>INTERNAL</span><button class="workbench-home">Modules</button><button class="workbench-logout">Sign out</button></div>
@@ -410,6 +411,7 @@ function workbenchShell(body,active=state.section){
     </div>
     <nav class="workbench-tabs">${tabs.map(([id,label])=>`<button data-workbench-section="${id}" class="${active===id?'active':''}">${esc(label)}</button>`).join('')}</nav>
     ${submodules.length?`<nav class="workbench-submodules"><span>Submodules</span>${submodules.map(sub=>`<button data-submodule-code="${esc(sub.submodule_code)}" data-submodule-type="${esc(sub.record_type||'')}" data-submodule-connected="${esc(sub.connected_module_code||'')}" title="${esc(sub.posting_event_type||'Operational submodule')}">${esc(sub.submodule_name)}</button>`).join('')}</nav>`:''}
+    </div>
     <main class="workbench-canvas">${body}</main>
     <footer class="workbench-footer"><span>E88 Enterprise System</span><span>Connected Workspace · © 2026 AL23</span></footer>
   </section>`;
@@ -2397,20 +2399,28 @@ async function renderInventoryAnalysisOverview(){
 async function renderStockAnalysis(search=''){
   content.innerHTML='<div class="workspace-loading">Loading stock analysis...</div>';
   try{
-    const analysis=await api('/inventory/analysis');
+    const [analysis,byClass]=await Promise.all([api('/inventory/analysis'),api('/inventory/by-class')]);
     const q=search.toLowerCase();
     const withStock=analysis.rows.filter(row=>(Number(row.on_hand_qty||0)+Number(row.available_qty||0)+Number(row.leased_qty||0)+Number(row.sold_qty||0))>0);
     const filtered=withStock.filter(row=>!q||`${row.item_code} ${row.item_name} ${row.category}`.toLowerCase().includes(q));
-    const totAvail=filtered.reduce((s,r)=>s+Number(r.available_qty||0),0);
-    const totLeased=filtered.reduce((s,r)=>s+Number(r.leased_qty||0),0);
-    const totVal=filtered.reduce((s,r)=>s+Number(r.inventory_value||0),0);
+    const cls=(byClass.rows||[]);
+    const isMC=c=>['D400','R280','RSPORT'].includes(c.cls);
+    const mcLeased=cls.filter(isMC).reduce((s,c)=>s+Number(c.leased||0),0);
+    const mcAvail=cls.filter(isMC).reduce((s,c)=>s+Number(c.available||0),0);
+    const mcTotal=mcAvail+mcLeased;
+    const mcUtil=mcTotal?Math.round(mcLeased/mcTotal*100):0;
+    const batDeployed=cls.filter(c=>c.cls==='BAT').reduce((s,c)=>s+Number(c.deployed||0),0);
+    const totVal=cls.reduce((s,c)=>s+Number(c.inventory_value||0),0);
+    const summaryRows=cls.map(function(c){var av=Number(c.available||0),ls=Number(c.leased||0),tot=av+ls;var util=tot?Math.round(ls/tot*100):0;return '<tr><td><b>'+esc(c.class_name||c.cls)+'</b></td><td class="num">'+av.toLocaleString()+'</td><td class="num">'+ls.toLocaleString()+'</td><td class="num"><b>'+tot.toLocaleString()+'</b></td><td class="num">'+util+'%</td><td class="num">'+money(c.inventory_value)+'</td></tr>';}).join('');
     const rows=filtered.map(row=>{var av=Number(row.available_qty||0),ls=Number(row.leased_qty||0);return `<tr class="clickable-row" data-analysis-item="${esc(row.item_code)}" data-analysis-class="${esc(row.category)}"><td><b>${esc(row.item_code)}</b></td><td>${esc(row.item_name)}</td><td>${esc(row.category)}</td>
       <td>${esc(row.primary_location||'-')}</td><td class="num">${av.toLocaleString()}</td><td class="num">${ls.toLocaleString()}</td><td class="num">${Number(row.sold_qty||0).toLocaleString()}</td><td class="num"><b>${(av+ls).toLocaleString()}</b></td>
       <td class="num">${money(row.inventory_value)}</td></tr>`;});
     const body=`<div class="workspace-commandbar"><input id="analysisSearch" value="${esc(search)}" placeholder="Search material code, item, or class">
       <button class="command primary" id="runAnalysisSearch">Apply</button><span class="command-spacer"></span><span class="workspace-mode">${filtered.length} ITEMS</span></div>
-      <div class="workspace-kpis">${kpi('Items',filtered.length)}${kpi('Available Units',totAvail.toLocaleString())}${kpi('Leased Units',totLeased.toLocaleString())}${kpi('Inventory Value',money(totVal))}</div>
-      <section class="workspace-card"><header><h2>Inventory by Item</h2><span>Each material code is one distinct item - click a row to open its serial register</span></header>
+      <div class="workspace-kpis">${kpi('Fleet Utilization',mcUtil+'%')}${kpi('Motorcycles Idle',mcAvail.toLocaleString())}${kpi('Battery Swap Pool',batDeployed.toLocaleString())}${kpi('Inventory Value',money(totVal))}</div>
+      <section class="workspace-card"><header><div><h2>Utilization by Class</h2><span>Utilization = leased / total units held. High = fleet earning; low available = idle capital. Motorcycles are the leaseable unit; batteries/chargers ride along.</span></div></header>
+        ${operationalTable(['Inventory Class','Available (Idle)','Leased','Total Units','Utilization','Inventory Value'],summaryRows,{key:'analysis-by-class'})}</section>
+      <section class="workspace-card"><header><div><h2>Inventory by Item</h2><span>Each material code is one distinct item - click a row to open its serial register</span></header></header>
         ${operationalTable(['Material Code','Item','Class','Location','Available','Leased','Sold','Total Units','Inventory Value'],rows,{key:'inventory-analysis',emptyMessage:'No items with stock match your search.'})}</section>`;
     content.innerHTML=workbenchShell(body,'records');bindOperationalShell();
     $('#runAnalysisSearch').onclick=()=>renderStockAnalysis($('#analysisSearch').value);
@@ -2482,23 +2492,27 @@ async function renderInventoryPlans(){
 async function renderInventoryPlanningReports(){
   content.innerHTML='<div class="workspace-loading">Loading planning reports...</div>';
   try{
-    const analysis=await api('/inventory/analysis');
+    const [analysis,byClass]=await Promise.all([api('/inventory/analysis'),api('/inventory/by-class')]);
+    const cls=(byClass.rows||[]);
     const isSpare=r=>String(r.category||'').toUpperCase()==='SP';
     const spareReorder=analysis.rows.filter(r=>isSpare(r)&&Number(r.available_qty||0)===0);
     const deployable=analysis.rows.filter(r=>!isSpare(r)&&Number(r.available_qty||0)>0);
-    const deployUnits=deployable.reduce((s,r)=>s+Number(r.available_qty||0),0);
-    const spareRows=spareReorder.map(r=>`<tr><td><b>${esc(r.item_code)}</b></td><td>${esc(r.item_name)}</td><td class="num">${esc(r.available_qty)}</td><td class="num">${esc(r.incoming_qty)}</td><td class="num">${esc(r.open_po_qty)}</td></tr>`);
-    const deployRows=deployable.map(r=>`<tr><td><b>${esc(r.item_code)}</b></td><td>${esc(r.item_name)}</td><td>${esc(r.category)}</td><td>${esc(r.primary_location||'-')}</td><td class="num">${Number(r.available_qty||0).toLocaleString()}</td></tr>`);
-    const body=`<section class="workspace-card"><header><div><h2>How planning works here</h2></div></header><div class="control-note"><p>Motorcycles, batteries and lockers are <b>unique serialized units</b> - each is received once and cannot be re-ordered, so the planning signal is <b>how many are available to deploy</b>, not a reorder point. Only <b>Spare Parts &amp; Accessories</b> behave like recurring stock that can run out and be reordered.</p></div></section>
-      <div class="workspace-kpis">${kpi('Spare-Part Lines Out of Stock',spareReorder.length)}${kpi('Serialized Units Available to Deploy',deployUnits.toLocaleString())}
-      ${kpi('Incoming Units (ATLAS)',analysis.totals.incoming)}${kpi('Open PO Units',analysis.totals.openPO)}</div>
+    const mcAvail=cls.filter(c=>['D400','R280','RSPORT'].includes(c.cls)).reduce((s,c)=>s+Number(c.available||0),0);
+    const batAvail=cls.filter(c=>c.cls==='BAT').reduce((s,c)=>s+Number(c.available||0),0);
+    const spUnits=cls.filter(c=>c.cls==='SP').reduce((s,c)=>s+Number(c.available||0),0);
+    const clip=v=>{v=String(v||'');return v.length>60?v.slice(0,60)+'...':v;};
+    const spareRows=spareReorder.map(r=>`<tr><td><b>${esc(r.item_code)}</b></td><td>${esc(clip(r.item_name))}</td><td class="num">${esc(r.available_qty)}</td><td class="num">${esc(r.incoming_qty)}</td><td class="num">${esc(r.open_po_qty)}</td></tr>`);
+    const deployRows=deployable.map(r=>`<tr><td><b>${esc(r.item_code)}</b></td><td>${esc(clip(r.item_name))}</td><td>${esc(r.category)}</td><td>${esc(r.primary_location||'-')}</td><td class="num">${Number(r.available_qty||0).toLocaleString()}</td></tr>`);
+    const body=`<section class="workspace-card"><header><div><h2>How planning works here</h2></div></header><div class="control-note"><p>Motorcycles, batteries and lockers are unique serialized units - each is received once and cannot be re-ordered. For them the planning signal is how many are available to deploy (idle capital), not a reorder point. Only Spare Parts &amp; Accessories behave like recurring stock that runs out and is reordered.</p></div></section>
+      <div class="workspace-kpis">${kpi('Spare Parts to Reorder',spareReorder.length)}${kpi('Motorcycles Idle',mcAvail.toLocaleString())}${kpi('Batteries Available',batAvail.toLocaleString())}${kpi('Spare-Part Units on Hand',spUnits.toLocaleString())}</div>
       <section class="workspace-card"><header><h2>Spare Parts to Reorder</h2><span>Recurring items with no available stock - candidates for a purchase order</span></header>
         ${operationalTable(['Material Code','Item','Available','Incoming','Open PO'],spareRows,{emptyMessage:'No spare-part lines are out of stock.'})}</section>
-      <section class="workspace-card"><header><h2>Serialized Units Available to Deploy</h2><span>Unique units on hand and ready to lease, sell, or assign</span></header>
+      <section class="workspace-card"><header><h2>Available to Deploy</h2><span>Serialized units on hand and ready to lease, sell, or assign</span></header>
         ${operationalTable(['Material Code','Item','Class','Location','Available Units'],deployRows,{emptyMessage:'No serialized units are currently available.'})}</section>`;
     content.innerHTML=workbenchShell(body,'reports');bindOperationalShell();
   }catch(error){showWorkspaceError(error);}
 }
+
 
 function renderInventoryPlanningSetup(){
   const body=`<div class="setup-grid"><section class="workspace-card"><header><h2>Planning Sources</h2></header><div class="definition-list">
@@ -3700,19 +3714,6 @@ init();
   obs.observe(document.body,{childList:true,subtree:true});
 
   // expose for debugging / advanced use
-  // KPI cards -> per-class breakdown (inventory modules): fixes 'summed, should be per class'
-  document.addEventListener('click',async function(ev){
-    var card=ev.target.closest('.workspace-kpi'); if(!card)return;
-    var code=(state.module&&state.module.code)||'';
-    if(!/^ip-|warehouse|inventory/.test(code))return;
-    var label=(card.querySelector('span')||{}).textContent||'Metric';
-    modal('Per-class breakdown - '+label,'<div class="workspace-loading">Loading by class...</div>','Split by inventory class');
-    try{
-      var d=await fetch('/api/inventory/by-class',{headers:{accept:'application/json'}}).then(function(r){return r.json();});
-      var arr=d.classes||d.rows||d; if(!Array.isArray(arr))arr=[];
-      var body=arr.map(function(r){return '<tr><td><b>'+esc2(r.class_name||r.cls||r.class_code||'-')+'</b></td><td class="num">'+(r.total||0)+'</td><td class="num">'+(r.available||0)+'</td><td class="num">'+(r.deployed||0)+'</td><td class="num">'+(r.quarantine||0)+'</td></tr>';}).join('');
-      var mb=document.getElementById('modalBody'); if(mb)mb.innerHTML='<div class="record-table-wrap"><table class="record-table"><thead><tr><th>Inventory Class</th><th class="num">Total</th><th class="num">Available</th><th class="num">Deployed</th><th class="num">Quarantine</th></tr></thead><tbody>'+body+'</tbody></table></div>';
-    }catch(e){ var m2=document.getElementById('modalBody'); if(m2)m2.innerHTML='<div class="workspace-error">Could not load the per-class breakdown.</div>'; }
-  });
+  // (removed) generic KPI-click per-class modal - each view now has its own inline analysis
   window.E88Custom={state:S,rebuild:buildCatalog,reset:()=>{localStorage.removeItem(LS);location.reload();}};
 })();
