@@ -187,3 +187,16 @@ button{cursor:pointer}
 .loading-screen img{width:76px;height:54px;object-fit:contain;flex:none}
 /* Declutter: hide the confusing submodule bar; the module tabs are the primary navigation */
 .workbench-submodules{display:none!important}
+/* Compact line editors (requisition/sales/purchase/return lines) */
+.requisition-line,.sales-line,.purchase-line,.return-line,.line-editor-row,.plan-line{align-items:center}
+.requisition-line input,.requisition-line select,.requisition-line textarea,.sales-line input,.sales-line select,.purchase-line input,.purchase-line select,.line-editor-row input,.line-editor-row select{min-height:30px;height:30px;padding:4px 7px;font-size:12px}
+.requisition-line select[multiple]{height:auto;min-height:52px}
+.requisition-line textarea{height:auto;min-height:30px}
+/* Pre-release PDI checklist */
+.pdi-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;margin:6px 0 12px}
+.pdi-check{display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer}
+.pdi-check input{width:16px;height:16px;margin:0}
+.pdi-notes{display:block;font-size:12px}
+.pdi-notes span{color:#94a3b8;font-size:11px}
+.pdi-notes textarea{width:100%}
+@media(max-width:640px){.pdi-grid{grid-template-columns:1fr}}

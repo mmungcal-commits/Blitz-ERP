@@ -1712,22 +1712,38 @@ async function renderPreRelease(){
       const check=latest.get(row.serial_no);
       return `<tr><td><b>${esc(row.requisition_no)}</b></td><td>${esc(row.serial_no)}</td><td>${esc(row.item_name)}</td>
         <td>${esc(row.current_location_code||'—')}</td><td>${check?statusBadge(check.result):statusBadge('PENDING')}</td>
-        <td>${check?date(check.check_date):'—'}</td><td><button class="table-action" data-precheck="${esc(row.serial_no)}" data-result="PASSED">Pass Inspection</button>
-        <button class="table-action danger" data-precheck="${esc(row.serial_no)}" data-result="FAILED">Record Defect</button></td></tr>`;
+        <td>${check?date(check.check_date):'—'}</td><td><button class="table-action" data-checklist="${esc(row.serial_no)}" data-unit="${esc(row.item_name)}" data-req="${esc(row.requisition_no)}">Open checklist</button></td></tr>`;
     });
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],1)}
       <section class="workspace-card"><header><div><h2>Pre-release Checklist Worklist</h2><span>Motorcycles require a passed inspection before goods issuance.</span></div></header>
         ${operationalTable(['Requisition','Serial','Unit','Location','Result','Checked','Action'],rows)}</section>`;
     let __regRows=[];try{let __all=[];for(let __p=1;__p<=8;__p++){const __rg=await api('/checklists?size=250&page='+__p);const __rr=(__rg.rows||[]);__all=__all.concat(__rr);if(__rr.length<250)break;}__regRows=__all.map(r=>`<tr><td><b>${esc(r.checklist_no)}</b></td><td>${esc((r.serial_no||'').slice(0,48))}</td><td>${statusBadge(r.result)}</td><td>${esc(r.approved_by||'-')}</td><td>${esc((r.created_at||'').slice(0,10))}</td></tr>`);}catch(e){}const __regBody=`<section class="workspace-card"><header><div><h2>Pre-release Checklist Register</h2><span>All ${__regRows.length} inspection records (actuals).</span></div></header>${operationalTable(['Checklist #','Serial / Unit','Result','Approved By','Recorded'],__regRows)}</section>`;content.innerHTML=workbenchShell(body+__regBody,'approvals');bindOperationalShell();
-    $$('[data-precheck]').forEach(button=>button.onclick=async()=>{
-      const failed=button.dataset.result==='FAILED';
-      const defects=failed?prompt('Enter the detected defects. The unit will not be released.'):'';
-      if(failed&&!defects)return;
-      try{const result=await api('/checklists',{method:'POST',body:JSON.stringify({
-        serialNo:button.dataset.precheck,result:button.dataset.result,defects:failed?[defects]:[],
-        checklist:{identity:true,brakes:!failed,lights:!failed,tires:!failed,battery:true,documents:true},
-      })});toast(`${result.checklistNo}: ${result.result}`);await renderPreRelease();}
-      catch(error){toast(error.message,'error');}
+    const PDI_ITEMS=[['identity','VIN / engine no. matches record'],['body','Body, panels & paint - no visible damage'],['brakes','Brakes (front & rear) functioning'],['lights','Headlight, tail & signal lights working'],['tires','Tires & wheels - condition and pressure'],['battery','Batteries (x2) seated & charged'],['charger','Charger present and tested'],['electricals','Horn, dashboard & electricals'],['mirrors','Mirrors & side accessories complete'],['documents','Documents, plate & keys complete']];
+    $$('[data-checklist]').forEach(button=>button.onclick=()=>{
+      const serial=button.dataset.checklist,unit=button.dataset.unit||'',req=button.dataset.req||'';
+      const items=PDI_ITEMS.map(([k,label])=>`<label class="pdi-check"><input type="checkbox" data-pdi="${k}" checked><span>${esc(label)}</span></label>`).join('');
+      modal('Pre-release Inspection · '+serial,`<form id="pdiForm" class="operational-form">
+        <div class="pdi-grid">${items}</div>
+        <label class="pdi-notes">Defect notes <span>(required if any item is unchecked)</span>
+          <textarea data-pdi-notes rows="2" placeholder="Describe any defect found"></textarea></label>
+        <div class="modal-actions"><button type="button" class="table-action" data-pdi-tick>Tick all (pass)</button>
+        <button type="button" class="table-action danger" data-pdi-clear>Clear all</button>
+        <button type="submit" class="primary-action">Submit inspection</button></div></form>`,(req?req+' · ':'')+unit);
+      const form=$('#modalBody').querySelector('#pdiForm');
+      form.querySelector('[data-pdi-tick]').onclick=()=>form.querySelectorAll('[data-pdi]').forEach(c=>c.checked=true);
+      form.querySelector('[data-pdi-clear]').onclick=()=>form.querySelectorAll('[data-pdi]').forEach(c=>c.checked=false);
+      form.onsubmit=async e=>{
+        e.preventDefault();
+        const checklist={};const failed=[];
+        form.querySelectorAll('[data-pdi]').forEach(c=>{checklist[c.dataset.pdi]=c.checked;if(!c.checked)failed.push((PDI_ITEMS.find(i=>i[0]===c.dataset.pdi)||[,c.dataset.pdi])[1]);});
+        const notes=(form.querySelector('[data-pdi-notes]').value||'').trim();
+        if(failed.length&&!notes){toast('Enter defect notes for the unchecked items.','error');return;}
+        const result=failed.length?'FAILED':'PASSED';
+        const defects=failed.length?failed.concat(notes?['Notes: '+notes]:[]):[];
+        try{const r=await api('/checklists',{method:'POST',body:JSON.stringify({serialNo:serial,result,defects,checklist})});
+          toast(`${r.checklistNo}: ${r.result}`);closeModal();await renderPreRelease();}
+        catch(err){toast(err.message,'error');}
+      };
     });
   }catch(error){showWorkspaceError(error);}
 }
