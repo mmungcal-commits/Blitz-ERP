@@ -12,6 +12,7 @@ export const WORKSPACE_GROUPS = [
     item('fa-financial-services','Financial Services','FINANCE'),
     item('fa-planning-budgeting','Planning & Budgeting','FINANCE'),
     item('fa-grants-funds','Grants & Funds Management','FINANCE'),
+    item('ip-supplier-portal','Vendor Accreditation','FINANCE'),
   ]},
   { code:'sd', title:'Sales & Distribution', items:[
     item('sd-crm','CRM','CUSTOMERS'),
@@ -31,7 +32,6 @@ export const WORKSPACE_GROUPS = [
     item('ip-sourcing-purchasing','Sourcing & Purchasing','PROCUREMENT'),
     item('ip-inbound-logistics','Inbound Logistics','SHIPMENTS'),
     item('ip-subcontracting','Subcontracting','PROCUREMENT'),
-    item('ip-supplier-portal','Supplier Portal','SHIPMENTS'),
   ]},
   { code:'mf', title:'Manufacturing', items:[
     item('mf-estimation','Estimation','PLANNING'),
