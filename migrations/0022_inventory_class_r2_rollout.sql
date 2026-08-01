@@ -162,8 +162,7 @@ SELECT
     WHEN upper(i.item_code) LIKE 'BAT-%' OR upper(i.item_code) LIKE 'BAT0%' THEN 'BAT'
     WHEN upper(i.item_code) LIKE 'BSS%' THEN 'BSS'
     WHEN upper(i.item_code) LIKE 'CHG%' OR upper(i.item_code) LIKE 'BATCH%' THEN 'CHG'
-    WHEN upper(i.item_code) LIKE 'ESP%' OR upper(i.item_code) LIKE 'SP%' OR upper(i.item_code) LIKE 'PAR%' THEN 'SP'
-    ELSE 'OTH' END class_code,
+    ELSE 'SP' END class_code,
   CASE
     WHEN upper(i.item_code) LIKE 'MC-%' AND upper(i.item_name) LIKE '%D400%' THEN 'Motorcycle D400'
     WHEN upper(i.item_code) LIKE 'MC-%' AND upper(i.item_name) LIKE '%SPORT%' THEN 'Motorcycle R280 Sport'
@@ -171,8 +170,7 @@ SELECT
     WHEN upper(i.item_name) LIKE '%LOCKER%' OR upper(i.item_code) LIKE 'BSS%' THEN 'Lockers / BSS'
     WHEN upper(i.item_name) LIKE '%CHARGER%' OR upper(i.item_code) LIKE 'CHG%' OR upper(i.item_code) LIKE 'BATCH%' THEN 'Chargers'
     WHEN upper(i.item_name) LIKE '%AMPACE%' OR upper(i.item_code) LIKE 'BAT-%' OR upper(i.item_code) LIKE 'BAT0%' THEN 'Batteries'
-    WHEN upper(i.item_code) LIKE 'ESP%' OR upper(i.item_code) LIKE 'SP%' OR upper(i.item_code) LIKE 'PAR%' THEN 'Spare Parts'
-    ELSE 'Other Inventory' END class_name,
+    ELSE 'Spare Parts & Accessories' END class_name,
   i.id item_id,i.item_code,i.item_name,
   l.id location_id,COALESCE(l.code,'UNASSIGNED') location_code,COALESCE(l.name,'Unassigned') location_name,
   a.current_status,
