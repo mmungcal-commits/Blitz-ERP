@@ -250,3 +250,11 @@ INSERT OR REPLACE INTO erp_settings(key,value,updated_at) VALUES
 ('APP_VERSION','13.1.0-inventory-class-r2-rollout',datetime('now')),
 ('INVENTORY_CLASS_POLICY','MOTORCYCLE_BATTERY_LOCKER_BSS_CHARGER_SPARE_PART_SEPARATE_QUANTITY_VALUE_GL',datetime('now')),
 ('R2_DOCUMENT_POLICY','R2_BINDING_REQUIRED_FOR_SUPPORTING_DOCUMENTS_AND_CONTRACTS',datetime('now'));
+
+-- v13.1 in-place correction: anchor on-hand inventory to the ATLAS registry (no new database).
+-- Serials not in the ATLAS expected registry (battery swap variants, legacy duplicates) are
+-- deactivated as reconciling items. Non-destructive (records preserved), reversible, idempotent.
+UPDATE erp_assets
+   SET active=0
+ WHERE active=1
+   AND serial_no NOT IN (SELECT serial_no FROM erp_expected_assets WHERE serial_no IS NOT NULL);
