@@ -10,7 +10,7 @@ export const masterRoutes = new Hono();
 masterRoutes.get('/lookups', requireAnyPermission(['INVENTORY','PROCUREMENT','SALES','CUSTOMERS','RECEIVING','STATIONS'],'VIEW'), async (c) => {
   const [items, locations, customers, vendors, employees] = await Promise.all([
     all(c.env.DB, `SELECT id,item_code,item_name,category,serialized,standard_cost FROM erp_items WHERE active=1 ORDER BY category,item_name`),
-    all(c.env.DB, `SELECT id,code,name,location_type,partner_name FROM erp_locations WHERE active=1 ORDER BY name`),
+    all(c.env.DB, `SELECT id,code,name,location_type,partner_name FROM erp_locations WHERE active=1 AND location_type<>'OTHER' ORDER BY CASE location_type WHEN 'WAREHOUSE' THEN 1 WHEN 'RETAIL' THEN 2 WHEN 'PORT' THEN 3 WHEN 'QUARANTINE' THEN 4 WHEN 'CUSTOMER_SITE' THEN 5 ELSE 6 END,name`),
     all(c.env.DB, `SELECT id,partner_code,name,credit_status,overdue_balance FROM erp_partners WHERE partner_type='CUSTOMER' AND active=1 ORDER BY name`),
     all(c.env.DB, `SELECT id,partner_code,name FROM erp_partners WHERE partner_type='VENDOR' AND active=1 ORDER BY name`),
     all(c.env.DB, `SELECT id,partner_code,name FROM erp_partners WHERE partner_type='EMPLOYEE' AND active=1 ORDER BY name`),

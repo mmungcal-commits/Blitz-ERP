@@ -14,7 +14,7 @@ returnRoutes.get('/', requirePermission('RETURNS','VIEW'), async(c)=>{
   const {page,size,offset}=pageParams(c); const status=c.req.query('status')||''; const args=[]; let where='';
   if(status){where='WHERE r.status=?';args.push(status);}
   const rows=await all(c.env.DB,`SELECT r.*,a.assignment_no,p.name partner_name,l.code return_location_code,
-    d.delivery_no,s.sales_order_no,s.customer_name,
+    d.delivery_no,s.sales_order_no,(SELECT name FROM erp_partners WHERE id=s.customer_id) customer_name,
     (SELECT COUNT(*) FROM erp_return_lines x WHERE x.return_id=r.id) line_count,
     (SELECT COUNT(*) FROM erp_return_lines x WHERE x.return_id=r.id AND x.acceptance_status!='MATCHED') exception_count
     FROM erp_return_orders r
@@ -68,7 +68,7 @@ returnRoutes.get('/assignments/active', requirePermission('RETURNS','VIEW'), asy
 
 returnRoutes.get('/deliveries/returnable', requirePermission('RETURNS','VIEW'), async c=>{
   const rows=await all(c.env.DB,`SELECT d.id delivery_id,d.delivery_no,d.actual_delivery_date,
-    s.id sales_order_id,s.sales_order_no,s.customer_id,s.customer_name,s.gross_amount,
+    s.id sales_order_id,s.sales_order_no,s.customer_id,(SELECT name FROM erp_partners WHERE id=s.customer_id) customer_name,s.gross_amount,
     (SELECT COUNT(*) FROM erp_delivery_assets da WHERE da.delivery_id=d.id AND da.asset_id IS NOT NULL) delivered_assets,
     (SELECT COUNT(*) FROM erp_delivery_assets da WHERE da.delivery_id=d.id AND da.asset_id IS NOT NULL
       AND NOT EXISTS(SELECT 1 FROM erp_return_orders ro JOIN erp_return_lines rl ON rl.return_id=ro.id
@@ -109,7 +109,7 @@ returnRoutes.post('/', requirePermission('RETURNS','CREATE'), async(c)=>{
     partnerId=assignment.partner_id||b.partnerId||null;
   }else{
     saleDelivery=await first(c.env.DB,`SELECT d.*,s.id sales_order_id,s.sales_order_no,s.customer_id,
-      s.customer_name,s.gross_amount FROM erp_deliveries d JOIN erp_sales_orders s ON s.id=d.sales_order_id
+      (SELECT name FROM erp_partners WHERE id=s.customer_id) customer_name,s.gross_amount FROM erp_deliveries d JOIN erp_sales_orders s ON s.id=d.sales_order_id
       WHERE d.id=? AND d.status='DELIVERED' AND s.transaction_type='SALE'`,[deliveryId]);
     if(!saleDelivery)return fail(c,'The selected delivery is not a completed customer sale.',409);
     available=await all(c.env.DB,`SELECT da.asset_id,da.serial_no,a.category,a.unit_cost
