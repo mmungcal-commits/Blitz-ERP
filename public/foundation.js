@@ -3224,26 +3224,34 @@ init();
 
   const persist=()=>write(S);
   // --- Generic clickable-row record inspector (makes every table row open its details) ---
-  (function(){const st=document.createElement('style');st.textContent='.cz-inspectable{cursor:pointer}.cz-inspectable:hover>td{background:#eef7fc!important}';document.head.appendChild(st);})();
+  (function(){const st=document.createElement('style');st.textContent='table.record-table tbody tr{cursor:pointer}table.record-table tbody tr:hover>td{background:#eef7fc}';document.head.appendChild(st);})();
   function czOpenRowDetail(headers,tr){
-    const cells=[...tr.children];
-    const first=(cells[0]?cells[0].textContent.trim():'')||'Record';
-    const fields=headers.map((h,i)=>({label:h||('Column '+(i+1)),value:cells[i]?cells[i].textContent.replace(/\s+/g,' ').trim():''})).filter(f=>f.value!=='');
-    const body='<div class="inventory-detail-grid">'+fields.map(f=>'<div><small>'+esc2(f.label)+'</small><b>'+esc2(f.value)+'</b></div>').join('')+'</div>';
-    try{modal('Record \u00b7 '+first,body,'Full details for this row');}catch(e){}
+    var cells=[].slice.call(tr.children);
+    var first=(cells[0]?cells[0].textContent.trim():'')||'Record';
+    var fields=headers.map(function(h,i){return {label:h||('Column '+(i+1)),value:cells[i]?cells[i].textContent.replace(/\s+/g,' ').trim():''};}).filter(function(f){return f.value!=='';});
+    var grid='<div class="inventory-detail-grid">'+fields.map(function(f){return '<div><small>'+esc2(f.label)+'</small><b>'+esc2(f.value)+'</b></div>';}).join('')+'</div>';
+    var body=grid+'<div class="modal-actions"><button class="button secondary" id="czPrintRow">Print slip</button></div>';
+    try{ modal('Record - '+first,body,'Full details - click Print slip for a formal document');
+      var pb=document.getElementById('czPrintRow'); if(pb) pb.onclick=function(){czPrintSlip(first,fields);};
+    }catch(e){}
   }
-  function czWireRowInspector(table){
-    const headers=[...table.querySelectorAll('thead th')].map(th=>th.textContent.replace(/[\u25b2\u25bc]/g,'').trim());
-    table.querySelectorAll('tbody tr').forEach(tr=>{
-      if(tr.__czRow)return;
-      if(tr.classList.contains('clickable-row'))return;
-      if(![...tr.children].some(td=>(td.textContent||'').trim()))return;
-      if(tr.querySelector('[colspan]'))return;
-      tr.__czRow=true;
-      tr.classList.add('cz-inspectable');
-      tr.addEventListener('click',ev=>{ if(ev.target.closest('button,a,input,select,textarea,label'))return; czOpenRowDetail(headers,tr); });
-    });
+  function czWireRowInspector(){}
+  function czPrintSlip(title,fields){
+    var brand=(S.branding&&S.branding.appTitle)||'E88 Enterprise System';
+    var rows=fields.map(function(f){return '<tr><th>'+esc2(f.label)+'</th><td>'+esc2(f.value)+'</td></tr>';}).join('');
+    var w=window.open('','_blank','width=840,height=920'); if(!w){alert('Please allow pop-ups to print.');return;}
+    w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+esc2(title)+'</title><style>*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#17212b;padding:26px}header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0a2239;padding-bottom:10px;margin-bottom:16px}h1{font-size:18px;margin:0;color:#0a2239}.doc{margin-top:3px;color:#555;font-size:13px;font-weight:700}.meta{text-align:right;color:#666;font-size:11px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #c9d3db;padding:7px 10px;text-align:left;vertical-align:top}th{background:#eef2f6;width:220px;color:#334}.sign{display:flex;gap:34px;margin-top:52px}.sign>div{flex:1;border-top:1px solid #333;padding-top:6px;font-size:11px;color:#555;text-align:center}.bar{margin-top:22px}.bar button{padding:9px 18px;border:1px solid #0a2239;background:#0a2239;color:#fff;border-radius:4px;cursor:pointer;font-size:12px}@media print{.bar{display:none}}</style></head><body><header><div><h1>'+esc2(brand)+'</h1><div class="doc">'+esc2(title)+'</div></div><div class="meta">Printed '+new Date().toLocaleString()+'</div></header><table>'+rows+'</table><div class="sign"><div>Prepared by / Date</div><div>Approved by / Date</div><div>Received by / Date</div></div><div class="bar"><button onclick="window.print()">Print this document</button></div></body></html>');
+    w.document.close();
   }
+  document.addEventListener('click',function(ev){
+    if(ev.target.closest('button,a,input,select,textarea,label'))return;
+    var tr=ev.target.closest('table.record-table tbody tr'); if(!tr)return;
+    if(tr.classList.contains('clickable-row'))return;
+    if(tr.querySelector('[colspan]'))return;
+    if(![].slice.call(tr.children).some(function(td){return (td.textContent||'').trim();}))return;
+    var headers=[].slice.call(tr.closest('table').querySelectorAll('thead th')).map(function(th){return th.textContent.replace(/[▲▼]/g,'').trim();});
+    czOpenRowDetail(headers,tr);
+  })
   const esc2=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
   /* ---------- catalog overrides (data level, re-applied every render) ---------- */
@@ -3472,7 +3480,7 @@ init();
       th.addEventListener('contextmenu',ev=>{ev.preventDefault();columnMenu(wrap,i,ev.clientX,ev.clientY);});
     });
   }
-  function applyAllTables(){$$('.record-table-wrap[data-table-key]').forEach(w=>{wireTable(w);applyTable(w);});$$('table.record-table').forEach(czWireRowInspector);}
+  function applyAllTables(){$$('.record-table-wrap[data-table-key]').forEach(w=>{wireTable(w);applyTable(w);});}
   let _czTimer=null;
   function scheduleApply(){ if(_czTimer)return; _czTimer=setTimeout(()=>{_czTimer=null;try{applyAllTables();}catch(e){}},200); }
   const obs=new MutationObserver(muts=>{ if(muts.some(m=>m.addedNodes&&m.addedNodes.length))scheduleApply(); });
