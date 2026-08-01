@@ -36,6 +36,24 @@ salesRoutes.get('/lookups', requirePermission('SALES','VIEW'), async c => {
   return ok(c,{customers,employees,items,assets});
 });
 
+salesRoutes.get('/reports/units-by-month', requirePermission('SALES','VIEW'), async c => {
+  const from=(c.req.query('from')||'').trim();const to=(c.req.query('to')||'').trim();
+  const args=[];let dateWhere='';
+  if(from&&to){dateWhere=' AND date(so.order_date) BETWEEN date(?) AND date(?)';args.push(from,to);}
+  const rows=await all(c.env.DB,`
+    SELECT strftime('%Y-%m', so.order_date) ym,
+      COALESCE(v.class_name,'Other') class_name,
+      COUNT(*) units,
+      ROUND(SUM(COALESCE(sl.qty,1)*COALESCE(sl.unit_price,0)),2) amount
+    FROM erp_sales_lines sl
+    JOIN erp_sales_orders so ON so.id=sl.sales_order_id
+    LEFT JOIN (SELECT DISTINCT item_id,class_code,class_name FROM vw_erp_inventory_by_item_class) v ON v.item_id=sl.item_id
+    WHERE so.order_date IS NOT NULL AND upper(so.transaction_type) LIKE 'SALE%'${dateWhere}
+    GROUP BY ym, class_name
+    ORDER BY ym DESC, class_name`, args);
+  return ok(c,{rows,from,to});
+});
+
 salesRoutes.get('/', requirePermission('SALES','VIEW'), async c => {
   const {page,size,offset}=pageParams(c); const q=`%${normalizeText(c.req.query('q'))}%`; const status=normalizeText(c.req.query('status')); const type=normalizeText(c.req.query('type'));
   const where=[];const args=[];if(q!=='%%'){where.push('(s.sales_order_no LIKE ? OR p.name LIKE ?)');args.push(q,q);}if(status){where.push('s.status=?');args.push(status);}if(type){where.push('s.transaction_type=?');args.push(type);}const w=where.length?`WHERE ${where.join(' AND ')}`:'';

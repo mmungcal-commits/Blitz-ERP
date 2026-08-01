@@ -45,6 +45,19 @@ inventoryRoutes.get('/by-class', requirePermission('INVENTORY','VIEW'), async(c)
     GROUP BY class_code,class_name,item_id,item_code,item_name
     HAVING COALESCE(SUM(quantity),0)>0
     ORDER BY CASE class_code WHEN 'D400' THEN 1 WHEN 'R280' THEN 2 WHEN 'RSPORT' THEN 3 WHEN 'BAT' THEN 4 WHEN 'BSS' THEN 5 WHEN 'CHG' THEN 6 WHEN 'SP' THEN 7 ELSE 8 END,item_name`);
+  const from=(c.req.query('from')||'').trim();const to=(c.req.query('to')||'').trim();
+  if(from&&to){
+    const mv=await all(c.env.DB,`
+      SELECT v.class_code cls,
+        SUM(CASE WHEN upper(so.transaction_type) LIKE 'SALE%' THEN 1 ELSE 0 END) sold,
+        SUM(CASE WHEN upper(so.transaction_type) LIKE 'LEASE%' OR upper(so.transaction_type) LIKE 'RENT%' THEN 1 ELSE 0 END) leased
+      FROM erp_sales_lines sl
+      JOIN erp_sales_orders so ON so.id=sl.sales_order_id
+      JOIN (SELECT DISTINCT item_id,class_code FROM vw_erp_inventory_by_item_class) v ON v.item_id=sl.item_id
+      WHERE so.order_date IS NOT NULL AND date(so.order_date) BETWEEN date(?) AND date(?)
+      GROUP BY v.class_code`,[from,to]);
+    return ok(c,{rows,items,totalItems:items.length,movement:mv,from,to});
+  }
   return ok(c,{rows,items,totalItems:items.length});
 });
 
@@ -97,7 +110,7 @@ inventoryRoutes.get('/visibility', requirePermission('INVENTORY','VIEW'), async(
       SUM(CASE WHEN a.reconciliation_status!='CLEAR' THEN 1 ELSE 0 END) unreconciled_units
     FROM erp_locations l
     LEFT JOIN erp_assets a ON a.current_location_id=l.id AND a.active=1
-    WHERE l.active=1
+    WHERE l.active=1 AND l.name NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' AND COALESCE(l.code,'') NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'
     GROUP BY l.id ORDER BY l.name`);
   return ok(c,{rows,byLocation,summary,page,size,total:Number(count?.total||0)});
 });
@@ -120,6 +133,9 @@ inventoryRoutes.get('/analysis', requirePermission('INVENTORY','VIEW'), async(c)
       (SELECT COALESCE(SUM(pol.ordered_qty-pol.received_qty),0)
         FROM erp_purchase_order_lines pol JOIN erp_purchase_orders po ON po.id=pol.purchase_order_id
         WHERE pol.item_id=i.id AND po.status IN ('APPROVED','PARTIALLY_RECEIVED')) open_po_qty,
+      (SELECT COUNT(*) FROM erp_assets a WHERE a.item_id=i.id AND a.active=1 AND a.current_status='LEASED') leased_qty,
+      (SELECT COUNT(*) FROM erp_assets a WHERE a.item_id=i.id AND a.active=1 AND a.current_status='SOLD') sold_qty,
+      (SELECT l.name FROM erp_assets a JOIN erp_locations l ON l.id=a.current_location_id WHERE a.item_id=i.id AND a.active=1 AND l.name NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' GROUP BY l.id ORDER BY COUNT(*) DESC LIMIT 1) primary_location,
       (SELECT COUNT(DISTINCT a.current_location_id) FROM erp_assets a WHERE a.item_id=i.id AND a.active=1) location_count
     FROM erp_items i
     WHERE i.active=1
@@ -128,11 +144,11 @@ inventoryRoutes.get('/analysis', requirePermission('INVENTORY','VIEW'), async(c)
     SELECT current_status status,COUNT(*) qty
     FROM erp_assets WHERE active=1 GROUP BY current_status ORDER BY qty DESC`);
   const totals=rows.reduce((out,row)=>{
-    out.items+=1;out.onHand+=Number(row.on_hand_qty||0);out.available+=Number(row.available_qty||0);
+    out.items+=1;out.onHand+=Number(row.on_hand_qty||0);out.available+=Number(row.available_qty||0);out.leased+=Number(row.leased_qty||0);out.sold+=Number(row.sold_qty||0);
     out.incoming+=Number(row.incoming_qty||0);out.openPO+=Number(row.open_po_qty||0);
     out.quarantine+=Number(row.quarantine_qty||0);out.unvalued+=Number(row.unvalued_qty||0);
     out.inventoryValue+=Number(row.inventory_value||0);return out;
-  },{items:0,onHand:0,available:0,incoming:0,openPO:0,quarantine:0,unvalued:0,inventoryValue:0});
+  },{items:0,onHand:0,available:0,leased:0,sold:0,incoming:0,openPO:0,quarantine:0,unvalued:0,inventoryValue:0});
   return ok(c,{rows,byStatus,totals});
 });
 
@@ -368,7 +384,7 @@ inventoryRoutes.post('/cycle-counts', requirePermission('INVENTORY','CREATE'), a
   const created=await run(c.env.DB,`
     INSERT INTO erp_cycle_counts(count_no,location_id,category,count_date,status,assigned_to,instructions,expected_units,created_by)
     VALUES(?,?,?,?, 'OPEN',?,?,?,?)`,
-    [countNo,location.id,category,b.assignedTo||'',b.instructions||'',assets.length,user]);
+    [countNo,location.id,category,countDate,b.assignedTo||'',b.instructions||'',assets.length,user]);
   const countId=created.meta.last_row_id;
   for(const asset of assets){
     await run(c.env.DB,`

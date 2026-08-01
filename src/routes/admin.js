@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { all, first, run } from '../lib/db.js';
 import { ok, fail, jsonBody } from '../lib/http.js';
-import { ERP_MODULES, requirePermission } from '../lib/auth.js';
+import { ERP_MODULES, requirePermission, requireUser, permissionFor } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { normalizeText, nextCode, normalizeSerial } from '../lib/codes.js';
 import { randomToken, sha256 } from '../lib/crypto.js';
@@ -135,3 +135,62 @@ adminRoutes.get('/diagnostics', requirePermission('ADMIN','MANAGE'), async c=>{c
 adminRoutes.post('/qr-review', requirePermission('INVENTORY','CREATE'), async c=>{const b=await jsonBody(c);const serial=normalizeSerial(b.detectedSerial||b.rawPayload);const asset=serial?await first(c.env.DB,`SELECT * FROM erp_assets WHERE serial_no=? OR secondary_serial=? LIMIT 1`,[serial,serial]):null;const no=await nextCode(c.env.DB,'QR_REVIEW','QR',8);const r=await run(c.env.DB,`INSERT INTO erp_qr_reviews(review_no,module,raw_payload,detected_serial,asset_id,status,created_by) VALUES(?,?,?,?,?,'FOR_REVIEW',?)`,[no,b.module||'INVENTORY',normalizeText(b.rawPayload),serial,asset?.id||null,c.get('erpUser').email]);return ok(c,{id:r.meta.last_row_id,reviewNo:no,detectedSerial:serial,asset,found:!!asset},201);});
 
 adminRoutes.post('/qr-review/:id/confirm', requirePermission('INVENTORY','POST'), async c=>{const id=Number(c.req.param('id'));const b=await jsonBody(c);const before=await first(c.env.DB,`SELECT * FROM erp_qr_reviews WHERE id=?`,[id]);if(!before)return fail(c,'QR review not found',404);await run(c.env.DB,`UPDATE erp_qr_reviews SET status='CONFIRMED',detected_serial=COALESCE(?,detected_serial),reviewed_by=?,reviewed_at=datetime('now'),posted_record_type=?,posted_record_id=? WHERE id=?`,[b.detectedSerial||null,c.get('erpUser').email,b.postedRecordType||'',b.postedRecordId||null,id]);return ok(c,{confirmed:true});});
+
+
+/* ===== Record Management (gated edit/delete for master data) ===== */
+const RECORD_EDIT_PASSCODE = '031626';
+const RECORD_ENTITIES = {
+  customers:{table:'erp_partners',label:'Customers / Partners',list:['partner_code','name','partner_type','credit_status'],edit:['name','email','phone','address','credit_status'],search:['name','partner_code','email'],active:true,order:'name'},
+  items:{table:'erp_items',label:'Items',list:['item_code','item_name','category','standard_cost'],edit:['item_name','category','standard_cost'],search:['item_code','item_name'],active:true,order:'item_name'},
+  locations:{table:'erp_locations',label:'Locations',list:['code','name','location_type','partner_name'],edit:['name','code','location_type','partner_name'],search:['name','code'],active:true,order:'name'},
+  assets:{table:'erp_assets',label:'Serialized Assets',list:['serial_no','item_name','category','current_status','current_location_code'],edit:['item_name','current_status','condition_code'],search:['serial_no','item_name'],active:true,order:'serial_no'}
+};
+async function recordIsFinance(c){const u=c.get('erpUser');if(!u)return false;if(u.role_code==='ADMIN')return true;const f=await permissionFor(c.env.DB,u,'FINANCE');return !!(f&&(f.can_manage||f.can_edit));}
+async function recordGate(c,passcode){if(await recordIsFinance(c))return true;const code=(c.env&&c.env.RECORD_EDIT_PASSCODE)||RECORD_EDIT_PASSCODE;return passcode!=null&&String(passcode).trim()===String(code);}
+
+adminRoutes.get('/records/config', requireUser, async c=>{
+  const entities=Object.keys(RECORD_ENTITIES).map(k=>({key:k,label:RECORD_ENTITIES[k].label,columns:RECORD_ENTITIES[k].list,editable:RECORD_ENTITIES[k].edit}));
+  return ok(c,{entities,financeAccess:await recordIsFinance(c)});
+});
+adminRoutes.get('/records/:entity', requireUser, async c=>{
+  const def=RECORD_ENTITIES[c.req.param('entity')]; if(!def)return fail(c,'Unknown record type',404);
+  const q=normalizeText(c.req.query('q'));const includeInactive=c.req.query('includeInactive')==='1';
+  const where=[];const args=[];
+  if(def.active&&!includeInactive)where.push('active=1');
+  if(q){where.push('('+def.search.map(col=>col+' LIKE ?').join(' OR ')+')');def.search.forEach(()=>args.push('%'+q+'%'));}
+  const w=where.length?('WHERE '+where.join(' AND ')):'';
+  const cols=['id'].concat(def.list).concat(def.active?['active']:[]);
+  const rows=await all(c.env.DB,`SELECT ${cols.join(',')} FROM ${def.table} ${w} ORDER BY ${def.order||'id'} LIMIT 200`,args);
+  return ok(c,{rows,columns:def.list,hasActive:!!def.active});
+});
+adminRoutes.get('/records/:entity/:id', requireUser, async c=>{
+  const def=RECORD_ENTITIES[c.req.param('entity')]; if(!def)return fail(c,'Unknown record type',404);
+  const row=await first(c.env.DB,`SELECT id,${def.edit.join(',')}${def.active?',active':''} FROM ${def.table} WHERE id=?`,[Number(c.req.param('id'))]);
+  if(!row)return fail(c,'Record not found',404);
+  return ok(c,{record:row,editable:def.edit});
+});
+adminRoutes.post('/records/:entity/:id', requireUser, async c=>{
+  const def=RECORD_ENTITIES[c.req.param('entity')]; if(!def)return fail(c,'Unknown record type',404);
+  const b=await jsonBody(c);
+  if(!await recordGate(c,b.passcode))return fail(c,'A valid edit passcode is required to save changes.',403);
+  const id=Number(c.req.param('id'));
+  const before=await first(c.env.DB,`SELECT * FROM ${def.table} WHERE id=?`,[id]); if(!before)return fail(c,'Record not found',404);
+  const changes=b.changes||{};const sets=[];const args=[];
+  for(const col of def.edit){ if(Object.prototype.hasOwnProperty.call(changes,col)){ sets.push(col+'=?'); args.push(changes[col]===''?null:changes[col]); } }
+  if(!sets.length)return fail(c,'No editable changes provided.');
+  args.push(id);
+  await run(c.env.DB,`UPDATE ${def.table} SET ${sets.join(',')} WHERE id=?`,args);
+  await audit(c,{action:'RECORD_EDIT',module:'ADMIN',recordType:def.table,recordId:id,before,after:changes});
+  return ok(c,{updated:true});
+});
+adminRoutes.post('/records/:entity/:id/delete', requireUser, async c=>{
+  const def=RECORD_ENTITIES[c.req.param('entity')]; if(!def)return fail(c,'Unknown record type',404);
+  if(!def.active)return fail(c,'This record type cannot be deactivated.');
+  const b=await jsonBody(c);
+  if(!await recordGate(c,b.passcode))return fail(c,'A valid edit passcode is required.',403);
+  const id=Number(c.req.param('id'));const val=b.restore?1:0;
+  const before=await first(c.env.DB,`SELECT * FROM ${def.table} WHERE id=?`,[id]); if(!before)return fail(c,'Record not found',404);
+  await run(c.env.DB,`UPDATE ${def.table} SET active=? WHERE id=?`,[val,id]);
+  await audit(c,{action:b.restore?'RECORD_RESTORE':'RECORD_DEACTIVATE',module:'ADMIN',recordType:def.table,recordId:id,after:{active:val}});
+  return ok(c,{deleted:!b.restore,restored:!!b.restore});
+});
