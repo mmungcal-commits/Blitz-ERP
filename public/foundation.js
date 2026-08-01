@@ -26,7 +26,7 @@ function esc(value){
   }[char]));
 }
 function date(value){
-  if(!value)return'—';
+  if(!value)return'-';
   const parsed=new Date(value);
   return Number.isNaN(parsed.getTime())?esc(value):parsed.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});
 }
@@ -305,7 +305,7 @@ function renderLaunchpad(){
   content.innerHTML=`<section class="enterprise-launchpad">
     <div class="launchpad-controls">
       <div><img src="/logo.png" alt="E88"><span>Enterprise Modules</span></div>
-      <div><span>${esc(state.session.user.displayName||state.session.user.email)}</span>${state.session.user.role==='ADMIN'?'<button id="launchAccess">User Access</button>':''}<button id="expandAllGroups">Expand all</button><button id="collapseAllGroups">Collapse all</button><button id="launchLogout">Sign out</button></div>
+      <div><span>${esc(state.session.user.displayName||state.session.user.email)}</span>${state.session.user.role==='ADMIN'?'<button id="launchAccess">User Access</button>':''}<button id="launchRecords">Records</button><button id="expandAllGroups">Expand all</button><button id="collapseAllGroups">Collapse all</button><button id="launchLogout">Sign out</button></div>
     </div>
     <div class="enterprise-map">
       <div class="enterprise-columns">${state.catalog.groups.map(group=>{
@@ -332,9 +332,10 @@ function renderLaunchpad(){
   });
   $('#expandAllGroups').onclick=()=>{state.catalog.groups.forEach(group=>state.expandedGroups.add(group.code));persistGroups();renderLaunchpad();};
   $('#collapseAllGroups').onclick=()=>{state.expandedGroups.clear();persistGroups();renderLaunchpad();};
-  $$('[data-workspace]').forEach(button=>button.onclick=()=>openWorkspace(button.dataset.workspace));
+  $$('[data-workspace]').forEach(button=>button.onclick=()=>{const __c=button.dataset.workspace;if(__c==='addon-analytics')return renderReportsHub();return openWorkspace(__c);});
   $('#launchLogout').onclick=logout;
   if($('#launchAccess'))$('#launchAccess').onclick=renderAccessAdmin;
+  if($('#launchRecords'))$('#launchRecords').onclick=()=>renderRecordConsole();
 }
 
 function renderSidebar(){
@@ -440,7 +441,7 @@ function recordsTable(rows){
   const listFields=(state.definition?.fields||[]).filter(field=>field.list).slice(0,3);
   const value=(row,field)=>{
     const raw=row.payload?.[field.key];
-    if(raw===undefined||raw===null||raw==='')return'—';
+    if(raw===undefined||raw===null||raw==='')return'-';
     if(field.type==='date'||field.type==='datetime-local')return date(raw);
     if(field.type==='number'&&/amount|cost|price|rate|value|balance/i.test(field.key))return money(raw);
     if(field.type==='checkbox')return raw?'Yes':'No';
@@ -448,7 +449,7 @@ function recordsTable(rows){
   };
   return `<div class="record-table-wrap"><table class="record-table"><thead><tr><th>Reference</th><th>Date</th><th>Type</th>${listFields.map(field=>`<th>${esc(field.label)}</th>`).join('')}<th>Description</th><th>Owner</th><th class="num">${esc(state.definition?.amountLabel||'Amount')}</th><th>Status</th><th>Updated</th></tr></thead><tbody>
     ${rows.map(row=>`<tr data-record-id="${row.id}"><td><b>${esc(row.record_no)}</b></td><td>${date(row.transaction_date)}</td><td>${esc(row.record_type)}</td>
-      ${listFields.map(field=>`<td>${value(row,field)}</td>`).join('')}<td>${esc(row.description||'—')}</td><td>${esc(row.owner_email||'—')}</td>
+      ${listFields.map(field=>`<td>${value(row,field)}</td>`).join('')}<td>${esc(row.description||'-')}</td><td>${esc(row.owner_email||'-')}</td>
       <td class="num">${money(row.amount)}</td><td>${statusBadge(row.status)}</td><td>${date(row.updated_at)}</td></tr>`).join('')}
   </tbody></table></div>`;
 }
@@ -658,8 +659,8 @@ async function openFinanceJournal(id){
     const data=await api(`/finance/journals/${id}`);const h=data.header;
     const action=financeActionLabel(h.status);
     const rows=data.lines.map(line=>`<tr><td>${line.line_no}</td><td><b>${esc(line.account_code)}</b></td>
-      <td>${esc(line.account_name)}</td><td>${esc(line.partner_name||'—')}</td><td>${esc(line.department||'—')}</td>
-      <td>${esc(line.cost_center||'—')}</td><td class="num">${money(line.base_debit)}</td>
+      <td>${esc(line.account_name)}</td><td>${esc(line.partner_name||'-')}</td><td>${esc(line.department||'-')}</td>
+      <td>${esc(line.cost_center||'-')}</td><td class="num">${money(line.base_debit)}</td>
       <td class="num">${money(line.base_credit)}</td></tr>`);
     const body=`<div class="record-actionbar">${action?`<button class="command primary" id="journalAction" data-action="${action[0]}">${action[1]}</button>`:''}
       ${h.status==='POSTED'?'<button class="command" id="journalReverse">Request Reversal</button>':''}
@@ -670,7 +671,7 @@ async function openFinanceJournal(id){
         <section class="record-body"><div class="ramco-detail-grid">
           <div><small>Date</small><b>${date(h.journal_date)}</b><small>Type</small><b>${esc(h.journal_type)}</b></div>
           <div><small>Source</small><b>${esc(h.source_no||'Manual')}</b><small>Description</small><b>${esc(h.description)}</b></div>
-          <div><small>Prepared By</small><b>${esc(h.created_by)}</b><small>Approved By</small><b>${esc(h.approved_by||'—')}</b></div>
+          <div><small>Prepared By</small><b>${esc(h.created_by)}</b><small>Approved By</small><b>${esc(h.approved_by||'-')}</b></div>
         </div></section><section class="record-sublist">${financeTable(['#','Account','Name','Partner','Department','Cost Center','Debit','Credit'],rows)}</section>
       </section>`;
     content.innerHTML=workbenchShell(body,'records');bindWorkbench();$('#journalBack').onclick=renderJournalRegister;
@@ -765,7 +766,7 @@ async function renderFinanceReports(){
         ${financeTable(['Date','Journal','Account','Description','Department','Cost Center','Debit','Credit'],
           gl.rows.slice(0,500).map(row=>`<tr><td>${date(row.journal_date)}</td><td><b>${esc(row.journal_no)}</b></td>
           <td>${esc(row.account_code)} · ${esc(row.account_name)}</td><td>${esc(row.line_description)}</td>
-          <td>${esc(row.department||'—')}</td><td>${esc(row.cost_center||'—')}</td>
+          <td>${esc(row.department||'-')}</td><td>${esc(row.cost_center||'-')}</td>
           <td class="num">${money(row.debit)}</td><td class="num">${money(row.credit)}</td></tr>`))}</section>`;
     content.innerHTML=workbenchShell(body,'reports');bindWorkbench();bindFinanceFilters(renderFinanceReports);
   }catch(error){showWorkspaceError(error);}
@@ -823,7 +824,7 @@ async function renderSubledger(){
     const rows=data.rows.map(row=>`<tr><td><b>${esc(row.document_no)}</b></td><td>${date(row.document_date)}</td>
       <td>${esc(row.document_type.replaceAll('_',' '))}</td><td>${esc(row.partner_name)}</td>
       <td class="num">${money(row.gross_amount)}</td><td class="num">${money(row.open_balance)}</td>
-      <td>${financeStatus(row.status)}</td><td>${row.status==='DRAFT'?`<button class="table-action" data-post-subledger="${row.id}" data-document-type="${esc(row.document_type)}">Prepare Journal</button>`:esc(row.journal_no||'—')}</td></tr>`);
+      <td>${financeStatus(row.status)}</td><td>${row.status==='DRAFT'?`<button class="table-action" data-post-subledger="${row.id}" data-document-type="${esc(row.document_type)}">Prepare Journal</button>`:esc(row.journal_no||'-')}</td></tr>`);
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newSubledger">New Invoice / Bill / Receipt</button>
       <button class="command" id="generateLeaseBilling">Generate Lease Billing</button><span class="command-spacer"></span>
       <span class="workspace-mode">${data.rows.length} DOCUMENTS</span></div>
@@ -882,8 +883,8 @@ async function renderPaymentRequests(){
         row.status==='DEPARTMENT_APPROVED'?'FINANCE_VALIDATE':row.status==='FINANCE_VALIDATED'?'FINAL_APPROVE':
           row.status==='APPROVED'?'MARK_PAID':row.status==='PAYMENT_PREPARED'?'CONFIRM_PAID':'';
       return `<tr><td><b>${esc(row.request_no)}</b></td><td>${date(row.request_date)}</td><td>${esc(row.payee_name)}</td>
-        <td>${esc(row.department)}</td><td>${esc(row.purchase_order_no||'—')}</td><td class="num">${money(row.net_payable)}</td>
-        <td>${financeStatus(row.status)}</td><td>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(action.replaceAll('_',' '))}</button>`:'—'}</td></tr>`;
+        <td>${esc(row.department)}</td><td>${esc(row.purchase_order_no||'-')}</td><td class="num">${money(row.net_payable)}</td>
+        <td>${financeStatus(row.status)}</td><td>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(action.replaceAll('_',' '))}</button>`:'-'}</td></tr>`;
     });
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newRfp">New Request for Payment</button>
       <span class="command-spacer"></span><span class="workspace-mode">CONTROLLED PAYMENT WORKFLOW</span></div>
@@ -966,7 +967,7 @@ async function renderFixedAssetsFinance(section){
       const rows=data.runs.map(row=>`<tr><td><b>${esc(row.run_no)}</b></td><td>${esc(row.entity_code)}</td><td>${esc(row.period_name)}</td>
         <td>${date(row.run_date)}</td><td class="num">${money(row.total_depreciation)}</td><td>${financeStatus(row.status)}</td>
         <td>${row.status==='DRAFT'?`<button class="table-action" data-dep-approve="${row.id}">Approve</button>`:
-          row.status==='APPROVED'?`<button class="table-action" data-dep-post="${row.id}">Post</button>`:esc(row.journal_no||'—')}</td></tr>`);
+          row.status==='APPROVED'?`<button class="table-action" data-dep-post="${row.id}">Post</button>`:esc(row.journal_no||'-')}</td></tr>`);
       const body=`<div class="workspace-commandbar"><button class="command primary" id="newDepRun">New Depreciation Run</button></div>
         <section class="workspace-card"><header><h2>Depreciation Runs</h2><span>One controlled run per entity and period</span></header>
           ${financeTable(['Run','Entity','Period','Date','Depreciation','Status','Action'],rows)}</section>`;
@@ -1028,8 +1029,8 @@ async function renderManagementAccounting(section){
       const data=await api('/finance/source-events');
       const rows=data.rows.map(row=>`<tr><td><b>${esc(row.source_no)}</b></td><td>${date(row.event_date)}</td><td>${esc(row.source_module)}</td>
         <td>${esc(row.event_type.replaceAll('_',' '))}</td><td class="num">${money(row.amount)}</td><td>${financeStatus(row.status)}</td>
-        <td>${esc(row.journal_no||row.error_message||'—')}</td><td>${row.status==='ERROR'?
-          `<button class="table-action" data-retry-event="${row.id}">Retry</button>`:'—'}</td></tr>`);
+        <td>${esc(row.journal_no||row.error_message||'-')}</td><td>${row.status==='ERROR'?
+          `<button class="table-action" data-retry-event="${row.id}">Retry</button>`:'-'}</td></tr>`);
       const body=`<div class="workspace-commandbar"><button class="command primary" id="syncFinance">Synchronize Operational Transactions</button>
         <span class="command-spacer"></span><span class="workspace-mode">${data.rows.length} SOURCE EVENTS</span></div>
         <section class="workspace-card"><header><h2>Operational Source-to-Ledger Control</h2><span>Every inventory and commercial event</span></header>
@@ -1071,7 +1072,7 @@ async function renderBudgetActual(){
   content.innerHTML='<div class="workspace-loading">Loading budget versus actual…</div>';
   try{
     const data=await api(`/finance/reports/budget-actual?year=${new Date().getFullYear()}`);
-    const rows=data.rows.map(row=>`<tr><td><b>${esc(row.department||'Unassigned')}</b></td><td>${esc(row.cost_center||'—')}</td>
+    const rows=data.rows.map(row=>`<tr><td><b>${esc(row.department||'Unassigned')}</b></td><td>${esc(row.cost_center||'-')}</td>
       <td>${esc(row.account_title)}</td><td class="num">${money(row.budget_amount)}</td><td class="num">${money(row.actual_amount)}</td>
       <td class="num">${money(row.variance)}</td><td class="num">${money(row.utilizationPct)}%</td></tr>`);
     const body=`<div class="workspace-commandbar"><span class="workspace-mode">${data.year} BUDGET PERFORMANCE</span></div>
@@ -1123,18 +1124,18 @@ async function renderTreasury(section){
       ['Reconciliation','Matching requires equal bank and journal amounts; differences remain visible.'],
     ]);
     const bankRows=banks.rows.map(row=>`<tr><td><b>${esc(row.bank_account_code)}</b></td><td>${esc(row.entity_code)}</td>
-      <td>${esc(row.bank_name)}</td><td>${esc(row.account_name)}</td><td>${esc(row.account_number_masked||'—')}</td>
+      <td>${esc(row.bank_name)}</td><td>${esc(row.account_name)}</td><td>${esc(row.account_number_masked||'-')}</td>
       <td class="num">${money(row.statement_balance)}</td><td>${row.unmatched}</td></tr>`);
     const txRows=transactions.rows.map(row=>`<tr><td>${date(row.transaction_date)}</td><td><b>${esc(row.bank_account_code)}</b></td>
-      <td>${esc(row.bank_reference||'—')}</td><td>${esc(row.description)}</td><td>${esc(row.direction)}</td>
-      <td class="num">${money(row.amount)}</td><td>${financeStatus(row.status)}</td><td>${esc(row.journal_no||'—')}</td>
+      <td>${esc(row.bank_reference||'-')}</td><td>${esc(row.description)}</td><td>${esc(row.direction)}</td>
+      <td class="num">${money(row.amount)}</td><td>${financeStatus(row.status)}</td><td>${esc(row.journal_no||'-')}</td>
       <td>${row.status==='UNMATCHED'?`<button class="table-action" data-match-bank="${row.id}">Match</button>`:'Matched'}</td></tr>`);
     const reconciliationRows=reconciliations.rows.map(row=>`<tr><td><b>${esc(row.reconciliation_no)}</b></td>
       <td>${esc(row.bank_account_code)} · ${esc(row.bank_name)}</td><td>${date(row.statement_date)}</td>
       <td class="num">${money(row.statement_ending_balance)}</td><td class="num">${money(row.book_ending_balance)}</td>
       <td class="num">${money(row.difference)}</td><td>${financeStatus(row.status)}</td>
       <td>${row.status==='SUBMITTED'?`<button class="table-action" data-recon-decision="${row.id}" data-decision="APPROVE">Approve</button>
-        <button class="table-action danger" data-recon-decision="${row.id}" data-decision="REJECT">Reject</button>`:'—'}</td></tr>`);
+        <button class="table-action danger" data-recon-decision="${row.id}" data-decision="REJECT">Reject</button>`:'-'}</td></tr>`);
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newBank">New Bank Account</button>
       <button class="command" id="importBankTx">Enter Bank Transaction</button>
       <button class="command" id="newReconciliation">Prepare Reconciliation</button></div>
@@ -1207,7 +1208,7 @@ async function renderFinancePlanning(section){
   content.innerHTML='<div class="workspace-loading">Loading budget workbench…</div>';
   try{
     const year=new Date().getFullYear();const data=await api(`/planning/workbench?year=${year}`);
-    const rows=data.rows.map(row=>`<tr><td><b>${esc(row.department)}</b></td><td>${esc(row.costCenter||'—')}</td>
+    const rows=data.rows.map(row=>`<tr><td><b>${esc(row.department)}</b></td><td>${esc(row.costCenter||'-')}</td>
       <td>${esc(row.accountTitle)}</td><td>${esc(row.capexOpex)}</td><td class="num">${money(row.fyBudget)}</td>
       <td class="num">${money(row.actual)}</td><td class="num">${money(row.forecast)}</td>
       <td class="num">${money(row.variance)}</td><td>${financeStatus(row.status)}</td></tr>`);
@@ -1254,8 +1255,8 @@ async function renderInboundOverview(){
           <section class="ramco-window">
             <header><div><b>Inbound Shipment Control</b><small>PO-controlled expected and actual receiving</small></div><button class="ramco-primary" data-section-link="approvals">Upload ATLAS</button></header>
             ${operationalTable(['Shipment','Purchase Order','Batch','Supplier','Expected','Received','Variance','Status'],recent.map(row=>`<tr>
-              <td><b>${esc(row.shipment_no)}</b></td><td>${esc(row.purchase_order_ref||'—')}</td><td>${esc(row.batch_code||'—')}</td>
-              <td>${esc(row.supplier_name||'—')}</td><td>${esc(row.expected_qty||0)}</td><td>${esc(row.received_qty||0)}</td>
+              <td><b>${esc(row.shipment_no)}</b></td><td>${esc(row.purchase_order_ref||'-')}</td><td>${esc(row.batch_code||'-')}</td>
+              <td>${esc(row.supplier_name||'-')}</td><td>${esc(row.expected_qty||0)}</td><td>${esc(row.received_qty||0)}</td>
               <td>${esc(row.open_variances||0)}</td><td>${statusBadge(row.status)}</td></tr>`))}
           </section>
         </div>
@@ -1280,7 +1281,7 @@ async function renderPurchaseOrders(){
   try{
     const data=await api('/procurement/purchase-orders?size=500');
     const rows=data.rows.map(row=>`<tr data-po="${row.id}"><td><b>${esc(row.purchase_order_no)}</b></td><td>${date(row.order_date)}</td>
-      <td>${esc(row.vendor_name||'—')}</td><td>${date(row.expected_delivery_date)}</td><td>${esc(row.currency)}</td>
+      <td>${esc(row.vendor_name||'-')}</td><td>${date(row.expected_delivery_date)}</td><td>${esc(row.currency)}</td>
       <td class="num">${money(row.total_amount)}</td><td>${esc(row.line_count)}</td><td>${statusBadge(row.status)}</td>
       <td>${row.status==='DRAFT'&&can('PROCUREMENT','APPROVE')?`<button class="table-action" data-approve-po="${row.id}">Approve</button>`:''}</td></tr>`);
     const body=`${workflowStrip(['Purchase Order','ATLAS Expected Shipment','Goods Receipt','Warehouse Visibility'],0)}
@@ -1377,8 +1378,8 @@ async function renderExpectedShipments(){
           </section>
           <section class="workspace-card"><header><h2>Expected Shipments</h2><span>${shipments.total} shipments</span></header>
             ${operationalTable(['Shipment','Purchase Order','Batch','Supplier','Expected','Received','ETA','Status'],shipments.rows.map(row=>`<tr>
-              <td><b>${esc(row.shipment_no)}</b></td><td>${esc(row.purchase_order_ref||'—')}</td><td>${esc(row.batch_code||'—')}</td>
-              <td>${esc(row.supplier_name||'—')}</td><td>${esc(row.expected_qty||0)}</td><td>${esc(row.received_qty||0)}</td>
+              <td><b>${esc(row.shipment_no)}</b></td><td>${esc(row.purchase_order_ref||'-')}</td><td>${esc(row.batch_code||'-')}</td>
+              <td>${esc(row.supplier_name||'-')}</td><td>${esc(row.expected_qty||0)}</td><td>${esc(row.received_qty||0)}</td>
               <td>${date(row.eta)}</td><td>${statusBadge(row.status)}</td></tr>`))}
           </section>
         </div>
@@ -1476,21 +1477,21 @@ async function renderGoodsReceipt(selectedShipmentId=''){
       state.inbound.receiptLines=[];
     }else if(workbench)state.inbound.shipment=workbench;
     const lines=state.inbound.receiptLines;
-    const scanRows=lines.map((row,index)=>`<tr><td>${index+1}</td><td>${esc(row.expectedSerialNo||'—')}</td><td><b>${esc(row.actualSerialNo)}</b></td>
-      <td>${statusBadge(row.acceptance)}</td><td>${esc(row.message||'—')}</td><td><button class="table-action" data-remove-scan="${index}">Remove</button></td></tr>`);
+    const scanRows=lines.map((row,index)=>`<tr><td>${index+1}</td><td>${esc(row.expectedSerialNo||'-')}</td><td><b>${esc(row.actualSerialNo)}</b></td>
+      <td>${statusBadge(row.acceptance)}</td><td>${esc(row.message||'-')}</td><td><button class="table-action" data-remove-scan="${index}">Remove</button></td></tr>`);
     const expectedOptions=(workbench?.expectedAssets||[]).filter(asset=>!['RECEIVED','SUBSTITUTED','CANCELLED','SHORT_CLOSED'].includes(asset.expected_status))
       .map(asset=>`<option value="${asset.id}">${esc(asset.serial_no)} · ${esc(asset.item_code||asset.item_name||'Item')}</option>`).join('');
-    const expectedRows=(workbench?.expectedAssets||[]).slice(0,250).map(asset=>`<tr><td>${esc(asset.serial_no)}</td><td>${esc(asset.item_code||'—')}</td>
-      <td>${esc(asset.item_name||asset.description||'—')}</td><td>${esc(asset.actual_serial_no||'—')}</td><td>${statusBadge(asset.match_status||asset.expected_status)}</td></tr>`);
+    const expectedRows=(workbench?.expectedAssets||[]).slice(0,250).map(asset=>`<tr><td>${esc(asset.serial_no)}</td><td>${esc(asset.item_code||'-')}</td>
+      <td>${esc(asset.item_name||asset.description||'-')}</td><td>${esc(asset.actual_serial_no||'-')}</td><td>${statusBadge(asset.match_status||asset.expected_status)}</td></tr>`);
     const body=`${workflowStrip(['Purchase Order','ATLAS Expected Shipment','Goods Receipt','Warehouse Visibility'],2)}
       <div class="workspace-commandbar">
-        <label class="inline-control"><span>Expected Shipment</span><select id="receiptShipment"><option value="">Select shipment…</option>${open.rows.map(row=>`<option value="${row.shipment_id}" ${Number(row.shipment_id)===shipmentId?'selected':''}>${esc(row.shipment_no)} · PO ${esc(row.purchase_order_no||row.purchase_order_ref||'—')} · ${esc(row.remaining_qty)} remaining</option>`).join('')}</select></label>
+        <label class="inline-control"><span>Expected Shipment</span><select id="receiptShipment"><option value="">Select shipment…</option>${open.rows.map(row=>`<option value="${row.shipment_id}" ${Number(row.shipment_id)===shipmentId?'selected':''}>${esc(row.shipment_no)} · PO ${esc(row.purchase_order_no||row.purchase_order_ref||'-')} · ${esc(row.remaining_qty)} remaining</option>`).join('')}</select></label>
         <label class="inline-control"><span>Receiving Location</span><select id="receiptLocation"><option value="">Select warehouse/store…</option>${lookups.locations.map(location=>`<option value="${location.id}" ${Number(location.id)===Number(state.inbound.locationId)?'selected':''}>${esc(location.code)} · ${esc(location.name)} (${esc(location.location_type)})</option>`).join('')}</select></label>
       </div>
       ${workbench?`<div class="ramco-layout receiving-layout">
         <div class="ramco-main">
           <section class="workspace-card">
-            <header><div><h2>${esc(workbench.header.shipment_no)} · Goods Receipt</h2><span>PO ${esc(workbench.header.purchase_order_ref||'—')} · Batch ${esc(workbench.header.batch_code||'—')}</span></div>${statusBadge(workbench.header.status)}</header>
+            <header><div><h2>${esc(workbench.header.shipment_no)} · Goods Receipt</h2><span>PO ${esc(workbench.header.purchase_order_ref||'-')} · Batch ${esc(workbench.header.batch_code||'-')}</span></div>${statusBadge(workbench.header.status)}</header>
             <div class="scan-entry">
               <select id="expectedAsset"><option value="">Auto-match expected serial…</option>${expectedOptions}</select>
               <input id="actualSerial" autocomplete="off" placeholder="Scan or enter actual serial">
@@ -1548,6 +1549,7 @@ async function renderGoodsReceipt(selectedShipmentId=''){
           lines:state.inbound.receiptLines,
         })});
         toast(`${result.receiptNo} posted to ${result.location.code}`);
+        try{if(window.czPrintGRN&&result.receiptId)window.czPrintGRN(result.receiptId);}catch(e){}
         state.inbound.receiptLines=[];state.inbound.shipment=null;state.inbound.locationId=null;
         await renderGoodsReceipt();
       }catch(error){toast(error.message,'error');}
@@ -1562,12 +1564,12 @@ async function renderInboundDiscrepancies(){
       api('/receiving/reports/reconciliation'),
       api('/receiving/reports/discrepancies?status=OPEN'),
     ]);
-    const summaryRows=summary.rows.map(row=>`<tr><td><b>${esc(row.shipment_no)}</b></td><td>${esc(row.purchase_order_no||'—')}</td>
-      <td>${esc(row.receipt_locations||'—')}</td><td>${esc(row.expected_qty)}</td><td>${esc(row.received_qty)}</td>
+    const summaryRows=summary.rows.map(row=>`<tr><td><b>${esc(row.shipment_no)}</b></td><td>${esc(row.purchase_order_no||'-')}</td>
+      <td>${esc(row.receipt_locations||'-')}</td><td>${esc(row.expected_qty)}</td><td>${esc(row.received_qty)}</td>
       <td>${esc(row.quantity_variance)}</td><td>${esc(row.open_variances)}</td><td>${statusBadge(row.reconciliation_status)}</td></tr>`);
-    const detailRows=details.rows.map(row=>`<tr><td><b>${esc(row.variance_no)}</b></td><td>${esc(row.purchase_order_no||'—')}</td><td>${esc(row.shipment_no)}</td>
+    const detailRows=details.rows.map(row=>`<tr><td><b>${esc(row.variance_no)}</b></td><td>${esc(row.purchase_order_no||'-')}</td><td>${esc(row.shipment_no)}</td>
       <td>${esc(row.receipt_no)}</td><td>${esc(row.location_code)}</td><td>${esc(row.variance_type)}</td>
-      <td>${esc(row.expected_serial_no||'—')}</td><td>${esc(row.actual_serial_no||'—')}</td><td>${esc(row.reason||'—')}</td>
+      <td>${esc(row.expected_serial_no||'-')}</td><td>${esc(row.actual_serial_no||'-')}</td><td>${esc(row.reason||'-')}</td>
       <td><button class="table-action" data-resolve-variance="${row.id}">Resolve</button></td></tr>`);
     const body=`${workflowStrip(['Purchase Order','ATLAS Expected Shipment','Goods Receipt','Warehouse Visibility'],3)}
       <div class="workspace-kpis">${kpi('Shipments',summary.totals.shipments)}${kpi('Expected',summary.totals.expected)}
@@ -1605,8 +1607,8 @@ async function renderOutboundOverview(){
     const ready=data.deliveries.filter(row=>['PLANNED','READY'].includes(row.status));
     const inTransit=data.deliveries.filter(row=>row.status==='RELEASED');
     const returnable=data.requisitions.filter(row=>row.status==='FULFILLED'&&row.expected_return_date);
-    const rows=open.slice(0,20).map(row=>`<tr><td><b>${esc(row.requisition_no)}</b></td><td>${esc(row.request_type||'—')}</td>
-      <td>${esc(row.holder_type||'—')}</td><td>${esc(row.holder_name||row.partner_name||'—')}</td><td>${date(row.required_date)}</td>
+    const rows=open.slice(0,20).map(row=>`<tr><td><b>${esc(row.requisition_no)}</b></td><td>${esc(row.request_type||'-')}</td>
+      <td>${esc(row.holder_type||'-')}</td><td>${esc(row.holder_name||row.partner_name||'-')}</td><td>${date(row.required_date)}</td>
       <td>${esc(row.serial_count||0)}</td><td>${esc(row.total_qty||0)}</td><td>${statusBadge(row.status)}</td></tr>`);
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],0)}
       <div class="workspace-kpis">${kpi('Open Requisitions',open.length)}${kpi('Ready to Issue',ready.length)}
@@ -1628,9 +1630,9 @@ async function renderOutboundRequisitions(){
   try{
     const [lookups,data]=await Promise.all([api('/requisitions/lookups'),api('/requisitions/outbound-workbench')]);
     const rows=data.requisitions.map(row=>`<tr><td><b>${esc(row.requisition_no)}</b></td><td>${date(row.request_date)}</td>
-      <td>${esc(row.request_type||'—')}</td><td>${esc(row.holder_type||'—')}</td><td>${esc(row.holder_name||'—')}</td>
+      <td>${esc(row.request_type||'-')}</td><td>${esc(row.holder_type||'-')}</td><td>${esc(row.holder_name||'-')}</td>
       <td>${esc(row.serial_count||0)}</td><td>${esc(row.total_qty||0)}</td><td>${date(row.required_date)}</td><td>${statusBadge(row.status)}</td>
-      <td>${['SUBMITTED','DRAFT'].includes(row.status)&&can('REQUISITIONS','APPROVE')?`<button class="table-action" data-approve-requisition="${row.id}">Approve</button>`:''}</td></tr>`);
+      <td>${['SUBMITTED','DRAFT'].includes(row.status)&&can('REQUISITIONS','APPROVE')?`<button class="table-action" data-approve-requisition="${row.id}">Approve</button>`:''}<button class="table-action" data-print-req="${row.id}">Print Slip</button></td></tr>`);
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],0)}
       <section class="workspace-card"><header><div><h2>Create Requisition Slip</h2><span>Select the holder, available items, and exact serials for full custody traceability.</span></div><span>AUTO REFERENCE</span></header>
         <form id="requisitionForm" class="operational-form grid">
@@ -1711,8 +1713,8 @@ async function renderPreRelease(){
     const rows=data.allocations.filter(row=>row.asset_id&&row.category==='MC'&&['RESERVED','ISSUED'].includes(row.allocation_status)).map(row=>{
       const check=latest.get(row.serial_no);
       return `<tr><td><b>${esc(row.requisition_no)}</b></td><td>${esc(row.serial_no)}</td><td>${esc(row.item_name)}</td>
-        <td>${esc(row.current_location_code||'—')}</td><td>${check?statusBadge(check.result):statusBadge('PENDING')}</td>
-        <td>${check?date(check.check_date):'—'}</td><td><button class="table-action" data-checklist="${esc(row.serial_no)}" data-unit="${esc(row.item_name)}" data-req="${esc(row.requisition_no)}">Open checklist</button></td></tr>`;
+        <td>${esc(row.current_location_code||'-')}</td><td>${check?statusBadge(check.result):statusBadge('PENDING')}</td>
+        <td>${check?date(check.check_date):'-'}</td><td><button class="table-action" data-checklist="${esc(row.serial_no)}" data-unit="${esc(row.item_name)}" data-req="${esc(row.requisition_no)}">Open checklist</button></td></tr>`;
     });
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],1)}
       <section class="workspace-card"><header><div><h2>Pre-release Checklist Worklist</h2><span>Motorcycles require a passed inspection before goods issuance.</span></div></header>
@@ -1759,7 +1761,10 @@ async function renderGoodsIssuance(){
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],2)}
       <section class="workspace-card"><header><div><h2>Goods Issuance Worklist</h2><span>Posting creates the serial-level outbound stock movement.</span></div></header>
       ${operationalTable(['Delivery','Requisition','Assignment','Schedule','Destination','Holder','Serials','Status','Action'],rows)}</section>`;
-    content.innerHTML=workbenchShell(body,'reports');bindOperationalShell();
+    let __gi=[];try{for(let __p=1;__p<=8;__p++){const __r=await api('/deliveries?size=250&page='+__p);const __rr=(__r.rows||[]);__gi=__gi.concat(__rr);if(__rr.length<250)break;}}catch(e){}
+    const __giRows=__gi.map(r=>`<tr><td><b>${esc(r.delivery_no)}</b> <button class="table-action" data-print-dlv="${r.id}">Print</button></td><td>${esc(r.requisition_no||r.sales_order_no||'\u2014')}</td><td>${esc(r.assignment_no||'\u2014')}</td><td>${esc(r.destination||'\u2014')}</td><td>${esc(r.recipient_name||'\u2014')}</td><td>${esc(r.asset_count||0)}</td><td>${statusBadge(r.status)}</td><td>${esc((r.scheduled_date||r.created_at||'').slice(0,10))}</td></tr>`);
+    const __giBody=`<section class="workspace-card"><header><div><h2>Goods Issuance Register</h2><span>All ${__gi.length} outbound movements (actuals).</span></div></header>${operationalTable(['Delivery','Requisition','Assignment','Destination','Holder','Serials','Status','Date'],__giRows)}</section>`;
+    content.innerHTML=workbenchShell(body+__giBody,'reports');bindOperationalShell();
     $$('[data-release-delivery]').forEach(button=>button.onclick=async()=>{
       try{const result=await api(`/deliveries/${button.dataset.releaseDelivery}/release`,{method:'POST',body:JSON.stringify({releaseDate:new Date().toISOString()})});toast(`${result.released} serialized units issued`);await renderGoodsIssuance();}
       catch(error){toast(error.message,'error');}
@@ -1774,18 +1779,22 @@ async function renderDeliveryReturns(){
       api('/requisitions/outbound-workbench'),api('/returns/assignments/active'),
       api('/returns/deliveries/returnable'),api('/returns?size=500'),api('/masters/lookups'),
     ]);
-    const deliveryRows=data.deliveries.filter(row=>['RELEASED','DELIVERED'].includes(row.status)).map(row=>`<tr><td><b>${esc(row.delivery_no)}</b></td><td>${esc(row.requisition_no||'—')}</td>
-      <td>${esc(row.assignment_no||row.sales_order_no||'—')}</td><td>${esc(row.destination)}</td><td>${esc(row.recipient_name)}</td><td>${statusBadge(row.status)}</td>
-      <td>${row.status==='RELEASED'?`<button class="table-action" data-complete-delivery="${row.id}">Confirm Delivery</button>`:'—'}</td></tr>`);
+    let __dall=[];try{for(let __p=1;__p<=8;__p++){const __r=await api('/deliveries?size=250&page='+__p);const __rr=(__r.rows||[]);__dall=__dall.concat(__rr);if(__rr.length<250)break;}}catch(e){}
+    const __dallRows=__dall.map(r=>`<tr><td><b>${esc(r.delivery_no)}</b> <button class="table-action" data-print-dlv="${r.id}">Print</button></td><td>${esc(r.requisition_no||r.sales_order_no||'\u2014')}</td><td>${esc(r.assignment_no||'\u2014')}</td><td>${esc(r.destination||'\u2014')}</td><td>${esc(r.recipient_name||'\u2014')}</td><td>${esc(r.asset_count||0)}</td><td>${statusBadge(r.status)}</td><td>${esc((r.actual_delivery_date||r.scheduled_date||r.created_at||'').slice(0,10))}</td></tr>`);
+    const __dallBody=`<section class="workspace-card"><header><div><h2>Delivery Register</h2><span>All ${__dall.length} deliveries (actuals).</span></div></header>${operationalTable(['Delivery','Requisition','Assignment / Sale','Destination','Holder','Serials','Status','Date'],__dallRows)}</section>`;
+    const deliveryRows=data.deliveries.filter(row=>['RELEASED','DELIVERED'].includes(row.status)).map(row=>`<tr><td><b>${esc(row.delivery_no)}</b></td><td>${esc(row.requisition_no||'-')}</td>
+      <td>${esc(row.assignment_no||row.sales_order_no||'-')}</td><td>${esc(row.destination)}</td><td>${esc(row.recipient_name)}</td><td>${statusBadge(row.status)}</td>
+      <td>${row.status==='RELEASED'?`<button class="table-action" data-complete-delivery="${row.id}">Confirm Delivery</button>`:'-'}</td></tr>`);
     const returnRows=(returnRegister.rows||[]).map(row=>{const source=row.return_type==='SALES_RETURN'
       ?`${row.sales_order_no||'Sale'} / ${row.delivery_no||'Delivery'}`
       :(row.assignment_no||'Deployment');return `<tr><td><b>${esc(row.return_no)}</b></td><td>${esc(row.return_type||'CUSTODY_RETURN')}</td>
-      <td>${esc(source)}</td><td>${esc(row.customer_name||row.partner_name||'—')}</td><td>${date(row.return_date)}</td>
-      <td>${esc(row.return_location_code||'—')}</td><td>${esc(row.line_count)}</td><td>${row.return_type==='SALES_RETURN'&&Number(row.refund_gross_amount||0)>0?money(row.refund_gross_amount):'—'}</td>
-      <td>${statusBadge(row.status)}</td><td>${row.status==='DRAFT'?`<button class="table-action" data-post-return="${row.id}">Post Return</button>`:'—'}</td></tr>`;});
+      <td>${esc(source)}</td><td>${esc(row.customer_name||row.partner_name||'-')}</td><td>${date(row.return_date)}</td>
+      <td>${esc(row.return_location_code||'-')}</td><td>${esc(row.line_count)}</td><td>${row.return_type==='SALES_RETURN'&&Number(row.refund_gross_amount||0)>0?money(row.refund_gross_amount):'-'}</td>
+      <td>${statusBadge(row.status)}</td><td>${row.status==='DRAFT'?`<button class="table-action" data-post-return="${row.id}">Post Return</button>`:'-'}</td></tr>`;});
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],3)}
       <section class="workspace-card"><header><h2>Delivery Confirmation</h2><span>Released units awaiting proof of delivery</span></header>
         ${operationalTable(['Delivery','Requisition','Assignment / Sale','Destination','Holder','Status','Action'],deliveryRows)}</section>
+      ${__dallBody}
       <section class="workspace-card"><header><div><h2>Create Goods Return</h2><span>Return exact serials from a company deployment or completed customer sale. Finance treatment follows the source transaction.</span></div></header>
         <form id="returnForm" class="operational-form grid">
           <label><span>Return Source</span><select name="sourceType" id="returnSourceType"><option value="ASSIGNMENT">Deployment / Custody</option><option value="CUSTOMER_SALE">Customer Sale</option></select></label>
@@ -1904,9 +1913,9 @@ async function renderWarehouseVisibility(locationId='',search='',status='',categ
       api('/masters/lookups'),
       api('/inventory/by-class'),
     ]);
-    const rows=data.rows.map(row=>`<tr class="clickable-row" data-inventory-serial="${esc(row.serial_no)}"><td><b>${esc(row.serial_no)}</b></td><td>${esc(row.item_code||'—')}</td><td>${esc(row.item_name||'—')}</td>
-      <td>${esc(row.category)}</td><td>${esc(row.location_code||'UNASSIGNED')}</td><td>${esc(row.location_name||'—')}</td>
-      <td>${statusBadge(row.current_status)}</td><td>${esc(row.current_holder_name||'—')}</td><td class="num">${money(row.unit_cost)}</td><td>${statusBadge(row.valuation_status||'UNVALUED')}</td><td>${statusBadge(row.reconciliation_status)}</td></tr>`);
+    const rows=data.rows.map(row=>`<tr class="clickable-row" data-inventory-serial="${esc(row.serial_no)}"><td><b>${esc(row.serial_no)}</b></td><td>${esc(row.item_code||'-')}</td><td>${esc(row.item_name||'-')}</td>
+      <td>${esc(row.category)}</td><td>${esc(row.location_code||'UNASSIGNED')}</td><td>${esc(row.location_name||'-')}</td>
+      <td>${statusBadge(row.current_status)}</td><td>${esc(row.current_holder_name||'-')}</td><td class="num">${money(row.unit_cost)}</td><td>${statusBadge(row.valuation_status||'UNVALUED')}</td><td>${statusBadge(row.reconciliation_status)}</td></tr>`);
     const pages=Math.max(1,Math.ceil(Number(data.total||0)/size));
     const body=`<div class="workspace-commandbar">
       <input id="unitSearch" placeholder="Serial, material code, item, holder, or location" value="${esc(search)}">
@@ -1935,17 +1944,17 @@ async function openInventoryDetail(serial){
   try{
     const data=await api(`/inventory/${encodeURIComponent(serial)}/history`,{noCache:true});
     const asset=data.asset||{};
-    const movements=(data.movements||[]).map(row=>`<tr><td>${date(row.movement_date)}</td><td>${esc(row.movement_type)}</td><td>${esc(row.from_location_code||'—')}</td><td>${esc(row.to_location_code||'—')}</td><td>${esc(row.to_status||'—')}</td><td>${esc(row.source_doc_no||'—')}</td></tr>`);
+    const movements=(data.movements||[]).map(row=>`<tr><td>${date(row.movement_date)}</td><td>${esc(row.movement_type)}</td><td>${esc(row.from_location_code||'-')}</td><td>${esc(row.to_location_code||'-')}</td><td>${esc(row.to_status||'-')}</td><td>${esc(row.source_doc_no||'-')}</td></tr>`);
     const assignments=(data.assignments||[]).map(row=>`<tr><td>${esc(row.assignment_no)}</td><td>${esc(row.assignment_type)}</td><td>${esc(row.holder_name)}</td><td>${date(row.start_date)}</td><td>${statusBadge(row.status)}</td></tr>`);
-    const deliveries=(data.deliveries||[]).map(row=>`<tr><td>${esc(row.delivery_no)}</td><td>${date(row.scheduled_date)}</td><td>${esc(row.destination||'—')}</td><td>${statusBadge(row.status)}</td></tr>`);
-    const returns=(data.returns||[]).map(row=>`<tr><td>${esc(row.return_no)}</td><td>${date(row.return_date)}</td><td>${esc(row.expected_serial||'—')}</td><td>${esc(row.actual_serial||'—')}</td><td>${statusBadge(row.acceptance_status||row.status)}</td></tr>`);
-    const reconciliation=(data.reconciliation||[]).map(row=>`<tr><td>${esc(row.case_no||row.id)}</td><td>${esc(row.case_type||'SERIAL')}</td><td>${esc(row.expected_serial||'—')}</td><td>${esc(row.actual_serial||'—')}</td><td>${statusBadge(row.status)}</td></tr>`);
+    const deliveries=(data.deliveries||[]).map(row=>`<tr><td>${esc(row.delivery_no)}</td><td>${date(row.scheduled_date)}</td><td>${esc(row.destination||'-')}</td><td>${statusBadge(row.status)}</td></tr>`);
+    const returns=(data.returns||[]).map(row=>`<tr><td>${esc(row.return_no)}</td><td>${date(row.return_date)}</td><td>${esc(row.expected_serial||'-')}</td><td>${esc(row.actual_serial||'-')}</td><td>${statusBadge(row.acceptance_status||row.status)}</td></tr>`);
+    const reconciliation=(data.reconciliation||[]).map(row=>`<tr><td>${esc(row.case_no||row.id)}</td><td>${esc(row.case_type||'SERIAL')}</td><td>${esc(row.expected_serial||'-')}</td><td>${esc(row.actual_serial||'-')}</td><td>${statusBadge(row.status)}</td></tr>`);
     $('#modalBody').innerHTML=`<div class="inventory-detail-grid">
-      <div><small>Inventory Class</small><b>${esc(asset.category||'—')}</b></div><div><small>Material Code</small><b>${esc(asset.item_code||'—')}</b></div>
-      <div><small>Tagged Item</small><b>${esc(asset.item_name||'—')}</b></div><div><small>Serial</small><b>${esc(asset.serial_no||'—')}</b></div>
-      <div><small>Status</small><b>${esc(asset.current_status||'—')}</b></div><div><small>Location</small><b>${esc(asset.current_location_code||'UNASSIGNED')}</b></div>
-      <div><small>Assigned To</small><b>${esc(asset.current_holder_name||'—')}</b></div><div><small>Unit Cost</small><b>${money(asset.unit_cost)}</b></div>
-      <div><small>Cost Source</small><b>${esc(asset.cost_source||'—')}</b></div><div><small>Valuation</small><b>${esc(asset.valuation_status||'UNVALUED')}</b></div>
+      <div><small>Inventory Class</small><b>${esc(asset.category||'-')}</b></div><div><small>Material Code</small><b>${esc(asset.item_code||'-')}</b></div>
+      <div><small>Tagged Item</small><b>${esc(asset.item_name||'-')}</b></div><div><small>Serial</small><b>${esc(asset.serial_no||'-')}</b></div>
+      <div><small>Status</small><b>${esc(asset.current_status||'-')}</b></div><div><small>Location</small><b>${esc(asset.current_location_code||'UNASSIGNED')}</b></div>
+      <div><small>Assigned To</small><b>${esc(asset.current_holder_name||'-')}</b></div><div><small>Unit Cost</small><b>${money(asset.unit_cost)}</b></div>
+      <div><small>Cost Source</small><b>${esc(asset.cost_source||'-')}</b></div><div><small>Valuation</small><b>${esc(asset.valuation_status||'UNVALUED')}</b></div>
     </div>
     <h3>Stock Movements</h3>${operationalTable(['Date','Movement','From','To','Resulting Status','Source Document'],movements,{key:'inventory-detail-movements'})}
     <h3>Assignments and Custody</h3>${operationalTable(['Assignment','Type','Holder','Start','Status'],assignments,{key:'inventory-detail-assignments'})}
@@ -1961,12 +1970,12 @@ async function renderStockMovement(){
   try{
     const [lookups,movements]=await Promise.all([api('/masters/lookups'),api('/inventory/movements')]);
     const rows=movements.rows.slice(0,250).map(row=>`<tr><td><b>${esc(row.movement_no)}</b></td><td>${date(row.movement_date)}</td>
-      <td>${esc(row.movement_type)}</td><td>${esc(row.serial_no)}</td><td>${esc(row.item_name||row.item_code||'—')}</td>
-      <td>${esc(row.from_location_code||'—')}</td><td>${esc(row.to_location_code||'—')}</td><td>${esc(row.to_status||'—')}</td><td>${esc(row.posted_by||'—')}</td></tr>`);
+      <td>${esc(row.movement_type)}</td><td>${esc(row.serial_no)}</td><td>${esc(row.item_name||row.item_code||'-')}</td>
+      <td>${esc(row.from_location_code||'-')}</td><td>${esc(row.to_location_code||'-')}</td><td>${esc(row.to_status||'-')}</td><td>${esc(row.posted_by||'-')}</td></tr>`);
     const body=`<div class="ramco-layout"><div class="ramco-main">
       <section class="workspace-card"><header><h2>Post Stock Movement</h2><span>Transfer, placement, or status change</span></header>
         <form id="movementForm" class="operational-form grid">
-          <label><span>Serial Number</span><input name="serialNo" required placeholder="Scan or enter serial"></label>
+          <label><span>Serial Number</span><div class="scan-field"><input name="serialNo" id="moveSerial" required placeholder="Scan or enter serial"><button type="button" class="table-action" id="moveScan">Scan QR</button></div></label>
           <label><span>Movement</span><select name="movementType"><option>TRANSFER</option><option>PLACEMENT</option><option>STATUS_CHANGE</option><option>ADJUSTMENT</option></select></label>
           <label><span>Destination</span><select name="locationId" required><option value="">Select location…</option>${lookups.locations.map(row=>`<option value="${row.id}">${esc(row.code)} · ${esc(row.name)}</option>`).join('')}</select></label>
           <label><span>New Status</span><select name="toStatus"><option>AVAILABLE</option><option>QUARANTINE</option><option>UNDER_REPAIR</option><option>ASSIGNED</option></select></label>
@@ -1979,6 +1988,7 @@ async function renderStockMovement(){
       </div><aside class="ramco-rail"><section><header>Stock Control</header><div class="control-note"><b>One serial, one position</b><p>Every movement updates current location and writes an immutable stock-ledger entry.</p></div></section></aside></div>`;
     content.innerHTML=workbenchShell(body,'approvals');
     bindOperationalShell();
+    var __ms=$('#moveScan');if(__ms)__ms.onclick=()=>scanQrWithCamera(value=>{var el=$('#moveSerial');if(el)el.value=value;});
     $('#movementForm').onsubmit=async event=>{
       event.preventDefault();
       const payload=formDataObject(event.currentTarget);
@@ -2006,10 +2016,10 @@ async function renderQrTrace(){
       const record=data.asset||data.expected;
       $('#traceResult').innerHTML=record?`<div class="trace-result"><div><small>Serial</small><b>${esc(serial)}</b></div>
         <div><small>Record</small><b>${data.asset?'RECEIVED INVENTORY':'EXPECTED SHIPMENT'}</b></div>
-        <div><small>Item</small><b>${esc(record.item_name||record.item_code||'—')}</b></div>
+        <div><small>Item</small><b>${esc(record.item_name||record.item_code||'-')}</b></div>
         <div><small>Location</small><b>${esc(record.current_location_code||'Not received')}</b></div>
         <div><small>Status</small>${statusBadge(record.current_status||record.expected_status||record.shipment_status)}</div>
-        <div><small>Holder</small><b>${esc(record.current_holder_name||'—')}</b></div></div>`:operationalEmpty(`Serial ${serial} was not found.`);
+        <div><small>Holder</small><b>${esc(record.current_holder_name||'-')}</b></div></div>`:operationalEmpty(`Serial ${serial} was not found.`);
     }catch(error){toast(error.message,'error');}
   };
   $('#traceLookup').onclick=()=>lookup('');
@@ -2021,7 +2031,7 @@ async function renderLocationMaster(){
   content.innerHTML='<div class="workspace-loading">Loading locations…</div>';
   try{
     const lookups=await api('/masters/lookups');
-    const rows=lookups.locations.map(row=>`<tr><td><b>${esc(row.code)}</b></td><td>${esc(row.name)}</td><td>${esc(row.location_type)}</td><td>${esc(row.partner_name||'—')}</td></tr>`);
+    const rows=lookups.locations.map(row=>`<tr><td><b>${esc(row.code)}</b></td><td>${esc(row.name)}</td><td>${esc(row.location_type)}</td><td>${esc(row.partner_name||'-')}</td></tr>`);
     const body=`<div class="ramco-layout"><div class="ramco-main">
       <section class="workspace-card"><header><h2>Location Master</h2><span>Warehouses, retail stores, depots, and stock points</span></header>
         <form id="locationForm" class="operational-form grid"><label><span>Code (optional)</span><input name="code"></label>
@@ -2075,7 +2085,7 @@ async function renderCyclePlans(){
     const [data,lookups]=await Promise.all([api('/inventory/cycle-counts'),api('/masters/lookups')]);
     const rows=data.rows.map(row=>`<tr data-cycle="${row.id}"><td><b>${esc(row.count_no)}</b></td><td>${date(row.count_date)}</td>
       <td>${esc(row.location_code)} · ${esc(row.location_name)}</td><td>${esc(row.location_type)}</td><td>${esc(row.category||'All')}</td>
-      <td>${esc(row.assigned_to||'—')}</td><td>${esc(row.expected_units)}</td><td>${statusBadge(row.status)}</td></tr>`);
+      <td>${esc(row.assigned_to||'-')}</td><td>${esc(row.expected_units)}</td><td>${statusBadge(row.status)}</td></tr>`);
     const body=`<div class="ramco-layout"><div class="ramco-main">
       <section class="workspace-card"><header><h2>Create Cycle Count Plan</h2><span>Snapshot expected serials at one location</span></header>
         <form id="cyclePlanForm" class="operational-form grid">
@@ -2109,7 +2119,7 @@ function printCycleCountSheet(data){
     body{font:12px Arial;margin:24px;color:#111}header{display:flex;justify-content:space-between;border-bottom:2px solid #0a2239;padding-bottom:12px}
     h1{margin:0;font-size:22px}p{margin:4px 0}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{border:1px solid #777;padding:7px;text-align:left}
     .blank{height:22px}.sign{display:grid;grid-template-columns:1fr 1fr 1fr;gap:28px;margin-top:50px}.sign div{border-top:1px solid #111;padding-top:6px}
-    @media print{button{display:none}}</style></head><body><header><div><h1>E88 Inventory Cycle Count</h1><p>${esc(data.header.count_no)} · ${esc(data.header.location_code)} — ${esc(data.header.location_name)}</p>
+    @media print{button{display:none}}</style></head><body><header><div><h1>E88 Inventory Cycle Count</h1><p>${esc(data.header.count_no)} · ${esc(data.header.location_code)} - ${esc(data.header.location_name)}</p>
     <p>Count date: ${esc(data.header.count_date)} · Category: ${esc(data.header.category||'All')}</p></div><div>© 2026 AL23<br>Internal Use Only</div></header>
     <table><thead><tr><th>#</th><th>Item Code</th><th>Item</th><th>Expected Serial</th><th>Actual / Tick</th><th>Remarks</th></tr></thead><tbody>${rows}</tbody></table>
     <div class="sign"><div>Counted by / Date</div><div>Reviewed by / Date</div><div>Approved by / Date</div></div><button onclick="window.print()">Print</button></body></html>`);
@@ -2123,13 +2133,13 @@ async function renderPhysicalCount(countId=state.cycleCount){
     const id=Number(countId||register.rows.find(row=>row.status==='OPEN')?.id||register.rows[0]?.id||0);
     state.cycleCount=id||null;
     const data=id?await api(`/inventory/cycle-counts/${id}`):null;
-    const rows=(data?.lines||[]).map(row=>`<tr><td>${esc(row.item_code||'—')}</td><td>${esc(row.item_name||'—')}</td>
-      <td>${esc(row.expected_serial_no||'—')}</td><td>${esc(row.actual_serial_no||'—')}</td><td>${statusBadge(row.count_status)}</td>
-      <td>${row.variance_type?statusBadge(row.variance_type):'—'}</td><td>${esc(row.actual_location_code||'—')}</td></tr>`);
+    const rows=(data?.lines||[]).map(row=>`<tr><td>${esc(row.item_code||'-')}</td><td>${esc(row.item_name||'-')}</td>
+      <td>${esc(row.expected_serial_no||'-')}</td><td>${esc(row.actual_serial_no||'-')}</td><td>${statusBadge(row.count_status)}</td>
+      <td>${row.variance_type?statusBadge(row.variance_type):'-'}</td><td>${esc(row.actual_location_code||'-')}</td></tr>`);
     const body=`<div class="workspace-commandbar"><label class="inline-control"><span>Count Plan</span><select id="physicalCountSelect"><option value="">Select count…</option>${register.rows.map(row=>`<option value="${row.id}" ${row.id===id?'selected':''}>${esc(row.count_no)} · ${esc(row.location_code)} · ${esc(row.status)}</option>`).join('')}</select></label>
       ${data?`<button class="command" id="printCount">Print Count Sheet</button><button class="command primary" id="submitCount" ${data.header.status==='OPEN'?'':'disabled'}>Submit Count</button>`:''}</div>
       ${data?`<div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
-        <header><div><h2>${esc(data.header.count_no)} · Physical Count</h2><span>${esc(data.header.location_code)} — ${esc(data.header.location_name)}</span></div>${statusBadge(data.header.status)}</header>
+        <header><div><h2>${esc(data.header.count_no)} · Physical Count</h2><span>${esc(data.header.location_code)} - ${esc(data.header.location_name)}</span></div>${statusBadge(data.header.status)}</header>
         <div class="scan-entry"><input id="countSerial" placeholder="Scan or enter physical serial"><button class="command primary" id="countAdd">Count Serial</button>
           <button class="command" id="countCamera">Scan QR</button></div>
         <div class="scan-summary">${kpi('Expected',data.summary.expected)}${kpi('Scanned',data.summary.counted)}${kpi('Variances',data.summary.variances)}
@@ -2166,9 +2176,9 @@ async function renderCycleVariances(countId=state.cycleCount){
     const id=Number(countId||register.rows.find(row=>Number(row.variance_units)>0)?.id||register.rows[0]?.id||0);
     const data=id?await api(`/inventory/cycle-counts/${id}`):null;
     const variance=id?await api(`/inventory/cycle-counts/${id}/variances`):{rows:[],total:0};
-    const rows=variance.rows.map(row=>`<tr><td>${esc(row.variance_type)}</td><td>${esc(row.item_code||'—')}</td><td>${esc(row.item_name||'—')}</td>
-      <td>${esc(row.expected_serial_no||'—')}</td><td>${esc(row.actual_serial_no||'—')}</td><td>${esc(row.count_location_code)}</td>
-      <td>${esc(row.actual_location_code||'—')}</td><td>${esc(row.scanned_by||'—')}</td><td>${date(row.scanned_at)}</td></tr>`);
+    const rows=variance.rows.map(row=>`<tr><td>${esc(row.variance_type)}</td><td>${esc(row.item_code||'-')}</td><td>${esc(row.item_name||'-')}</td>
+      <td>${esc(row.expected_serial_no||'-')}</td><td>${esc(row.actual_serial_no||'-')}</td><td>${esc(row.count_location_code)}</td>
+      <td>${esc(row.actual_location_code||'-')}</td><td>${esc(row.scanned_by||'-')}</td><td>${date(row.scanned_at)}</td></tr>`);
     const body=`<div class="workspace-commandbar"><label class="inline-control"><span>Count Plan</span><select id="varianceCountSelect"><option value="">Select count…</option>${register.rows.map(row=>`<option value="${row.id}" ${row.id===id?'selected':''}>${esc(row.count_no)} · ${esc(row.location_code)} · ${row.variance_units} variances</option>`).join('')}</select></label>
       ${data?.header.status==='SUBMITTED'?'<button class="command primary" id="approveCount">Approve Count Report</button>':''}</div>
       <section class="workspace-card"><header><h2>Physical Count Variance Report</h2><span>${variance.total} discrepancies</span></header>
@@ -2195,6 +2205,150 @@ function renderCycleSetup(){
   content.innerHTML=workbenchShell(body,'setup');bindOperationalShell();
 }
 
+let __recCfg=null,__recPass='',__recEntity=null;
+function recPrettyCol(c){return String(c).replace(/_/g,' ').replace(/\b\w/g,function(ch){return ch.toUpperCase();});}
+async function renderRecordConsole(entityKey,search,includeInactive){
+  document.body.classList.remove('workbench-view');document.body.classList.add('launchpad-view');
+  content.innerHTML='<div class="workspace-loading">Loading records...</div>';
+  try{
+    if(!__recCfg)__recCfg=await api('/admin/records/config',{noCache:true});
+    const cfg=__recCfg;
+    __recEntity=entityKey||__recEntity||(cfg.entities[0]&&cfg.entities[0].key);
+    const ent=cfg.entities.find(function(e){return e.key===__recEntity;})||cfg.entities[0];
+    const inactive=includeInactive?1:0;
+    const data=await api('/admin/records/'+ent.key+'?q='+encodeURIComponent(search||'')+'&includeInactive='+inactive,{noCache:true});
+    const cols=data.columns;
+    const tabHtml=cfg.entities.map(function(e){return '<button class="report-card'+(e.key===ent.key?' active':'')+'" data-rec-entity="'+esc(e.key)+'" style="flex:0 0 auto;min-width:150px">'+esc(e.label)+'</button>';}).join('');
+    const head=cols.map(function(c){return '<th>'+esc(recPrettyCol(c))+'</th>';}).join('')+'<th>Actions</th>';
+    const body=(data.rows||[]).map(function(r){
+      var isInactive=data.hasActive&&Number(r.active)===0;
+      var tds=cols.map(function(c){return '<td>'+esc(r[c]==null?'':r[c])+'</td>';}).join('');
+      var act='<button class="table-action" data-rec-edit="'+r.id+'">Edit</button>'+(data.hasActive?(isInactive?'<button class="table-action" data-rec-restore="'+r.id+'">Restore</button>':'<button class="table-action danger" data-rec-del="'+r.id+'">Delete</button>'):'');
+      return '<tr'+(isInactive?' style="opacity:.5"':'')+'>'+tds+'<td>'+act+'</td></tr>';
+    }).join('');
+    content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>Record Management</h1><p>'+(cfg.financeAccess?'You have finance-level access - edits apply directly.':'Enter the edit passcode when prompted to save changes.')+' Delete deactivates a record (reversible via Restore). Every change is audited.</p></div><button class="command" id="recBack">&larr; Enterprise Modules</button></div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">'+tabHtml+'</div>'+
+      '<div class="workspace-commandbar"><input id="recSearch" placeholder="Search '+esc(ent.label)+'" value="'+esc(search||'')+'"><button class="command primary" id="recApply">Search</button><label class="inline-control" style="margin-left:10px"><input type="checkbox" id="recInactive" '+(includeInactive?'checked':'')+'> Include deactivated</label></div>'+
+      '<section class="workspace-card"><div class="record-table-wrap"><table class="record-table"><thead><tr>'+head+'</tr></thead><tbody>'+(body||'<tr><td colspan="'+(cols.length+1)+'" style="text-align:center;padding:20px;color:#64748b">No records.</td></tr>')+'</tbody></table></div></section></div>';
+    $('#recBack').onclick=renderLaunchpad;
+    $$('[data-rec-entity]').forEach(function(b){b.onclick=function(){__recEntity=b.dataset.recEntity;renderRecordConsole(b.dataset.recEntity,'',false);};});
+    $('#recApply').onclick=function(){renderRecordConsole(ent.key,$('#recSearch').value,$('#recInactive').checked);};
+    $('#recSearch').onkeydown=function(e){if(e.key==='Enter')$('#recApply').click();};
+    $('#recInactive').onchange=function(){$('#recApply').click();};
+    $$('[data-rec-edit]').forEach(function(b){b.onclick=function(){recordEdit(ent.key,b.dataset.recEdit);};});
+    $$('[data-rec-del]').forEach(function(b){b.onclick=function(){recordDelete(ent.key,b.dataset.recDel,false);};});
+    $$('[data-rec-restore]').forEach(function(b){b.onclick=function(){recordDelete(ent.key,b.dataset.recRestore,true);};});
+  }catch(error){showWorkspaceError(error);}
+}
+async function recordAuthPass(){
+  if(__recCfg&&__recCfg.financeAccess)return {ok:true};
+  if(__recPass)return {ok:true,passcode:__recPass};
+  var code=window.prompt('Enter the edit passcode to authorize this change:');
+  if(!code)return {ok:false};
+  __recPass=String(code).trim();return {ok:true,passcode:__recPass};
+}
+async function recordEdit(entity,id){
+  try{
+    var data=await api('/admin/records/'+entity+'/'+id,{noCache:true});
+    var rec=data.record;var fields=data.editable;
+    var form='<form id="recForm" class="operational-form">'+fields.map(function(f){return '<label><span>'+esc(recPrettyCol(f))+'</span><input name="'+esc(f)+'" value="'+esc(rec[f]==null?'':rec[f])+'"></label>';}).join('')+'<div class="modal-actions"><button type="submit" class="command primary">Save changes</button></div></form>';
+    modal('Edit record #'+id,form,'Update the fields and save');
+    var fm=$('#modalBody').querySelector('#recForm');
+    fm.onsubmit=async function(e){e.preventDefault();
+      var auth=await recordAuthPass();if(!auth.ok)return;
+      var changes={};fields.forEach(function(f){changes[f]=fm.querySelector('[name="'+f+'"]').value;});
+      try{await api('/admin/records/'+entity+'/'+id,{method:'POST',body:JSON.stringify({changes:changes,passcode:auth.passcode})});
+        toast('Record updated');closeModal();renderRecordConsole(entity,$('#recSearch')?$('#recSearch').value:'',$('#recInactive')?$('#recInactive').checked:false);
+      }catch(err){if(/passcode/i.test(err.message||''))__recPass='';toast(err.message||'Update failed','error');}
+    };
+  }catch(err){toast(err.message||'Unable to load record','error');}
+}
+async function recordDelete(entity,id,restore){
+  if(!restore&&!window.confirm('Deactivate this record? It will be hidden but can be restored.'))return;
+  var auth=await recordAuthPass();if(!auth.ok)return;
+  try{await api('/admin/records/'+entity+'/'+id+'/delete',{method:'POST',body:JSON.stringify({restore:!!restore,passcode:auth.passcode})});
+    toast(restore?'Record restored':'Record deactivated');
+    renderRecordConsole(entity,$('#recSearch')?$('#recSearch').value:'',$('#recInactive')?$('#recInactive').checked:false);
+  }catch(err){if(/passcode/i.test(err.message||''))__recPass='';toast(err.message||'Action failed','error');}
+}
+
+function reportsCatalog(){return [
+  {key:'fin-trial-balance',cat:'FIN',title:'Trial Balance',desc:'All accounts with debit, credit and balance',endpoint:'/finance/reports/trial-balance',
+    columns:[['account_code','Account'],['account_name','Name'],['account_type','Type'],['debit','Debit','money'],['credit','Credit','money'],['balance','Balance','money']]},
+  {key:'fin-ar-aging',cat:'FIN',title:'AR Aging',desc:'Open customer receivables by aging bucket',endpoint:'/finance/aging/AR',asOf:true,
+    columns:[['partner_name','Customer'],['document_no','Document'],['document_date','Date','date'],['due_date','Due','date'],['open_balance','Open Balance','money'],['aging_bucket','Bucket']]},
+  {key:'fin-ap-aging',cat:'FIN',title:'AP Aging',desc:'Open supplier payables by aging bucket',endpoint:'/finance/aging/AP',asOf:true,
+    columns:[['partner_name','Supplier'],['document_no','Document'],['document_date','Date','date'],['due_date','Due','date'],['open_balance','Open Balance','money'],['aging_bucket','Bucket']]},
+  {key:'sd-sales-orders',cat:'SD',title:'Sales & Lease Orders',desc:'All customer orders (sale and lease)',endpoint:'/sales?size=250',
+    columns:[['sales_order_no','Order'],['customer_name','Customer'],['transaction_type','Type'],['order_date','Date','date'],['gross_amount','Amount','money'],['line_count','Lines','num'],['status','Status']]},
+  {key:'sd-deliveries',cat:'SD',title:'Deliveries',desc:'All deliveries and their status',endpoint:'/deliveries?size=250',
+    columns:[['delivery_no','Delivery'],['requisition_no','Requisition'],['destination','Destination'],['recipient_name','Holder'],['asset_count','Serials','num'],['status','Status']]},
+  {key:'sd-returns',cat:'SD',title:'Goods Returns',desc:'Customer and custody returns',endpoint:'/returns?size=250',
+    columns:[['return_no','Return'],['return_type','Type'],['customer_name','Customer / Holder',null,r=>r.customer_name||r.partner_name||''],['return_date','Date','date'],['line_count','Lines','num'],['status','Status']]},
+  {key:'sd-units-by-month',cat:'SD',title:'Units Sold by Month',desc:'Sold units and value per month and class - filter by date range',endpoint:'/sales/reports/units-by-month',range:true,
+    columns:[['ym','Month'],['class_name','Class'],['units','Units','num'],['amount','Gross Amount','money']]},
+  {key:'ip-by-class',cat:'IP',title:'Inventory by Class',desc:'Available, leased, total and value per class',endpoint:'/inventory/by-class',
+    columns:[['class_name','Inventory Class'],['available','Available','num'],['leased','Leased','num'],['total_units','Total Units','num',r=>Number(r.available||0)+Number(r.leased||0)],['sold','Sold (ref)','num'],['inventory_value','Inventory Value','money']]},
+  {key:'ip-stock-analysis',cat:'IP',title:'Inventory by Item',desc:'Per-item available, leased, sold and value',endpoint:'/inventory/analysis',
+    filter:r=>(Number(r.available_qty||0)+Number(r.leased_qty||0)+Number(r.sold_qty||0)+Number(r.on_hand_qty||0))>0,
+    columns:[['item_code','Material Code'],['item_name','Item'],['category','Class'],['primary_location','Location'],['available_qty','Available','num'],['leased_qty','Leased','num'],['sold_qty','Sold','num'],['inventory_value','Inventory Value','money']]},
+  {key:'ip-movements',cat:'IP',title:'Stock Movement Register',desc:'Serialized stock-ledger movements',endpoint:'/inventory/movements?size=250',
+    columns:[['movement_no','Movement'],['movement_date','Date','date'],['movement_type','Type'],['serial_no','Serial'],['item_name','Item'],['from_location_code','From'],['to_location_code','To'],['posted_by','Posted By']]}
+];}
+function reportRows(def,data){var r=def.rowsPath?def.rowsPath(data):(data.rows||data.items||[]);return def.filter?r.filter(def.filter):r;}
+function reportCellValue(col,row){return col[3]?col[3](row):row[col[0]];}
+async function renderReportsHub(){
+  state.module=null;state.definition=null;state.section='center';
+  document.body.classList.remove('workbench-view');document.body.classList.add('launchpad-view');
+  const cats=[['Finance & Accounting','FIN'],['Sales & Distribution','SD'],['Inventory & Procurement','IP']];
+  const defs=reportsCatalog();
+  const catHtml=cats.map(function(c){return '<section class="report-cat"><header><h2>'+c[0]+'</h2><span>'+defs.filter(d=>d.cat===c[1]).length+' reports</span></header><div class="report-grid">'+
+    defs.filter(d=>d.cat===c[1]).map(d=>'<button class="report-card" data-report="'+esc(d.key)+'"><b>'+esc(d.title)+'</b><span>'+esc(d.desc||'')+'</span></button>').join('')+'</div></section>';}).join('');
+  content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>Reports &amp; Analytics</h1><p>Financial and operational reports across E88. Open a report to view it and export to Excel.</p></div><button class="command" id="reportsBack">&larr; Enterprise Modules</button></div>'+catHtml+'</div>';
+  $('#reportsBack').onclick=renderLaunchpad;
+  $$('[data-report]').forEach(b=>b.onclick=()=>renderReport(b.dataset.report));
+}
+async function renderReport(key,opts){
+  opts=opts||{};
+  const def=reportsCatalog().find(d=>d.key===key);
+  if(!def)return renderReportsHub();
+  content.innerHTML='<div class="workspace-loading">Loading report...</div>';
+  try{
+    let path=def.endpoint;
+    if(def.asOf){var ao=opts.asOf||new Date().toISOString().slice(0,10);path+=(path.indexOf('?')>=0?'&':'?')+'asOf='+encodeURIComponent(ao);}
+    if(def.range&&opts.from&&opts.to){path+=(path.indexOf('?')>=0?'&':'?')+'from='+encodeURIComponent(opts.from)+'&to='+encodeURIComponent(opts.to);}
+    const data=await api(path);
+    const rows=reportRows(def,data);
+    const cols=def.columns;
+    const head=cols.map(c=>'<th'+((c[2]==='money'||c[2]==='num')?' class="num"':'')+'>'+esc(c[1])+'</th>').join('');
+    const body=rows.map(function(r){return '<tr>'+cols.map(function(c){var v=reportCellValue(c,r);var cls=(c[2]==='money'||c[2]==='num')?' class="num"':'';var disp=c[2]==='money'?money(v):(c[2]==='date'?date(v):esc(v==null?'':v));return '<td'+cls+'>'+disp+'</td>';}).join('')+'</tr>';}).join('');
+    const asOfBar=def.asOf?('<label class="inline-control"><span>As of</span><input type="date" id="reportAsOf" value="'+esc(opts.asOf||new Date().toISOString().slice(0,10))+'"></label><button class="command primary" id="reportApply">Apply</button>'):'';
+    const rangeBar=def.range?('<label class="inline-control"><span>From</span><input type="date" id="reportFrom" value="'+esc(opts.from||'')+'"></label><label class="inline-control"><span>To</span><input type="date" id="reportTo" value="'+esc(opts.to||'')+'"></label><button class="command primary" id="reportApplyRange">Apply</button>'+((opts.from||opts.to)?'<button class="command" id="reportClearRange">Clear</button>':'')):'';
+    content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>'+esc(def.title)+'</h1><p>'+esc(def.desc||'')+' &middot; '+rows.length+' rows</p></div><div class="report-actions"><button class="command" id="reportBackHub">&larr; All Reports</button><button class="command primary" id="reportExcel">Export to Excel</button><button class="command" id="reportPrint">Print</button></div></div>'+
+      ((asOfBar||rangeBar)?('<div class="workspace-commandbar">'+asOfBar+rangeBar+'</div>'):'')+
+      '<section class="workspace-card"><div class="record-table-wrap"><table class="record-table"><thead><tr>'+head+'</tr></thead><tbody>'+(body||('<tr><td colspan="'+cols.length+'" style="text-align:center;padding:24px;color:#64748b">No records.</td></tr>'))+'</tbody></table></div></section></div>';
+    window.__reportExport={cols:cols,rows:rows,def:def};
+    $('#reportBackHub').onclick=renderReportsHub;
+    $('#reportExcel').onclick=exportReportExcel;
+    $('#reportPrint').onclick=()=>window.print();
+    if($('#reportApply'))$('#reportApply').onclick=()=>renderReport(key,{asOf:$('#reportAsOf').value});
+    if($('#reportApplyRange'))$('#reportApplyRange').onclick=function(){var f=$('#reportFrom').value,t=$('#reportTo').value;if(!f||!t){toast('Select both From and To dates.','error');return;}renderReport(key,{from:f,to:t});};
+    if($('#reportClearRange'))$('#reportClearRange').onclick=function(){renderReport(key,{});};
+  }catch(error){showWorkspaceError(error);}
+}
+function exportReportExcel(){
+  var x=window.__reportExport;if(!x)return;
+  function esc2(v){if(v==null)v='';return '"'+String(v).replace(/"/g,'""')+'"';}
+  var head=x.cols.map(c=>esc2(c[1])).join(',');
+  var lines=x.rows.map(function(r){return x.cols.map(function(c){var v=reportCellValue(c,r);if(c[2]==='money'||c[2]==='num')v=(v==null||v==='')?'':Number(v);return esc2(v);}).join(',');});
+  var csv=[head].concat(lines).join('\r\n');
+  var blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8;'});
+  var url=URL.createObjectURL(blob);var a=document.createElement('a');
+  a.href=url;a.download=(x.def.key||'report')+'-'+new Date().toISOString().slice(0,10)+'.csv';
+  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  if(typeof toast==='function')toast('Exported '+x.rows.length+' rows to Excel (CSV)');
+}
+
 async function renderInventoryAnalysisWorkspace(section){
   if(section==='records')return renderStockAnalysis();
   if(section==='approvals')return renderInventoryPlans();
@@ -2203,43 +2357,61 @@ async function renderInventoryAnalysisWorkspace(section){
   return renderInventoryAnalysisOverview();
 }
 
+let __invFrom='',__invTo='';
 async function renderInventoryAnalysisOverview(){
-  content.innerHTML='<div class="workspace-loading">Loading inventory…</div>';
+  content.innerHTML='<div class="workspace-loading">Loading inventory...</div>';
   try{
-    const byClass=await api('/inventory/by-class');
+    const period=(__invFrom&&__invTo);
+    const byClass=await api('/inventory/by-class'+(period?('?from='+encodeURIComponent(__invFrom)+'&to='+encodeURIComponent(__invTo)):''));
     const cls=(byClass.rows||[]);
-    const rows=cls.map(function(c){return '<tr><td><b>'+esc(c.class_name||c.cls||'Class')+'</b></td>'+
-      '<td class="num">'+Number(c.available||0).toLocaleString()+'</td>'+
-      '<td class="num">'+Number(c.leased||0).toLocaleString()+'</td>'+
+    const rows=cls.map(function(c){
+      var avail=Number(c.available||0),leased=Number(c.leased||0),total=avail+leased;
+      return '<tr><td><b>'+esc(c.class_name||c.cls||'Class')+'</b></td>'+
+      '<td class="num">'+avail.toLocaleString()+'</td>'+
+      '<td class="num">'+leased.toLocaleString()+'</td>'+
+      '<td class="num"><b>'+total.toLocaleString()+'</b></td>'+
       '<td class="num">'+Number(c.sold||0).toLocaleString()+'</td>'+
-      '<td class="num">'+Number(c.deployed||0).toLocaleString()+'</td>'+
-      '<td class="num">'+Number(c.total||0).toLocaleString()+'</td>'+
       '<td class="num">'+money(c.inventory_value)+'</td></tr>';});
-    const body='<section class="workspace-card"><header><div><h2>Inventory by Class — Operational Status</h2><span>Available, leased, sold, deployed (battery swapping), and on-hand per class</span></div><button class="ramco-primary" data-section-link="records">Open Stock Analysis</button></header>'+
-      operationalTable(['Inventory Class','Available','Leased','Sold','Deployed / Swapping','On Hand','Inventory Value'],rows,{key:'class-operational',emptyMessage:'No classified inventory records.'})+
-      '</section>'+
+    var moveCard='';
+    if(period){
+      var mv=(byClass.movement||[]);var mmap={};mv.forEach(function(m){mmap[m.cls]={sold:m.sold,leased:m.leased};});
+      var mrows=cls.map(function(c){var m=mmap[c.cls]||{sold:0,leased:0};return '<tr><td><b>'+esc(c.class_name||c.cls)+'</b></td><td class="num">'+Number(m.leased||0).toLocaleString()+'</td><td class="num">'+Number(m.sold||0).toLocaleString()+'</td></tr>';});
+      moveCard='<section class="workspace-card"><header><div><h2>Movement in Selected Period</h2><span>Units newly leased or sold between '+esc(__invFrom)+' and '+esc(__invTo)+'</span></div></header>'+operationalTable(['Inventory Class','Leased in Period','Sold in Period'],mrows,{key:'class-movement'})+'</section>';
+    }
+    const dateBar='<div class="workspace-commandbar"><label class="inline-control"><span>From</span><input type="date" id="invFrom" value="'+esc(__invFrom)+'"></label>'+
+      '<label class="inline-control"><span>To</span><input type="date" id="invTo" value="'+esc(__invTo)+'"></label>'+
+      '<button class="command primary" id="invApplyDates">Apply</button>'+(period?'<button class="command" id="invClearDates">Clear</button>':'')+
+      '<span class="command-spacer"></span><span class="workspace-mode">'+(period?'PERIOD MOVEMENT':'CURRENT SNAPSHOT')+'</span></div>';
+    const body=dateBar+'<section class="workspace-card"><header><div><h2>Inventory by Class</h2><span>Total Units = Available + Leased (what you physically hold). Sold is shown for reference only - those units have left inventory.</span></div><button class="ramco-primary" data-section-link="records">Open Stock Analysis</button></header>'+
+      operationalTable(['Inventory Class','Available','Leased','Total Units','Sold (reference)','Inventory Value'],rows,{key:'class-operational',emptyMessage:'No classified inventory records.'})+
+      '</section>'+moveCard+
       '<div class="ramco-layout"><div class="ramco-main"></div><aside class="ramco-rail">'+
       '<section><header>Planning Actions</header><div class="ramco-action-links"><button data-section-link="records">Stock Analysis</button><button data-section-link="approvals">Ordering / Deployment Plans</button><button data-section-link="reports">Planning Reports</button></div></section></aside></div>';
     content.innerHTML=workbenchShell(body,'center');
     bindOperationalShell();
+    var ab=$('#invApplyDates');if(ab)ab.onclick=function(){var f=$('#invFrom').value||'',t=$('#invTo').value||'';if(!f||!t){toast('Select both From and To dates.','error');return;}__invFrom=f;__invTo=t;renderInventoryAnalysisOverview();};
+    var cb=$('#invClearDates');if(cb)cb.onclick=function(){__invFrom='';__invTo='';renderInventoryAnalysisOverview();};
   }catch(error){showWorkspaceError(error);}
 }
 
 async function renderStockAnalysis(search=''){
-  content.innerHTML='<div class="workspace-loading">Loading stock analysis…</div>';
+  content.innerHTML='<div class="workspace-loading">Loading stock analysis...</div>';
   try{
     const analysis=await api('/inventory/analysis');
     const q=search.toLowerCase();
-    const filtered=analysis.rows.filter(row=>!q||`${row.item_code} ${row.item_name} ${row.category}`.toLowerCase().includes(q));
-    const rows=filtered.map(row=>`<tr class="clickable-row" data-analysis-item="${esc(row.item_code)}" data-analysis-class="${esc(row.category)}"><td><b>${esc(row.item_code)}</b></td><td>${esc(row.item_name)}</td><td>${esc(row.category)}</td>
-      <td>${esc(row.location_count)}</td><td>${esc(row.on_hand_qty)}</td><td>${esc(row.available_qty)}</td><td>${esc(row.deployed_qty)}</td>
-      <td>${esc(row.quarantine_qty)}</td><td>${esc(row.unvalued_qty||0)}</td><td>${esc(row.incoming_qty)}</td><td>${esc(row.open_po_qty)}</td>
-      <td class="num">${money(row.inventory_value)}</td></tr>`);
-    const body=`<div class="workspace-commandbar"><input id="analysisSearch" value="${esc(search)}" placeholder="Search exact material code, item, or class">
-      <button class="command primary" id="runAnalysisSearch">Apply</button><span class="command-spacer"></span><span class="workspace-mode">${filtered.length} TAGGED ITEMS</span></div>
-      <div class="workspace-kpis">${kpi('Tagged Items',analysis.totals.items)}${kpi('Serials On Hand',analysis.totals.onHand)}${kpi('Missing Cost',analysis.totals.unvalued)}${kpi('Inventory Value',money(analysis.totals.inventoryValue))}</div>
-      <section class="workspace-card"><header><h2>Inventory Analysis by Material Code</h2><span>Click an item to open its exact serial register</span></header>
-        ${operationalTable(['Material Code','Tagged Item','Class','Locations','On Hand','Available','Deployed','Quarantine','Missing Cost','ATLAS Incoming','Open PO','Inventory Value'],rows,{key:'inventory-analysis'})}</section>`;
+    const withStock=analysis.rows.filter(row=>(Number(row.on_hand_qty||0)+Number(row.available_qty||0)+Number(row.leased_qty||0)+Number(row.sold_qty||0))>0);
+    const filtered=withStock.filter(row=>!q||`${row.item_code} ${row.item_name} ${row.category}`.toLowerCase().includes(q));
+    const totAvail=filtered.reduce((s,r)=>s+Number(r.available_qty||0),0);
+    const totLeased=filtered.reduce((s,r)=>s+Number(r.leased_qty||0),0);
+    const totVal=filtered.reduce((s,r)=>s+Number(r.inventory_value||0),0);
+    const rows=filtered.map(row=>{var av=Number(row.available_qty||0),ls=Number(row.leased_qty||0);return `<tr class="clickable-row" data-analysis-item="${esc(row.item_code)}" data-analysis-class="${esc(row.category)}"><td><b>${esc(row.item_code)}</b></td><td>${esc(row.item_name)}</td><td>${esc(row.category)}</td>
+      <td>${esc(row.primary_location||'-')}</td><td class="num">${av.toLocaleString()}</td><td class="num">${ls.toLocaleString()}</td><td class="num">${Number(row.sold_qty||0).toLocaleString()}</td><td class="num"><b>${(av+ls).toLocaleString()}</b></td>
+      <td class="num">${money(row.inventory_value)}</td></tr>`;});
+    const body=`<div class="workspace-commandbar"><input id="analysisSearch" value="${esc(search)}" placeholder="Search material code, item, or class">
+      <button class="command primary" id="runAnalysisSearch">Apply</button><span class="command-spacer"></span><span class="workspace-mode">${filtered.length} ITEMS</span></div>
+      <div class="workspace-kpis">${kpi('Items',filtered.length)}${kpi('Available Units',totAvail.toLocaleString())}${kpi('Leased Units',totLeased.toLocaleString())}${kpi('Inventory Value',money(totVal))}</div>
+      <section class="workspace-card"><header><h2>Inventory by Item</h2><span>Each material code is one distinct item - click a row to open its serial register</span></header>
+        ${operationalTable(['Material Code','Item','Class','Location','Available','Leased','Sold','Total Units','Inventory Value'],rows,{key:'inventory-analysis',emptyMessage:'No items with stock match your search.'})}</section>`;
     content.innerHTML=workbenchShell(body,'records');bindOperationalShell();
     $('#runAnalysisSearch').onclick=()=>renderStockAnalysis($('#analysisSearch').value);
     $('#analysisSearch').onkeydown=event=>{if(event.key==='Enter')$('#runAnalysisSearch').click();};
@@ -2252,7 +2424,7 @@ async function renderInventoryPlans(){
   try{
     const [plans,analysis,lookups]=await Promise.all([api('/inventory/plans'),api('/inventory/analysis'),api('/masters/lookups')]);
     const rows=plans.rows.map(row=>`<tr><td><b>${esc(row.plan_no)}</b></td><td>${date(row.plan_date)}</td><td>${esc(row.plan_type)}</td>
-      <td>${esc(row.source_location_code||'—')}</td><td>${esc(row.destination_location_code||'—')}</td><td>${esc(row.line_count)}</td>
+      <td>${esc(row.source_location_code||'-')}</td><td>${esc(row.destination_location_code||'-')}</td><td>${esc(row.line_count)}</td>
       <td>${esc(row.planned_units)}</td><td>${statusBadge(row.status)}</td><td>${row.status==='DRAFT'&&can('INVENTORY','APPROVE')?`<button class="table-action" data-approve-plan="${row.id}">Approve</button>`:''}</td></tr>`);
     const body=`<div class="ramco-layout"><div class="ramco-main">
       <section class="workspace-card"><header><h2>Create Inventory Plan</h2><span>Ordering, deployment, or replenishment</span></header>
@@ -2308,21 +2480,22 @@ async function renderInventoryPlans(){
 }
 
 async function renderInventoryPlanningReports(){
-  content.innerHTML='<div class="workspace-loading">Loading planning reports…</div>';
+  content.innerHTML='<div class="workspace-loading">Loading planning reports...</div>';
   try{
     const analysis=await api('/inventory/analysis');
-    const low=analysis.rows.filter(row=>Number(row.available_qty)===0);
-    const incoming=analysis.rows.filter(row=>Number(row.incoming_qty)>0||Number(row.open_po_qty)>0);
-    const riskRows=low.map(row=>`<tr><td><b>${esc(row.item_code)}</b></td><td>${esc(row.item_name)}</td><td>${esc(row.category)}</td>
-      <td>${esc(row.on_hand_qty)}</td><td>${esc(row.available_qty)}</td><td>${esc(row.deployed_qty)}</td><td>${esc(row.incoming_qty)}</td><td>${esc(row.open_po_qty)}</td></tr>`);
-    const inboundRows=incoming.map(row=>`<tr><td><b>${esc(row.item_code)}</b></td><td>${esc(row.item_name)}</td><td>${esc(row.available_qty)}</td>
-      <td>${esc(row.incoming_qty)}</td><td>${esc(row.open_po_qty)}</td><td>${esc(Number(row.available_qty)+Number(row.incoming_qty)+Number(row.open_po_qty))}</td></tr>`);
-    const body=`<div class="workspace-kpis">${kpi('Items With No Available Stock',low.length)}${kpi('Incoming Units',analysis.totals.incoming)}
-      ${kpi('Open PO Units',analysis.totals.openPO)}${kpi('Quarantine Units',analysis.totals.quarantine)}</div>
-      <section class="workspace-card"><header><h2>Availability Risk Report</h2><span>Items requiring ordering or deployment review</span></header>
-        ${operationalTable(['Item','Description','Class','On Hand','Available','Deployed','Incoming','Open PO'],riskRows)}</section>
-      <section class="workspace-card"><header><h2>Supply Pipeline Report</h2><span>Current + expected + ordered</span></header>
-        ${operationalTable(['Item','Description','Available','ATLAS Incoming','Open PO','Projected Supply'],inboundRows)}</section>`;
+    const isSpare=r=>String(r.category||'').toUpperCase()==='SP';
+    const spareReorder=analysis.rows.filter(r=>isSpare(r)&&Number(r.available_qty||0)===0);
+    const deployable=analysis.rows.filter(r=>!isSpare(r)&&Number(r.available_qty||0)>0);
+    const deployUnits=deployable.reduce((s,r)=>s+Number(r.available_qty||0),0);
+    const spareRows=spareReorder.map(r=>`<tr><td><b>${esc(r.item_code)}</b></td><td>${esc(r.item_name)}</td><td class="num">${esc(r.available_qty)}</td><td class="num">${esc(r.incoming_qty)}</td><td class="num">${esc(r.open_po_qty)}</td></tr>`);
+    const deployRows=deployable.map(r=>`<tr><td><b>${esc(r.item_code)}</b></td><td>${esc(r.item_name)}</td><td>${esc(r.category)}</td><td>${esc(r.primary_location||'-')}</td><td class="num">${Number(r.available_qty||0).toLocaleString()}</td></tr>`);
+    const body=`<section class="workspace-card"><header><div><h2>How planning works here</h2></div></header><div class="control-note"><p>Motorcycles, batteries and lockers are <b>unique serialized units</b> - each is received once and cannot be re-ordered, so the planning signal is <b>how many are available to deploy</b>, not a reorder point. Only <b>Spare Parts &amp; Accessories</b> behave like recurring stock that can run out and be reordered.</p></div></section>
+      <div class="workspace-kpis">${kpi('Spare-Part Lines Out of Stock',spareReorder.length)}${kpi('Serialized Units Available to Deploy',deployUnits.toLocaleString())}
+      ${kpi('Incoming Units (ATLAS)',analysis.totals.incoming)}${kpi('Open PO Units',analysis.totals.openPO)}</div>
+      <section class="workspace-card"><header><h2>Spare Parts to Reorder</h2><span>Recurring items with no available stock - candidates for a purchase order</span></header>
+        ${operationalTable(['Material Code','Item','Available','Incoming','Open PO'],spareRows,{emptyMessage:'No spare-part lines are out of stock.'})}</section>
+      <section class="workspace-card"><header><h2>Serialized Units Available to Deploy</h2><span>Unique units on hand and ready to lease, sell, or assign</span></header>
+        ${operationalTable(['Material Code','Item','Class','Location','Available Units'],deployRows,{emptyMessage:'No serialized units are currently available.'})}</section>`;
     content.innerHTML=workbenchShell(body,'reports');bindOperationalShell();
   }catch(error){showWorkspaceError(error);}
 }
@@ -2406,7 +2579,7 @@ async function renderModuleSetup(){
     <td>${statusBadge(action.to)}</td><td>${esc(action.permission)}</td></tr>`);
   const fieldRows=definition.fields.map(field=>`<tr><td><b>${esc(field.label)}</b></td><td>${esc(field.type)}</td>
     <td>${field.required?'Required':'Optional'}</td><td>${field.list?'Register + form':'Form'}</td></tr>`);
-  const submoduleRows=(definition.submodules||[]).map(sub=>`<tr><td><b>${esc(sub.submodule_name)}</b></td><td>${esc(sub.record_type||'—')}</td>
+  const submoduleRows=(definition.submodules||[]).map(sub=>`<tr><td><b>${esc(sub.submodule_name)}</b></td><td>${esc(sub.record_type||'-')}</td>
     <td>${esc(sub.connected_module_code||'Within module')}</td><td>${esc(sub.posting_event_type||'No direct posting')}</td></tr>`);
   const connections=definition.connections.map(code=>{
     const module=moduleByCode(code);
@@ -2467,7 +2640,7 @@ async function renderSalesOrderWorkspace(section){
     const tableRows=(section==='approvals'?drafts:rows).map(row=>`<tr data-sales-order="${row.id}"><td><b>${esc(row.sales_order_no)}</b></td>
       <td>${date(row.order_date)}</td><td>${esc(row.transaction_type)}</td><td>${esc(row.customer_name)}</td><td>${esc(row.line_count)}</td>
       <td class="num">${money(row.gross_amount)}</td><td>${statusBadge(row.credit_status)}</td><td>${statusBadge(row.status)}</td>
-      <td>${row.status==='DRAFT'&&can('SALES','APPROVE')?`<button class="table-action" data-approve-sales="${row.id}">Approve</button>`:'—'}</td></tr>`);
+      <td>${row.status==='DRAFT'&&can('SALES','APPROVE')?`<button class="table-action" data-approve-sales="${row.id}">Approve</button>`:'-'}</td></tr>`);
     if(section==='reports'){
       const types=['SALE','LEASE','DEMO','PILOT','EMPLOYEE_ASSIGNMENT'].map(type=>[type,rows.filter(row=>row.transaction_type===type).length]);
       const body=`<div class="workspace-kpis">${kpi('Order Value',money(value))}${kpi('Orders',rows.length)}${kpi('Draft',drafts.length)}${kpi('Approved',approved.length)}</div>
@@ -2508,8 +2681,8 @@ function bindSalesOrderRows(){
     try{
       const data=await api(`/sales/${row.dataset.salesOrder}`);
       const lines=data.lines.map(line=>`<tr><td>${esc(line.line_no)}</td><td><b>${esc(line.item_code)}</b></td><td>${esc(line.description)}</td>
-        <td>${esc(line.serial_no||'—')}</td><td>${esc(line.qty)}</td><td class="num">${money(line.unit_price)}</td>
-        <td>${line.serial_no?statusBadge(line.current_status):'—'}</td></tr>`);
+        <td>${esc(line.serial_no||'-')}</td><td>${esc(line.qty)}</td><td class="num">${money(line.unit_price)}</td>
+        <td>${line.serial_no?statusBadge(line.current_status):'-'}</td></tr>`);
       modal(`${data.header.sales_order_no} · ${data.header.customer_name}`,`${workflowStrip(['Order','Approval','Assignment','Delivery'],data.header.status==='DRAFT'?0:2)}
         <div class="workspace-kpis">${kpi('Type',data.header.transaction_type)}${kpi('Gross',money(data.header.gross_amount))}
           ${kpi('Deliveries',data.deliveries.length)}${kpi('Status',data.header.status)}</div>
@@ -2571,11 +2744,11 @@ async function renderSourcingWorkspace(section){
     const poRows=po.rows.map(row=>`<tr data-purchase-order="${row.id}"><td><b>${esc(row.purchase_order_no)}</b></td><td>${date(row.order_date)}</td>
       <td>${esc(row.vendor_name)}</td><td>${date(row.expected_delivery_date)}</td><td>${esc(row.line_count)}</td>
       <td class="num">${money(row.total_amount)}</td><td>${statusBadge(row.status)}</td><td>${row.status==='DRAFT'&&can('PROCUREMENT','APPROVE')?
-        `<button class="table-action" data-approve-po="${row.id}">Approve</button>`:'—'}</td></tr>`);
+        `<button class="table-action" data-approve-po="${row.id}">Approve</button>`:'-'}</td></tr>`);
     if(section==='reports'){
-      const landedRows=landed.rows.map(row=>`<tr><td><b>${esc(row.landed_cost_no)}</b></td><td>${esc(row.shipment_no||row.purchase_order_no||'—')}</td>
+      const landedRows=landed.rows.map(row=>`<tr><td><b>${esc(row.landed_cost_no)}</b></td><td>${esc(row.shipment_no||row.purchase_order_no||'-')}</td>
         <td>${esc(row.allocation_method)}</td><td class="num">${money(row.total_cost)}</td><td>${statusBadge(row.status)}</td>
-        <td>${row.status!=='POSTED'&&can('PROCUREMENT','POST')?`<button class="table-action" data-post-landed="${row.id}">Post</button>`:'—'}</td></tr>`);
+        <td>${row.status!=='POSTED'&&can('PROCUREMENT','POST')?`<button class="table-action" data-post-landed="${row.id}">Post</button>`:'-'}</td></tr>`);
       const body=`<div class="workspace-kpis">${kpi('Approved Commitments',money(commitments))}${kpi('Purchase Orders',po.total)}
         ${kpi('Open Sourcing',source.counts.total-source.counts.completed)}${kpi('Landed Cost Batches',landed.rows.length)}</div>
         <section class="workspace-card"><header><h2>Purchase Commitment Report</h2><span>Approved POs connected to expected shipments and AP</span></header>
@@ -2677,8 +2850,8 @@ async function renderRoleCenter(){
         <section class="ramco-detail-panel">
           <header><b>${first?esc(first.record_no):'Record Details'}</b><div><button>◉</button><button>▦</button><button>↗</button></div></header>
           <div class="ramco-detail-grid">
-            <div><small>Record Type</small><b>${first?esc(first.record_type):'—'}</b><small>Document Date</small><b>${first?date(first.transaction_date):'—'}</b></div>
-            <div><small>Document Summary</small><b>${first?esc(first.description||'—'):'—'}</b><small>${esc(definition.amountLabel)}</small><b>${first?money(first.amount):'0.00'}</b></div>
+            <div><small>Record Type</small><b>${first?esc(first.record_type):'-'}</b><small>Document Date</small><b>${first?date(first.transaction_date):'-'}</b></div>
+            <div><small>Document Summary</small><b>${first?esc(first.description||'-'):'-'}</b><small>${esc(definition.amountLabel)}</small><b>${first?money(first.amount):'0.00'}</b></div>
             <div class="ramco-detail-actions"><button data-go="records">Open ${esc(definition.plural)}</button><button id="detailNew" ${can(state.module.permission,'CREATE')?'':'disabled'}>Create ${esc(definition.noun)}</button><button data-go="approvals">Approval Worklist</button></div>
           </div>
         </section>
@@ -2770,7 +2943,7 @@ function approvalWorkflowSection(approvals,editing){
   if(!editing||!approvals?.required)return '';
   const rows=(approvals.steps||[]).map(step=>`<tr><td>${esc(step.cycle_no)}</td><td>${esc(step.step_no)}</td>
     <td><b>${esc(step.required_role_code)}</b></td><td>${esc(step.assigned_user_name||step.assigned_user_email||'Role queue')}</td>
-    <td>${statusBadge(step.status)}</td><td>${esc(step.decided_by||'—')}</td><td>${date(step.decided_at||step.requested_at)}</td></tr>`).join('');
+    <td>${statusBadge(step.status)}</td><td>${esc(step.decided_by||'-')}</td><td>${date(step.decided_at||step.requested_at)}</td></tr>`).join('');
   return `<section class="record-sublist connected-record-section approval-matrix-section">
     <header><div><h3>Approval Matrix</h3><p>Amount-based authority and requester/approver segregation are enforced.</p></div>
       <span>${approvals.pending} pending · ${approvals.approved} approved</span></header>
@@ -2782,8 +2955,8 @@ function specialistLineSection(specialist,editing,immutable,allowed){
   const config=specialist.config;
   if(String(config.engine_code||'').startsWith('CORE_'))return `<section class="record-sublist connected-record-section specialist-engine-status"><header><div><h3>Connected Transaction Engine</h3><p>${esc(config.notes||config.engine_code)}</p></div><span>${esc(config.rollout_level)}</span></header><div class="control-note"><b>${esc(config.engine_code)}</b><p>This module uses the dedicated core transaction engine and the connected Finance, inventory, document-flow, approval, and audit controls.</p></div></section>`;
   const lines=specialist.lines||[];
-  const rows=lines.map(line=>`<tr><td><b>${esc(line.lineNo||'—')}</b></td><td>${esc(line.lineType||'—')}</td><td>${esc(line.referenceCode||'—')}</td>
-    <td>${esc(line.description||'—')}</td><td class="num">${esc(line.quantity??line.hours??'—')}</td><td class="num">${money(line.rate||0)}</td>
+  const rows=lines.map(line=>`<tr><td><b>${esc(line.lineNo||'-')}</b></td><td>${esc(line.lineType||'-')}</td><td>${esc(line.referenceCode||'-')}</td>
+    <td>${esc(line.description||'-')}</td><td class="num">${esc(line.quantity??line.hours??'-')}</td><td class="num">${money(line.rate||0)}</td>
     <td class="num">${money(line.amount||line.billableAmount||0)}</td><td>${statusBadge(line.status||line.resultCode||'OPEN')}</td>
     <td>${allowed&&!immutable?`<button type="button" class="table-action danger" data-delete-specialist-line="${line.id}">Remove</button>`:''}</td></tr>`).join('');
   const links=(specialist.links||[]).map(link=>{
@@ -2810,10 +2983,10 @@ function renderRecordForm(record=null,documents=[],connected={}){
   const actions=editing?definition.workflow.actions.filter(action=>action.from.includes(record.status)&&action.code!=='REVERSE'):[];
   const documentRows=documents.map(document=>`<tr><td><b>${esc(document.document_no)}</b></td><td>${esc(document.document_type)}</td>
     <td><a href="/api/workspace/documents/${document.id}/file" target="_blank" rel="noopener">${esc(document.file_name)}</a></td>
-    <td>${esc(Math.ceil(Number(document.file_size||0)/1024))} KB</td><td>${esc(document.uploaded_by||'—')}</td><td>${date(document.uploaded_at)}</td></tr>`);
+    <td>${esc(Math.ceil(Number(document.file_size||0)/1024))} KB</td><td>${esc(document.uploaded_by||'-')}</td><td>${date(document.uploaded_at)}</td></tr>`);
   const specialist=connected.specialist||null;
   const leaseUnitRows=(connected.units||[]).map(unit=>`<tr><td><b>${esc(unit.serial_no)}</b></td><td>${esc(unit.item_code)}</td>
-    <td>${esc(unit.item_name)}</td><td>${esc(unit.category)}</td><td>${esc(unit.current_location_code||'—')}</td>
+    <td>${esc(unit.item_name)}</td><td>${esc(unit.category)}</td><td>${esc(unit.current_location_code||'-')}</td>
     <td>${statusBadge(unit.status)}</td></tr>`);
   const leaseUnitSection=editing&&state.module.code==='sd-lease-contract-management'?`
     <section class="record-sublist connected-record-section">
@@ -3039,8 +3212,8 @@ async function renderAccessAudit(search=''){
   try{
     const data=await api(`/admin/access-audit?q=${encodeURIComponent(search)}`);
     const rows=data.rows.map(row=>`<tr><td>${date(row.event_at)}</td><td><b>${esc(row.user_email||'SYSTEM')}</b></td>
-      <td>${esc(row.action)}</td><td>${esc(row.module)}</td><td>${esc(row.record_type||'—')}</td><td>${esc(row.record_no||row.record_id||'—')}</td>
-      <td>${esc(row.environment)}</td><td>${esc(row.ip_address||'—')}</td><td>${esc(row.request_id||'—')}</td></tr>`);
+      <td>${esc(row.action)}</td><td>${esc(row.module)}</td><td>${esc(row.record_type||'-')}</td><td>${esc(row.record_no||row.record_id||'-')}</td>
+      <td>${esc(row.environment)}</td><td>${esc(row.ip_address||'-')}</td><td>${esc(row.request_id||'-')}</td></tr>`);
     const body=`<div class="workspace-commandbar"><input id="accessAuditSearch" value="${esc(search)}" placeholder="Search user, action, module, or reference">
       <button class="command primary" id="runAccessAudit">Search</button><button class="command" id="refreshAccessAudit">Refresh</button>
       <span class="command-spacer"></span><span class="workspace-mode">${data.total} AUDIT EVENTS</span></div>
@@ -3069,7 +3242,7 @@ function openUserForm(data,user=null,options={}){
     const admin=role==='ADMIN';
     return data.modules.map(module=>{
       const permission=data.permissions.find(row=>row.role_code===role&&row.module===module)||{};
-      return `<tr><td><b>${esc(module.replaceAll('_',' '))}</b></td>${actionColumns.map(([key])=>`<td>${admin||permission[key]?'<span class="authority-yes">✓</span>':'<span class="authority-no">—</span>'}</td>`).join('')}</tr>`;
+      return `<tr><td><b>${esc(module.replaceAll('_',' '))}</b></td>${actionColumns.map(([key])=>`<td>${admin||permission[key]?'<span class="authority-yes">✓</span>':'<span class="authority-no">-</span>'}</td>`).join('')}</tr>`;
     }).join('');
   };
   const userSwitcher=data.users.length?`<div class="access-user-switcher">
@@ -3215,8 +3388,9 @@ init();
     var first=(cells[0]?cells[0].textContent.trim():'')||'Record';
     var fields=headers.map(function(h,i){return {label:h||('Column '+(i+1)),value:cells[i]?cells[i].textContent.replace(/\s+/g,' ').trim():''};}).filter(function(f){return f.value!=='';});
     var grid='<div class="inventory-detail-grid">'+fields.map(function(f){return '<div><small>'+esc2(f.label)+'</small><b>'+esc2(f.value)+'</b></div>';}).join('')+'</div>';
-    var body=grid+'<div class="modal-actions"><button class="button secondary" id="czPrintRow">Print slip</button></div>';
-    try{ modal('Record - '+first,body,'Full details - click Print slip for a formal document');
+    var isDoc=(/\d/.test(first)&&(/-/.test(first)||/^[A-Z]{2,}\d/.test(first)));
+    var body=grid+(isDoc?'<div class="modal-actions"><button class="button secondary" id="czPrintRow">Print slip</button></div>':'');
+    try{ modal('Record - '+first,body,isDoc?'Full details - click Print slip for a formal document':'Full record details');
       var pb=document.getElementById('czPrintRow'); if(pb) pb.onclick=function(){czPrintSlip(first,fields);};
     }catch(e){}
   }
@@ -3228,6 +3402,60 @@ init();
     w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+esc2(title)+'</title><style>*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#17212b;padding:26px}header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0a2239;padding-bottom:10px;margin-bottom:16px}h1{font-size:18px;margin:0;color:#0a2239}.doc{margin-top:3px;color:#555;font-size:13px;font-weight:700}.meta{text-align:right;color:#666;font-size:11px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #c9d3db;padding:7px 10px;text-align:left;vertical-align:top}th{background:#eef2f6;width:220px;color:#334}.sign{display:flex;gap:34px;margin-top:52px}.sign>div{flex:1;border-top:1px solid #333;padding-top:6px;font-size:11px;color:#555;text-align:center}.bar{margin-top:22px}.bar button{padding:9px 18px;border:1px solid #0a2239;background:#0a2239;color:#fff;border-radius:4px;cursor:pointer;font-size:12px}@media print{.bar{display:none}}</style></head><body><header><div><h1>'+esc2(brand)+'</h1><div class="doc">'+esc2(title)+'</div></div><div class="meta">Printed '+new Date().toLocaleString()+'</div></header><table>'+rows+'</table><div class="sign"><div>Prepared by / Date</div><div>Approved by / Date</div><div>Received by / Date</div></div><div class="bar"><button onclick="window.print()">Print this document</button></div></body></html>');
     w.document.close();
   }
+  function czDocHtml(opts){
+    var brand=(S.branding&&S.branding.appTitle)||'E88 Enterprise System';
+    var meta=(opts.meta||[]).filter(function(m){return m&&m[1]!=null&&String(m[1]).trim()!==''&&String(m[1])!=='Invalid Date';}).map(function(m){return '<div><small>'+esc2(m[0])+'</small><b>'+esc2(m[1])+'</b></div>';}).join('');
+    var lines='';
+    if(opts.lineHead&&opts.lineRows&&opts.lineRows.length){
+      lines='<table class="lines"><thead><tr>'+opts.lineHead.map(function(h){return '<th>'+esc2(h)+'</th>';}).join('')+'</tr></thead><tbody>'+
+        opts.lineRows.map(function(r){return '<tr>'+r.map(function(v){return '<td>'+esc2(v==null?'':v)+'</td>';}).join('')+'</tr>';}).join('')+'</tbody></table>';
+    }
+    var purpose=opts.purpose?'<div class="purpose"><small>Purpose / Remarks</small><div>'+esc2(opts.purpose)+'</div></div>':'';
+    var signs=(opts.signatures||['Prepared by / Date','Approved by / Date','Received by / Date']).map(function(x){return '<div>'+esc2(x)+'</div>';}).join('');
+    return '<!doctype html><html><head><meta charset="utf-8"><title>'+esc2(opts.title)+'</title><style>'+
+      '*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#17212b;padding:28px}'+
+      'header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0a2239;padding-bottom:10px;margin-bottom:6px}'+
+      '.brand h1{font-size:18px;margin:0;color:#0a2239}.brand small{color:#6b7785;letter-spacing:.5px}'+
+      '.title{text-align:right}.title h2{margin:0;font-size:16px;color:#0a2239;text-transform:uppercase;letter-spacing:1px}.title small{color:#6b7785}'+
+      '.meta{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid #c9d3db;border-radius:4px;margin:14px 0;overflow:hidden}'+
+      '.meta>div{padding:7px 10px;border-bottom:1px solid #eef2f6;border-right:1px solid #eef2f6}'+
+      '.meta small{display:block;color:#6b7785;font-size:10px;text-transform:uppercase;letter-spacing:.4px}.meta b{font-size:12.5px;color:#17212b}'+
+      '.purpose{margin:8px 0 4px;border:1px solid #c9d3db;border-radius:4px;padding:8px 10px}.purpose small{color:#6b7785;font-size:10px;text-transform:uppercase}'+
+      'table.lines{width:100%;border-collapse:collapse;margin:12px 0}table.lines th,table.lines td{border:1px solid #c9d3db;padding:6px 9px;text-align:left;font-size:11.5px}table.lines th{background:#eef2f6;color:#334}'+
+      '.sign{display:flex;gap:34px;margin-top:56px}.sign>div{flex:1;border-top:1px solid #333;padding-top:6px;font-size:11px;color:#555;text-align:center}'+
+      '.bar{margin-top:22px}.bar button{padding:9px 18px;border:1px solid #0a2239;background:#0a2239;color:#fff;border-radius:4px;cursor:pointer;font-size:12px}@media print{.bar{display:none}}'+
+      '</style></head><body><header><div class="brand"><h1>'+esc2(brand)+'</h1><small>VENTURES, INC.</small></div>'+
+      '<div class="title"><h2>'+esc2(opts.title)+'</h2><small>Printed '+new Date().toLocaleString()+'</small></div></header>'+
+      '<div class="meta">'+meta+'</div>'+purpose+lines+'<div class="sign">'+signs+'</div>'+
+      '<div class="bar"><button onclick="window.print()">Print this document</button></div></body></html>';
+  }
+  function czOpenDoc(opts){var w=window.open('','_blank','width=880,height=980');if(!w){alert('Please allow pop-ups to print.');return;}w.document.write(czDocHtml(opts));w.document.close();}
+  function czd(v){try{return v?date(v):'';}catch(e){return v||'';}}
+  async function czPrintRequisition(id){
+    try{var d=await api('/requisitions/'+id);var h=d.header||{};var allocs=(d.allocations||[]);var lines=(d.lines||[]);var lh,lr;
+      if(allocs.length){lh=['Item','Class','Serial No','Location'];lr=allocs.map(function(a){return [a.item_name||a.item_code||'',a.category||'',a.serial_no||'',a.current_location_code||''];});}
+      else{lh=['Item','Description','Qty'];lr=lines.map(function(l){return [l.item_code||'',l.item_name||l.description||'',l.qty||l.quantity||''];});}
+      czOpenDoc({title:'Requisition Slip',meta:[['Requisition No',h.requisition_no],['Date',czd(h.request_date||h.created_at)],['Status',h.status],['Request Type',h.request_type],['Requestor',h.requestor_name],['Holder Type',h.holder_type],['Holder',h.holder_name||h.partner_name],['Destination',h.destination],['Expected Return',czd(h.expected_return_date)]],purpose:h.purpose||h.custody_purpose,lineHead:lh,lineRows:lr,signatures:['Requested by / Date','Approved by / Date','Released by / Date','Received by / Date']});
+    }catch(e){if(typeof toast==='function')toast(e.message||'Unable to print requisition','error');}
+  }
+  async function czPrintGRN(id){
+    try{var d=await api('/receiving/'+id);var h=d.header||{};var lines=(d.lines||[]);
+      czOpenDoc({title:'Goods Receipt Note',meta:[['Receipt No',h.receipt_no],['Shipment No',h.shipment_no],['Batch',h.batch_code],['Supplier',h.supplier_name],['Receiving Location',(h.location_code?h.location_code+' - ':'')+(h.location_name||'')],['Date',czd(h.received_at||h.receipt_date||h.created_at)],['Status',h.status],['Document Ref',h.document_ref]],lineHead:['Item','Expected Serial','Actual Serial','Match'],lineRows:lines.map(function(l){return [l.item_name||l.item_code||'',l.expected_serial_no||'',l.actual_serial_no||l.serial_no||'',l.match_status||l.acceptance_status||''];}),signatures:['Received by / Date','Checked by / Date','Approved by / Date']});
+    }catch(e){if(typeof toast==='function')toast(e.message||'Unable to print goods receipt','error');}
+  }
+  async function czPrintDelivery(id){
+    try{var d=await api('/deliveries/'+id);var h=d.header||{};var assets=(d.assets||[]);
+      czOpenDoc({title:'Delivery Note',meta:[['Delivery No',h.delivery_no],['Requisition',h.requisition_no],['Sales Order',h.sales_order_no],['Type',h.transaction_type],['Destination',h.destination],['Recipient',h.recipient_name],['Origin',h.origin_location_name],['Scheduled',czd(h.scheduled_date)],['Delivered',czd(h.actual_delivery_date)],['Status',h.status]],lineHead:['Item','Class','Serial No','Status'],lineRows:assets.map(function(a){return [a.item_name||a.item_code||'',a.category||'',a.serial_no||'',a.current_status||''];}),signatures:['Released by / Date','Delivered by / Date','Received by / Date']});
+    }catch(e){if(typeof toast==='function')toast(e.message||'Unable to print delivery note','error');}
+  }
+  window.czPrintRequisition=czPrintRequisition;window.czPrintGRN=czPrintGRN;window.czPrintDelivery=czPrintDelivery;
+  document.addEventListener('click',function(ev){
+    var t=ev.target;if(!t||!t.closest)return;
+    var pr=t.closest('[data-print-req]');if(pr){ev.preventDefault();ev.stopPropagation();czPrintRequisition(pr.getAttribute('data-print-req'));return;}
+    var pg=t.closest('[data-print-grn]');if(pg){ev.preventDefault();ev.stopPropagation();czPrintGRN(pg.getAttribute('data-print-grn'));return;}
+    var pd=t.closest('[data-print-dlv]');if(pd){ev.preventDefault();ev.stopPropagation();czPrintDelivery(pd.getAttribute('data-print-dlv'));return;}
+  },true);
+
   document.addEventListener('click',function(ev){
     if(ev.target.closest('button,a,input,select,textarea,label'))return;
     var tr=ev.target.closest('table.record-table tbody tr'); if(!tr)return;

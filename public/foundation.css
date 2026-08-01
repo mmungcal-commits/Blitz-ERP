@@ -200,3 +200,26 @@ button{cursor:pointer}
 .pdi-notes span{color:#94a3b8;font-size:11px}
 .pdi-notes textarea{width:100%}
 @media(max-width:640px){.pdi-grid{grid-template-columns:1fr}}
+/* Center table headers (keep first column left-aligned) */
+.record-table thead th{text-align:center}
+.record-table thead th:first-child{text-align:left}
+.record-table td.num,.record-table th.num{text-align:right}
+/* Serial scan field */
+.scan-field{display:flex;gap:6px;align-items:center}
+.scan-field input{flex:1;min-width:0}
+/* Reports & Analytics hub */
+.reports-hub{max-width:1200px;margin:0 auto;padding:8px 4px 40px}
+.reports-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin:4px 0 18px;flex-wrap:wrap}
+.reports-top h1{font-size:22px;margin:0 0 4px;color:#0f2440}
+.reports-top p{margin:0;color:#64748b;font-size:13px;max-width:640px}
+.report-actions{display:flex;gap:8px;flex-wrap:wrap}
+.report-cat{margin:0 0 22px}
+.report-cat>header{display:flex;align-items:baseline;gap:10px;border-bottom:2px solid #e2e8f0;padding-bottom:6px;margin-bottom:12px}
+.report-cat>header h2{font-size:16px;margin:0;color:#0f2440}
+.report-cat>header span{color:#94a3b8;font-size:12px}
+.report-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.report-card{display:flex;flex-direction:column;gap:4px;text-align:left;padding:14px 16px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;cursor:pointer;transition:border-color .12s,box-shadow .12s,transform .12s}
+.report-card:hover{border-color:#2563eb;box-shadow:0 4px 14px rgba(37,99,235,.12);transform:translateY(-1px)}
+.report-card b{font-size:14px;color:#0f2440}
+.report-card span{font-size:12px;color:#64748b;line-height:1.35}
+.report-card.active{border-color:#2563eb;background:#eff6ff;box-shadow:0 2px 8px rgba(37,99,235,.15)}
