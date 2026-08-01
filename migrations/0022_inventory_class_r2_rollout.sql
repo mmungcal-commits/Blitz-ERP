@@ -175,13 +175,16 @@ SELECT
   l.id location_id,COALESCE(l.code,'UNASSIGNED') location_code,COALESCE(l.name,'Unassigned') location_name,
   a.current_status,
   COUNT(a.id) quantity,
+  SUM(CASE WHEN a.current_status NOT IN ('SOLD','WRITTEN_OFF') THEN 1 ELSE 0 END) on_hand_quantity,
   SUM(CASE WHEN a.current_status='AVAILABLE' THEN 1 ELSE 0 END) available_quantity,
+  SUM(CASE WHEN a.current_status='LEASED' THEN 1 ELSE 0 END) leased_quantity,
+  SUM(CASE WHEN a.current_status='SOLD' THEN 1 ELSE 0 END) sold_quantity,
   SUM(CASE WHEN a.current_holder_name IS NOT NULL OR a.current_status IN ('ASSIGNED','LEASED','DEMO','PILOT_TEST','EMPLOYEE_ASSIGNED','INTERNAL_ASSIGNED') THEN 1 ELSE 0 END) deployed_quantity,
   SUM(CASE WHEN a.current_status='QUARANTINE' THEN 1 ELSE 0 END) quarantine_quantity,
-  SUM(CASE WHEN COALESCE(a.unit_cost,0)<=0 THEN 1 ELSE 0 END) unvalued_quantity,
-  ROUND(COALESCE(SUM(CASE WHEN NOT EXISTS(SELECT 1 FROM erp_fixed_asset_books f WHERE f.asset_id=a.id) THEN a.unit_cost ELSE 0 END),0),2) inventory_value
+  SUM(CASE WHEN a.current_status NOT IN ('SOLD','WRITTEN_OFF') AND COALESCE(a.unit_cost,0)<=0 THEN 1 ELSE 0 END) unvalued_quantity,
+  ROUND(COALESCE(SUM(CASE WHEN a.current_status NOT IN ('SOLD','WRITTEN_OFF') AND NOT EXISTS(SELECT 1 FROM erp_fixed_asset_books f WHERE f.asset_id=a.id) THEN a.unit_cost ELSE 0 END),0),2) inventory_value
 FROM erp_items i
-LEFT JOIN erp_assets a ON a.item_id=i.id AND a.active=1 AND a.current_status NOT IN ('SOLD','WRITTEN_OFF')
+LEFT JOIN erp_assets a ON a.item_id=i.id AND a.active=1 AND a.current_status!='WRITTEN_OFF'
 LEFT JOIN erp_locations l ON l.id=a.current_location_id
 WHERE i.active=1
 GROUP BY i.id,l.id,a.current_status;
