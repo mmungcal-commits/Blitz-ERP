@@ -231,3 +231,7 @@ button{cursor:pointer}
 .doc-checklist{list-style:none;margin:0;padding:0}
 .doc-checklist li{font-size:12px;color:#334155;padding:5px 0 5px 20px;position:relative;border-bottom:1px solid #eef2f7}
 .doc-checklist li:before{content:"\2713";position:absolute;left:0;color:#2563eb;font-weight:700}
+
+/* Vendor Accreditation portal compact icon links (r35) */
+.portal-icon-btn{display:inline-flex;align-items:center;gap:4px;padding:6px 12px;margin-left:8px;border:1px solid var(--line,#d3dceb);border-radius:8px;background:#fff;color:#12305f;font-size:12px;font-weight:600;text-decoration:none;cursor:pointer;white-space:nowrap}
+.portal-icon-btn:hover{background:#eef4ff;border-color:#9bb8e6}

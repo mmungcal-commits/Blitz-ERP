@@ -1635,7 +1635,7 @@ async function renderOutboundRequisitions(){
     const rows=data.requisitions.map(row=>`<tr><td><b>${esc(row.requisition_no)}</b></td><td>${date(row.request_date)}</td>
       <td>${esc(row.request_type||'-')}</td><td>${esc(row.holder_type||'-')}</td><td>${esc(row.holder_name||'-')}</td>
       <td>${esc(row.serial_count||0)}</td><td>${esc(row.total_qty||0)}</td><td>${date(row.required_date)}</td><td>${statusBadge(row.status)}</td>
-      <td>${['SUBMITTED','DRAFT'].includes(row.status)&&can('REQUISITIONS','APPROVE')?`<button class="table-action" data-approve-requisition="${row.id}">Approve</button>`:''}<button class="table-action" data-print-req="${row.id}">Print Slip</button></td></tr>`);
+      <td><button class="table-action" data-req-open="${row.id}">Open</button>${['SUBMITTED','DRAFT'].includes(row.status)&&can('REQUISITIONS','APPROVE')?`<button class="table-action" data-approve-requisition="${row.id}">Approve</button>`:''}<button class="table-action" data-print-req="${row.id}">Print Slip</button></td></tr>`);
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],0)}
       <section class="workspace-card"><header><div><h2>Create Requisition Slip</h2><span>Select the holder, available items, and exact serials for full custody traceability.</span></div><span>AUTO REFERENCE</span></header>
         <form id="requisitionForm" class="operational-form grid">
@@ -1705,7 +1705,59 @@ async function renderOutboundRequisitions(){
       try{const result=await api(`/requisitions/${button.dataset.approveRequisition}/approve`,{method:'POST',body:'{}'});toast(`${result.assignmentNo} and ${result.deliveryNo} created`);await renderOutboundRequisitions();}
       catch(error){toast(error.message,'error');}
     });
+    $$('[data-req-open]').forEach(button=>button.onclick=event=>{event.stopPropagation();openRequisitionDetail(Number(button.dataset.reqOpen),lookups);});
   }catch(error){showWorkspaceError(error);}
+}
+
+async function openRequisitionDetail(id,lookups){
+  try{
+    const data=await api('/requisitions/'+id);
+    const h=data.header||{};
+    const editable=!['APPROVED','ISSUED','FULFILLED','CANCELLED'].includes(h.status);
+    const allocRows=(data.allocations||[]).filter(a=>a.asset_id).map(a=>`<tr><td><b>${esc(a.serial_no)}</b></td><td>${esc(a.item_code||'-')}</td><td>${esc(a.item_name||'-')}</td><td>${esc(a.category||'-')}</td><td>${statusBadge(a.allocation_status||'SELECTED')}</td></tr>`).join('');
+    const lineRows=(data.lines||[]).map(l=>`<tr><td>${esc(l.item_code||'-')}</td><td>${esc(l.description||l.item_name||'-')}</td><td class="num">${esc(l.qty||0)}</td><td>${l.serial_required?'Serialized':'Quantity'}</td></tr>`).join('');
+    const usedSerials=new Set((data.allocations||[]).filter(a=>a.serial_no).map(a=>a.serial_no));
+    const avail=(lookups.assets||[]).filter(a=>!usedSerials.has(a.serial_no));
+    const byItem={};avail.forEach(a=>{(byItem[a.item_name||a.item_code]=byItem[a.item_name||a.item_code]||[]).push(a);});
+    const optgroups=Object.keys(byItem).sort().map(name=>`<optgroup label="${esc(name)} (${byItem[name].length} available)">${byItem[name].map(a=>`<option value="${esc(a.serial_no)}">${esc(a.category)} · ${esc(a.serial_no)} · ${esc(a.current_location_code||'No location')}</option>`).join('')}</optgroup>`).join('');
+    const allocateBlock=editable?`
+      <section class="record-sublist">
+        <header><div><h3>Allocate Available Serials</h3><p>Pick the exact units to reserve on this requisition. Motorcycles then flow to the Pre-release checklist.</p></div></header>
+        <div class="lease-unit-picker"><label><span>Available Serial Numbers</span>
+          <select id="reqAllocSerials" multiple size="10">${optgroups||'<option disabled>No available serials</option>'}</select></label>
+          <div><button type="button" class="command primary" id="reqAllocBtn">Allocate Selected Serials</button></div></div>
+      </section>`:'';
+    const approveBtn=(['SUBMITTED','DRAFT'].includes(h.status)&&can('REQUISITIONS','APPROVE'))?`<button type="button" class="command primary" id="reqApproveBtn">Approve &amp; Create Delivery</button>`:'';
+    const body=`<div class="definition-list" style="margin-bottom:12px">
+        <div><b>Holder</b><span>${esc(h.holder_name||h.partner_name||'-')} (${esc(h.holder_type||'-')})</span></div>
+        <div><b>Purpose</b><span>${esc(h.purpose||h.custody_purpose||'-')}</span></div>
+        <div><b>Destination</b><span>${esc(h.destination||'-')}</span></div>
+        <div><b>Required</b><span>${esc(date(h.required_date))}</span></div>
+        <div><b>Status</b><span>${statusBadge(h.status)}</span></div></div>
+      <section class="record-sublist"><header><div><h3>Requested Lines</h3></div></header>
+        ${operationalTable(['Item','Description','Qty','Type'],lineRows?[lineRows]:[])}</section>
+      <section class="record-sublist"><header><div><h3>Allocated Serials</h3><p>${usedSerials.size} reserved</p></div></header>
+        ${operationalTable(['Serial','Item','Description','Class','Status'],allocRows?[allocRows]:[])}</section>
+      ${allocateBlock}
+      <div class="modal-actions">${approveBtn}<button type="button" class="table-action" data-print-req="${id}">Print Requisition Slip</button></div>`;
+    modal('Requisition '+esc(h.requisition_no||id),body,esc(h.holder_name||''));
+    const mb=$('#modalBody');
+    const allocBtn=mb.querySelector('#reqAllocBtn');
+    if(allocBtn)allocBtn.onclick=async()=>{
+      const serials=[...mb.querySelector('#reqAllocSerials').selectedOptions].map(o=>o.value);
+      if(!serials.length){toast('Select at least one serial.','error');return;}
+      try{const r=await api('/requisitions/'+id+'/allocate',{method:'POST',body:JSON.stringify({serials})});
+        toast(r.allocated+' serial(s) allocated. Requisition is ready to approve.');closeModal();await renderOutboundRequisitions();openRequisitionDetail(id,lookups);}
+      catch(e){toast(e.message,'error');}
+    };
+    const apprBtn=mb.querySelector('#reqApproveBtn');
+    if(apprBtn)apprBtn.onclick=async()=>{
+      try{const r=await api('/requisitions/'+id+'/approve',{method:'POST',body:'{}'});
+        toast('Approved. '+r.deliveryNo+' created - now run Pre-release, then Goods Issuance.');closeModal();await renderOutboundRequisitions();}
+      catch(e){toast(e.message,'error');}
+    };
+    mb.querySelectorAll('[data-print-req]').forEach(b=>b.onclick=()=>{if(window.czPrintRequisition)window.czPrintRequisition(id);});
+  }catch(error){toast(error.message,'error');}
 }
 
 async function renderPreRelease(){
@@ -1723,7 +1775,7 @@ async function renderPreRelease(){
       <section class="workspace-card"><header><div><h2>Pre-release Checklist Worklist</h2><span>Motorcycles require a passed inspection before goods issuance.</span></div></header>
         ${operationalTable(['Requisition','Serial','Unit','Location','Result','Checked','Action'],rows)}</section>`;
     let __regRows=[];try{let __all=[];for(let __p=1;__p<=8;__p++){const __rg=await api('/checklists?size=250&page='+__p);const __rr=(__rg.rows||[]);__all=__all.concat(__rr);if(__rr.length<250)break;}__regRows=__all.map(r=>`<tr><td><b>${esc(r.checklist_no)}</b></td><td>${esc((r.serial_no||'').slice(0,48))}</td><td>${statusBadge(r.result)}</td><td>${esc(r.approved_by||'-')}</td><td>${esc((r.created_at||'').slice(0,10))}</td></tr>`);}catch(e){}const __regBody=`<section class="workspace-card"><header><div><h2>Pre-release Checklist Register</h2><span>All ${__regRows.length} inspection records (actuals).</span></div></header>${operationalTable(['Checklist #','Serial / Unit','Result','Approved By','Recorded'],__regRows)}</section>`;content.innerHTML=workbenchShell(body+__regBody,'approvals');bindOperationalShell();
-    const PDI_ITEMS=[['identity','VIN / engine no. matches record'],['body','Body, panels & paint - no visible damage'],['brakes','Brakes (front & rear) functioning'],['lights','Headlight, tail & signal lights working'],['tires','Tires & wheels - condition and pressure'],['battery','Batteries (x2) seated & charged'],['charger','Charger present and tested'],['electricals','Horn, dashboard & electricals'],['mirrors','Mirrors & side accessories complete'],['documents','Documents, plate & keys complete']];
+    const PDI_ITEMS=[['identity','VIN / engine no. matches record'],['body','Body, panels & paint - no visible damage'],['brakes','Brakes (front & rear) functioning'],['lights','Headlight, tail & signal lights working'],['tires','Tires & wheels - condition and pressure'],['battery','Batteries (x2) seated & charged'],['charger','Charger present and tested'],['electricals','Horn, dashboard & electricals'],['mirrors','Mirrors & side accessories complete'],['documents','Documents, plate & keys complete'],['apptest','App / GPS pairing tested'],['account','Rider account created & batteries assigned']];
     $$('[data-checklist]').forEach(button=>button.onclick=()=>{
       const serial=button.dataset.checklist,unit=button.dataset.unit||'',req=button.dataset.req||'';
       const items=PDI_ITEMS.map(([k,label])=>`<label class="pdi-check"><input type="checkbox" data-pdi="${k}" checked><span>${esc(label)}</span></label>`).join('');
@@ -2280,14 +2332,16 @@ async function renderSupplierPortal(section){
   try{
     const lookups=await api('/masters/lookups');
     const vendors=(lookups.vendors||[]);
-    const portalUrl=localStorage.getItem('e88-accreditation-url')||'';
+    const defaultAdmin='https://script.google.com/a/macros/nrdev.ph/s/AKfycbwOPU2Ak4yJAnniNghLH9EBSEP6VZo6oFiWvHdl0VcFGRfAckEfb3Uoy_r4bYfm5fN8/exec';
+    const portalUrl=localStorage.getItem('e88-accreditation-url')||defaultAdmin;
+    const vendorUrl=portalUrl.indexOf('?')>=0?portalUrl+'&vendor=1':portalUrl+'?vendor=1';
     const stages=['Vendor Submits','Requestor Endorses','Document Review','Finance / Owner Approval','Accredited'];
     const docList=['DTI/SEC Registration','SEC GIS (General Information Sheet)','BIR Form 2303','Business Permit (current year)','Bank Certificate','Company Profile','Signed Non-Disclosure Agreement','Signed Compliance Declaration','Signed Anti-Bribery & Ethics Declaration','Latest Audited Financial Statement','Sample Sales/Service Invoice'];
     const vrows=vendors.map(function(v){return '<tr><td><b>'+esc(v.name)+'</b></td><td>'+esc(v.partner_code||'-')+'</td><td>'+statusBadge('ON FILE')+'</td></tr>';});
     const docItems=docList.map(function(d){return '<li>'+esc(d)+'</li>';}).join('');
-    const portalBtn=portalUrl
-      ? '<a class="command primary" href="'+esc(portalUrl)+'" target="_blank" rel="noopener">Open Vendor Accreditation Portal</a><button class="command" id="setPortalUrl">Change link</button>'
-      : '<button class="command primary" id="setPortalUrl">Set accreditation portal link</button>';
+    const portalBtn='<a class="portal-icon-btn" href="'+esc(portalUrl)+'" target="_blank" rel="noopener" title="Open the accreditation admin console">Console \u2197</a>'
+      +'<a class="portal-icon-btn" href="'+esc(vendorUrl)+'" target="_blank" rel="noopener" title="Open the vendor submission form">Vendor form \u2197</a>'
+      +'<button class="portal-icon-btn" id="setPortalUrl" title="Change the portal link">\u2699</button>';
     const body=workflowStrip(stages,4)+
       '<div class="workspace-commandbar"><span class="workspace-mode">VENDOR ACCREDITATION</span><span class="command-spacer"></span>'+portalBtn+'</div>'+
       '<div class="workspace-kpis">'+kpi('Vendors on File',vendors.length)+kpi('Required Documents',docList.length)+kpi('Approval Stages',stages.length)+kpi('Portal',portalUrl?'Linked':'Not linked')+'</div>'+
