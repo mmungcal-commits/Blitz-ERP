@@ -305,7 +305,7 @@ function renderLaunchpad(){
   content.innerHTML=`<section class="enterprise-launchpad">
     <div class="launchpad-controls">
       <div><img src="/logo.png" alt="E88"><span>Enterprise Modules</span></div>
-      <div><span>${esc(state.session.user.displayName||state.session.user.email)}</span>${state.session.user.role==='ADMIN'?'<button id="launchAccess">User Access</button>':''}<button id="launchRecords">Records</button><button id="expandAllGroups">Expand all</button><button id="collapseAllGroups">Collapse all</button><button id="launchLogout">Sign out</button></div>
+      <div><span>${esc(state.session.user.displayName||state.session.user.email)}</span>${state.session.user.role==='ADMIN'?'<button id="launchAccess">User Access</button>':''}<button id="launchRecords">Master Reference</button><button id="expandAllGroups">Expand all</button><button id="collapseAllGroups">Collapse all</button><button id="launchLogout">Sign out</button></div>
     </div>
     <div class="enterprise-map">
       <div class="enterprise-columns">${state.catalog.groups.map(group=>{
@@ -379,6 +379,7 @@ async function openSection(section){
   if(state.module.code==='sd-order-management')return renderSalesOrderWorkspace(section);
   if(state.module.code==='ip-sourcing-purchasing')return renderSourcingWorkspace(section);
   if(state.module.code==='qm-inspection-sampling')return renderQualityWorkspace(section);
+  if(state.module.code==='ip-supplier-portal')return renderSupplierPortal(section);
   return renderConnectedModuleWorkspace(section);
 }
 async function renderQualityWorkspace(section){
@@ -2228,7 +2229,7 @@ async function renderRecordConsole(entityKey,search,includeInactive){
       var act='<button class="table-action" data-rec-edit="'+r.id+'">Edit</button>'+(data.hasActive?(isInactive?'<button class="table-action" data-rec-restore="'+r.id+'">Restore</button>':'<button class="table-action danger" data-rec-del="'+r.id+'">Delete</button>'):'');
       return '<tr'+(isInactive?' style="opacity:.5"':'')+'>'+tds+'<td>'+act+'</td></tr>';
     }).join('');
-    content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>Record Management</h1><p>'+(cfg.financeAccess?'You have finance-level access - edits apply directly.':'Enter the edit passcode when prompted to save changes.')+' Delete deactivates a record (reversible via Restore). Every change is audited.</p></div><button class="command" id="recBack">&larr; Enterprise Modules</button></div>'+
+    content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>Master Reference</h1><p>'+(cfg.financeAccess?'You have finance-level access - edits apply directly.':'Enter the edit passcode when prompted to save changes.')+' Delete deactivates a record (reversible via Restore). Every change is audited.</p></div><button class="command" id="recBack">&larr; Enterprise Modules</button></div>'+
       '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">'+tabHtml+'</div>'+
       '<div class="workspace-commandbar"><input id="recSearch" placeholder="Search '+esc(ent.label)+'" value="'+esc(search||'')+'"><button class="command primary" id="recApply">Search</button><label class="inline-control" style="margin-left:10px"><input type="checkbox" id="recInactive" '+(includeInactive?'checked':'')+'> Include deactivated</label></div>'+
       '<section class="workspace-card"><div class="record-table-wrap"><table class="record-table"><thead><tr>'+head+'</tr></thead><tbody>'+(body||'<tr><td colspan="'+(cols.length+1)+'" style="text-align:center;padding:20px;color:#64748b">No records.</td></tr>')+'</tbody></table></div></section></div>';
@@ -2272,6 +2273,36 @@ async function recordDelete(entity,id,restore){
     toast(restore?'Record restored':'Record deactivated');
     renderRecordConsole(entity,$('#recSearch')?$('#recSearch').value:'',$('#recInactive')?$('#recInactive').checked:false);
   }catch(err){if(/passcode/i.test(err.message||''))__recPass='';toast(err.message||'Action failed','error');}
+}
+
+async function renderSupplierPortal(section){
+  content.innerHTML='<div class="workspace-loading">Loading vendor accreditation...</div>';
+  try{
+    const lookups=await api('/masters/lookups');
+    const vendors=(lookups.vendors||[]);
+    const portalUrl=localStorage.getItem('e88-accreditation-url')||'';
+    const stages=['Vendor Submits','Requestor Endorses','Document Review','Finance / Owner Approval','Accredited'];
+    const docList=['DTI/SEC Registration','SEC GIS (General Information Sheet)','BIR Form 2303','Business Permit (current year)','Bank Certificate','Company Profile','Signed Non-Disclosure Agreement','Signed Compliance Declaration','Signed Anti-Bribery & Ethics Declaration','Latest Audited Financial Statement','Sample Sales/Service Invoice'];
+    const vrows=vendors.map(function(v){return '<tr><td><b>'+esc(v.name)+'</b></td><td>'+esc(v.partner_code||'-')+'</td><td>'+statusBadge('ON FILE')+'</td></tr>';});
+    const docItems=docList.map(function(d){return '<li>'+esc(d)+'</li>';}).join('');
+    const portalBtn=portalUrl
+      ? '<a class="command primary" href="'+esc(portalUrl)+'" target="_blank" rel="noopener">Open Vendor Accreditation Portal</a><button class="command" id="setPortalUrl">Change link</button>'
+      : '<button class="command primary" id="setPortalUrl">Set accreditation portal link</button>';
+    const body=workflowStrip(stages,4)+
+      '<div class="workspace-commandbar"><span class="workspace-mode">VENDOR ACCREDITATION</span><span class="command-spacer"></span>'+portalBtn+'</div>'+
+      '<div class="workspace-kpis">'+kpi('Vendors on File',vendors.length)+kpi('Required Documents',docList.length)+kpi('Approval Stages',stages.length)+kpi('Portal',portalUrl?'Linked':'Not linked')+'</div>'+
+      '<div class="ramco-layout"><div class="ramco-main">'+
+        '<section class="workspace-card"><header><div><h2>How vendor accreditation works</h2><span>Vendors are accredited through the E88 Vendor Accreditation Portal before any engagement or payment.</span></div></header>'+
+          '<div class="control-note"><p>A vendor submits its documents and banking details, the E88 requestor endorses it, the documents are reviewed for completeness, then Finance and the owner give final approval. Accreditation confirms a vendor is qualified - it is not an award. Every engagement still requires the 1-3-1 canvass, the Vendor Selection Scorecard, and CEO approval before any funds are released.</p></div></section>'+
+        '<section class="workspace-card"><header><div><h2>Vendor Directory</h2><span>Vendors on record in E88. Live accreditation status and documents are maintained in the portal.</span></div></header>'+
+          operationalTable(['Vendor','Vendor Code','Status'],vrows,{key:'vendor-directory',emptyMessage:'No vendors on file.'})+'</section>'+
+      '</div><aside class="ramco-rail">'+
+        '<section><header>Required Documents</header><ul class="doc-checklist">'+docItems+'</ul></section>'+
+        '<section><header>Approval Stages</header><div class="control-note"><p>1. Vendor submits<br>2. Requestor endorses<br>3. Document review<br>4. Finance / Owner approval<br>5. Accredited</p></div></section>'+
+      '</aside></div>';
+    content.innerHTML=workbenchShell(body,'center');bindOperationalShell();
+    var sp=$('#setPortalUrl');if(sp)sp.onclick=function(){var u=window.prompt('Paste your Vendor Accreditation Portal URL (the Google Apps Script web-app link):',portalUrl);if(u!=null){localStorage.setItem('e88-accreditation-url',u.trim());renderSupplierPortal(section);}};
+  }catch(error){showWorkspaceError(error);}
 }
 
 function reportsCatalog(){return [
@@ -2667,7 +2698,7 @@ async function renderSalesOrderWorkspace(section){
     }
     const center=section==='center';
     const body=`${center?`<div class="workspace-kpis">${kpi('Order Value',money(value))}${kpi('Open Drafts',drafts.length)}
-      ${kpi('Approved for Fulfilment',approved.length)}${kpi('Available Serials',lookups.assets.length)}</div>
+      ${kpi('Approved for Fulfilment',approved.length)}${kpi('Motorcycles Available',(lookups.assets||[]).filter(a=>a.category==='MC').length)}${kpi('Batteries Available',(lookups.assets||[]).filter(a=>a.category==='BAT').length)}${kpi('Swap Stations Available',(lookups.assets||[]).filter(a=>a.category==='BSS').length)}</div>
       ${workflowStrip(['CRM / Customer','Sales Order','Approval','Requisition & Allocation','Pre-release','Goods Issue / Delivery'],2)}`:''}
       <div class="workspace-commandbar"><button class="command primary" id="newSalesOrder" ${can('SALES','CREATE')?'':'disabled'}>New Sales Order</button>
         <span class="command-spacer"></span><span class="workspace-mode">${section==='approvals'?'ORDER APPROVAL':'CONNECTED ORDER REGISTER'}</span></div>
@@ -3476,6 +3507,9 @@ init();
     if(tr.classList.contains('clickable-row'))return;
     if(tr.querySelector('[colspan]'))return;
     if(![].slice.call(tr.children).some(function(td){return (td.textContent||'').trim();}))return;
+    var __first=(tr.children[0]?tr.children[0].textContent.trim():'');
+    var __isDoc=(/\d/.test(__first)&&(/-/.test(__first)||/^[A-Z]{2,}\d/.test(__first)));
+    if(!__isDoc)return;
     var headers=[].slice.call(tr.closest('table').querySelectorAll('thead th')).map(function(th){return th.textContent.replace(/[▲▼]/g,'').trim();});
     czOpenRowDetail(headers,tr);
   })
