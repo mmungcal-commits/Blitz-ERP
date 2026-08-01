@@ -225,3 +225,5 @@ button{cursor:pointer}
 .report-card.active{border-color:#2563eb;background:#eff6ff;box-shadow:0 2px 8px rgba(37,99,235,.15)}
 /* Frozen workbench header across all modules */
 .workbench-headwrap{position:sticky;top:0;z-index:40;background:#fff;box-shadow:0 2px 6px rgba(7,83,138,.08)}
+/* Remove the star icon in the module header across all modules */
+.workbench-star{display:none!important}
