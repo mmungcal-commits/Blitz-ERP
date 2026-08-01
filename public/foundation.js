@@ -3487,5 +3487,19 @@ init();
   obs.observe(document.body,{childList:true,subtree:true});
 
   // expose for debugging / advanced use
+  // KPI cards -> per-class breakdown (inventory modules): fixes 'summed, should be per class'
+  document.addEventListener('click',async function(ev){
+    var card=ev.target.closest('.workspace-kpi'); if(!card)return;
+    var code=(state.module&&state.module.code)||'';
+    if(!/^ip-|warehouse|inventory/.test(code))return;
+    var label=(card.querySelector('span')||{}).textContent||'Metric';
+    modal('Per-class breakdown - '+label,'<div class="workspace-loading">Loading by class...</div>','Split by inventory class');
+    try{
+      var d=await fetch('/api/inventory/by-class',{headers:{accept:'application/json'}}).then(function(r){return r.json();});
+      var arr=d.classes||d.rows||d; if(!Array.isArray(arr))arr=[];
+      var body=arr.map(function(r){return '<tr><td><b>'+esc2(r.class_name||r.cls||r.class_code||'-')+'</b></td><td class="num">'+(r.total||0)+'</td><td class="num">'+(r.available||0)+'</td><td class="num">'+(r.deployed||0)+'</td><td class="num">'+(r.quarantine||0)+'</td></tr>';}).join('');
+      var mb=document.getElementById('modalBody'); if(mb)mb.innerHTML='<div class="record-table-wrap"><table class="record-table"><thead><tr><th>Inventory Class</th><th class="num">Total</th><th class="num">Available</th><th class="num">Deployed</th><th class="num">Quarantine</th></tr></thead><tbody>'+body+'</tbody></table></div>';
+    }catch(e){ var m2=document.getElementById('modalBody'); if(m2)m2.innerHTML='<div class="workspace-error">Could not load the per-class breakdown.</div>'; }
+  });
   window.E88Custom={state:S,rebuild:buildCatalog,reset:()=>{localStorage.removeItem(LS);location.reload();}};
 })();
