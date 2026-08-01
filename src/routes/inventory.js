@@ -30,7 +30,7 @@ inventoryRoutes.get('/', requirePermission('INVENTORY','VIEW'), async(c)=>{
 inventoryRoutes.get('/by-class', requirePermission('INVENTORY','VIEW'), async(c)=>{
   const rows=await all(c.env.DB,`
     SELECT class_code cls,class_name,COUNT(DISTINCT item_id) item_count,
-      COALESCE(SUM(quantity),0) total,COALESCE(SUM(available_quantity),0) available,
+      COALESCE(SUM(on_hand_quantity),0) total,COALESCE(SUM(available_quantity),0) available,COALESCE(SUM(leased_quantity),0) leased,COALESCE(SUM(sold_quantity),0) sold,
       COALESCE(SUM(deployed_quantity),0) deployed,COALESCE(SUM(quarantine_quantity),0) quarantine,
       COALESCE(SUM(unvalued_quantity),0) unvalued,ROUND(COALESCE(SUM(inventory_value),0),2) inventory_value
     FROM vw_erp_inventory_by_item_class
@@ -38,7 +38,7 @@ inventoryRoutes.get('/by-class', requirePermission('INVENTORY','VIEW'), async(c)
     ORDER BY CASE class_code WHEN 'D400' THEN 1 WHEN 'R280' THEN 2 WHEN 'RSPORT' THEN 3 WHEN 'BAT' THEN 4 WHEN 'BSS' THEN 5 WHEN 'CHG' THEN 6 WHEN 'SP' THEN 7 ELSE 8 END`);
   const items=await all(c.env.DB,`
     SELECT class_code,class_name,item_id,item_code,item_name,
-      COALESCE(SUM(quantity),0) total,COALESCE(SUM(available_quantity),0) available,
+      COALESCE(SUM(on_hand_quantity),0) total,COALESCE(SUM(available_quantity),0) available,COALESCE(SUM(leased_quantity),0) leased,COALESCE(SUM(sold_quantity),0) sold,
       COALESCE(SUM(deployed_quantity),0) deployed,COALESCE(SUM(quarantine_quantity),0) quarantine,
       COALESCE(SUM(unvalued_quantity),0) unvalued,ROUND(COALESCE(SUM(inventory_value),0),2) inventory_value
     FROM vw_erp_inventory_by_item_class
