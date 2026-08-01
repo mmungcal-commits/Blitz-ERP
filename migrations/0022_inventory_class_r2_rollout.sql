@@ -283,3 +283,10 @@ CREATE INDEX IF NOT EXISTS idx_erp_delivery_assets_delivery ON erp_delivery_asse
 CREATE INDEX IF NOT EXISTS idx_erp_requisition_lines_req ON erp_requisition_lines(requisition_id);
 CREATE INDEX IF NOT EXISTS idx_erp_journal_lines_journal ON erp_journal_lines(journal_id);
 CREATE INDEX IF NOT EXISTS idx_erp_assignment_assets_asg ON erp_assignment_assets(assignment_id);
+
+-- Deactivate date-valued "locations" misparsed from empty Excel date cells (e.g. "2025-04-24 00:00:00")
+UPDATE erp_locations SET active=0
+WHERE active=1 AND (
+  name GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'
+  OR COALESCE(code,'') GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'
+);
