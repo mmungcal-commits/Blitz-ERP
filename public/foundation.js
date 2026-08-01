@@ -1883,9 +1883,10 @@ async function renderWarehouseVisibility(locationId='',search='',status='',categ
   content.innerHTML='<div class="workspace-loading">Loading unit register…</div>';
   try{
     const size=100;
-    const [data,lookups]=await Promise.all([
+    const [data,lookups,byClass]=await Promise.all([
       api(`/inventory/visibility?${new URLSearchParams({locationId,q:search,status,category,page,size})}`),
       api('/masters/lookups'),
+      api('/inventory/by-class'),
     ]);
     const rows=data.rows.map(row=>`<tr class="clickable-row" data-inventory-serial="${esc(row.serial_no)}"><td><b>${esc(row.serial_no)}</b></td><td>${esc(row.item_code||'—')}</td><td>${esc(row.item_name||'—')}</td>
       <td>${esc(row.category)}</td><td>${esc(row.location_code||'UNASSIGNED')}</td><td>${esc(row.location_name||'—')}</td>
@@ -1893,11 +1894,11 @@ async function renderWarehouseVisibility(locationId='',search='',status='',categ
     const pages=Math.max(1,Math.ceil(Number(data.total||0)/size));
     const body=`<div class="workspace-commandbar">
       <input id="unitSearch" placeholder="Serial, material code, item, holder, or location" value="${esc(search)}">
-      <select id="unitClass"><option value="">All inventory classes</option>${[['D400','Motorcycle D400'],['R280','Motorcycle R280'],['RSPORT','Motorcycle R280 Sport'],['BAT','Batteries'],['BSS','Lockers / BSS'],['CHG','Chargers'],['SP','Spare Parts'],['OTH','Other Inventory']].map(([value,label])=>`<option value="${value}" ${value===category?'selected':''}>${label}</option>`).join('')}</select>
+      <select id="unitClass"><option value="">All inventory classes</option>${[['D400','Motorcycle D400'],['R280','Motorcycle R280'],['RSPORT','Motorcycle R280 Sport'],['BAT','Batteries'],['BSS','Lockers / BSS'],['CHG','Chargers'],['SP','Spare Parts & Accessories']].map(([value,label])=>`<option value="${value}" ${value===category?'selected':''}>${label}</option>`).join('')}</select>
       <select id="unitLocation"><option value="">All locations</option>${lookups.locations.map(row=>`<option value="${row.id}" ${Number(row.id)===Number(locationId)?'selected':''}>${esc(row.code)} · ${esc(row.name)}</option>`).join('')}</select>
       <select id="unitStatus"><option value="">All statuses</option>${['AVAILABLE','ASSIGNED','QUARANTINE','UNDER_REPAIR','LEASED','SOLD'].map(value=>`<option ${value===status?'selected':''}>${value}</option>`).join('')}</select>
       <button class="command primary" id="applyUnitFilter">Apply</button><span class="command-spacer"></span><span class="workspace-mode">${Number(data.total||0).toLocaleString()} UNITS · PAGE ${page}/${pages}</span>
-    </div><div class="workspace-kpis">${kpi('Matching Units',Number(data.summary?.total_units||0).toLocaleString())}${kpi('Available',Number(data.summary?.available_units||0).toLocaleString())}${kpi('Missing Cost',Number(data.summary?.unvalued_units||0).toLocaleString())}${kpi('Inventory Value',money(data.summary?.inventory_value))}</div>
+    </div><div class="workspace-kpis inventory-class-kpis">${((byClass&&(byClass.classes||byClass.rows))||[]).map(c=>kpi((c.class_name||c.cls||c.class_code||'Class')+' \u00b7 On Hand',Number(c.total||0).toLocaleString())).join('')}</div>
     <section class="workspace-card"><header><h2>Exact Serial Inventory Register</h2><span>Click any row for movement, custody, delivery, return, and Finance details</span></header>
       ${operationalTable(['Serial','Material Code','Tagged Item','Class','Location','Location Name','Status','Assigned To','Unit Cost','Valuation','Reconciliation'],rows,{key:'serial-inventory',emptyMessage:'No serial records match the filters. Confirm D1 migrations and opening data were loaded.'})}
       <div class="table-pager"><button class="command" id="previousUnitPage" ${page<=1?'disabled':''}>Previous</button><span>Page ${page} of ${pages}</span><button class="command" id="nextUnitPage" ${page>=pages?'disabled':''}>Next</button></div>
@@ -2189,7 +2190,7 @@ async function renderInventoryAnalysisWorkspace(section){
 async function renderInventoryAnalysisOverview(){
   content.innerHTML='<div class="workspace-loading">Loading inventory analysis…</div>';
   try{
-    const [analysis,plans,valuation]=await Promise.all([api('/inventory/analysis'),api('/inventory/plans'),api('/inventory/valuation')]);
+    const [analysis,plans,valuation,byClass]=await Promise.all([api('/inventory/analysis'),api('/inventory/plans'),api('/inventory/valuation'),api('/inventory/by-class')]);
     const actions=analysis.rows.filter(row=>Number(row.available_qty)===0||Number(row.quarantine_qty)>0||Number(row.open_po_qty)>0).slice(0,20);
     const rows=actions.map(row=>`<tr><td><b>${esc(row.item_code)}</b></td><td>${esc(row.item_name)}</td><td>${esc(row.category)}</td>
       <td>${esc(row.on_hand_qty)}</td><td>${esc(row.available_qty)}</td><td>${esc(row.incoming_qty)}</td><td>${esc(row.open_po_qty)}</td>
@@ -2205,8 +2206,10 @@ async function renderInventoryAnalysisOverview(){
         <td class="num">${money(row.unit_cost)}</td><td>${statusBadge(row.valuation_status)}</td><td>${statusBadge(row.finance_readiness)}</td>
         <td class="num">${row.proposed_unit_cost?money(row.proposed_unit_cost):'—'}</td><td>${action}</td></tr>`;
     });
-    const body=`<div class="workspace-kpis">${kpi('On-hand Units',analysis.totals.onHand)}${kpi('Available',analysis.totals.available)}
-      ${kpi('ATLAS Incoming',analysis.totals.incoming)}${kpi('Open PO Qty',analysis.totals.openPO)}${kpi('Unvalued Serials',valuation.summary.unvalued_assets||0)}
+    const _cls=(byClass&&(byClass.classes||byClass.rows))||[];
+    const _clsCards=_cls.map(c=>kpi((c.class_name||c.cls||c.class_code||'Class')+' · On Hand',Number(c.total||0).toLocaleString())).join('');
+    const body=`<div class="workspace-kpis inventory-class-kpis">${_clsCards}</div>
+      <div class="workspace-kpis">${kpi('ATLAS Incoming',analysis.totals.incoming)}${kpi('Open PO Qty',analysis.totals.openPO)}${kpi('Unvalued Serials',valuation.summary.unvalued_assets||0)}
       ${kpi('Provisional Costs',valuation.summary.provisional_assets||0)}</div>
       <div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
         <header><div><h2>Supply Chain Inventory Monitor</h2><span>Ordering, replenishment, deployment, and finance readiness</span></div><button class="ramco-primary" data-section-link="approvals">Create Plan</button></header>

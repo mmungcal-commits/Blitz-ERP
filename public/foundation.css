@@ -185,3 +185,5 @@ button{cursor:pointer}
 /* clickable KPI hint */
 .workspace-kpi{cursor:pointer}
 .loading-screen img{width:76px;height:54px;object-fit:contain;flex:none}
+/* Declutter: hide the confusing submodule bar; the module tabs are the primary navigation */
+.workbench-submodules{display:none!important}
