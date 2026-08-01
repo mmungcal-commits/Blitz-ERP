@@ -290,3 +290,11 @@ WHERE active=1 AND (
   name GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'
   OR COALESCE(code,'') GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'
 );
+
+-- Merge "same serial + extension" duplicates (one physical unit shown twice, e.g. Excel ".0" artifact
+-- from return/re-lease). Keep the clean serial as the surviving unit; deactivate the ".0" twin.
+-- Ledger history for both serials is preserved (rows kept, only active flag changes) and reversible.
+UPDATE erp_assets SET active=0
+WHERE active=1 AND serial_no LIKE '%.0'
+  AND EXISTS (SELECT 1 FROM erp_assets b WHERE b.active=1
+    AND b.serial_no = SUBSTR(erp_assets.serial_no,1,LENGTH(erp_assets.serial_no)-2));
