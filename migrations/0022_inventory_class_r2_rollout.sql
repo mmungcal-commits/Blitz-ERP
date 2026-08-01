@@ -254,7 +254,11 @@ INSERT OR REPLACE INTO erp_settings(key,value,updated_at) VALUES
 -- v13.1 in-place correction: anchor on-hand inventory to the ATLAS registry (no new database).
 -- Serials not in the ATLAS expected registry (battery swap variants, legacy duplicates) are
 -- deactivated as reconciling items. Non-destructive (records preserved), reversible, idempotent.
-UPDATE erp_assets
-   SET active=0
+-- Keep non-IoT inventory (chargers, spare parts, accessories) active — separate STAR inventory, not the ATLAS registry.
+UPDATE erp_assets SET active=1
+ WHERE active=0 AND upper(COALESCE(category,'')) NOT IN ('MC','BAT','BSS','D400','R280','RSPORT');
+-- Anchor ONLY the serialized IoT registry (motorcycles, batteries, lockers) to ATLAS; deactivate non-ATLAS duplicates.
+UPDATE erp_assets SET active=0
  WHERE active=1
+   AND upper(COALESCE(category,'')) IN ('MC','BAT','BSS','D400','R280','RSPORT')
    AND serial_no NOT IN (SELECT serial_no FROM erp_expected_assets WHERE serial_no IS NOT NULL);
