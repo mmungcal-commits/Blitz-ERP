@@ -254,11 +254,32 @@ INSERT OR REPLACE INTO erp_settings(key,value,updated_at) VALUES
 -- v13.1 in-place correction: anchor on-hand inventory to the ATLAS registry (no new database).
 -- Serials not in the ATLAS expected registry (battery swap variants, legacy duplicates) are
 -- deactivated as reconciling items. Non-destructive (records preserved), reversible, idempotent.
--- Keep non-IoT inventory (chargers, spare parts, accessories) active — separate STAR inventory, not the ATLAS registry.
-UPDATE erp_assets SET active=1
- WHERE active=0 AND upper(COALESCE(category,'')) NOT IN ('MC','BAT','BSS','D400','R280','RSPORT');
--- Anchor ONLY the serialized IoT registry (motorcycles, batteries, lockers) to ATLAS; deactivate non-ATLAS duplicates.
+-- Reset activation, then anchor ONLY true motorcycles/batteries/lockers (by item code/name) to the ATLAS registry.
+-- Battery accessories (Battery Box/Lock/Connector), chargers, and spare parts are preserved as inventory.
+UPDATE erp_assets SET active=1 WHERE active=0 AND COALESCE(current_status,'')!='WRITTEN_OFF';
 UPDATE erp_assets SET active=0
  WHERE active=1
-   AND upper(COALESCE(category,'')) IN ('MC','BAT','BSS','D400','R280','RSPORT')
-   AND serial_no NOT IN (SELECT serial_no FROM erp_expected_assets WHERE serial_no IS NOT NULL);
+   AND serial_no NOT IN (SELECT serial_no FROM erp_expected_assets WHERE serial_no IS NOT NULL)
+   AND ( upper(COALESCE(item_code,'')) LIKE 'MC-%'
+      OR upper(COALESCE(item_code,'')) LIKE 'BAT-%'
+      OR upper(COALESCE(item_code,'')) LIKE 'BAT0%'
+      OR upper(COALESCE(item_code,'')) LIKE 'BSS%'
+      OR upper(COALESCE(item_name,'')) LIKE '%AMPACE%'
+      OR upper(COALESCE(item_name,'')) LIKE '%RIDEBOX BATTERY%'
+      OR upper(COALESCE(item_name,'')) LIKE '%RIDEBOX LOCKER%'
+      OR upper(COALESCE(item_name,'')) LIKE '%SWAPPING STATION%' );
+
+-- Performance: indexes on hot join/filter columns to remove per-module loading delay.
+CREATE INDEX IF NOT EXISTS idx_erp_assets_item_active ON erp_assets(item_id,active);
+CREATE INDEX IF NOT EXISTS idx_erp_assets_status ON erp_assets(current_status);
+CREATE INDEX IF NOT EXISTS idx_erp_assets_serial2 ON erp_assets(serial_no);
+CREATE INDEX IF NOT EXISTS idx_erp_assets_category2 ON erp_assets(category);
+CREATE INDEX IF NOT EXISTS idx_erp_assets_location ON erp_assets(current_location_id);
+CREATE INDEX IF NOT EXISTS idx_erp_assets_holder ON erp_assets(current_holder_id);
+CREATE INDEX IF NOT EXISTS idx_erp_expected_assets_serial ON erp_expected_assets(serial_no);
+CREATE INDEX IF NOT EXISTS idx_erp_stock_ledger_asset ON erp_stock_ledger(asset_id);
+CREATE INDEX IF NOT EXISTS idx_erp_sales_lines_order ON erp_sales_lines(sales_order_id);
+CREATE INDEX IF NOT EXISTS idx_erp_delivery_assets_delivery ON erp_delivery_assets(delivery_id);
+CREATE INDEX IF NOT EXISTS idx_erp_requisition_lines_req ON erp_requisition_lines(requisition_id);
+CREATE INDEX IF NOT EXISTS idx_erp_journal_lines_journal ON erp_journal_lines(journal_id);
+CREATE INDEX IF NOT EXISTS idx_erp_assignment_assets_asg ON erp_assignment_assets(assignment_id);
