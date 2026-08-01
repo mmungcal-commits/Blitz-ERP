@@ -266,6 +266,47 @@ requisitionRoutes.post('/:id/approve', requirePermission('REQUISITIONS','APPROVE
   return ok(c,{requisition:after,assignmentId,assignmentNo,deliveryId:deliveryResult.meta.last_row_id,deliveryNo});
 });
 
+requisitionRoutes.post('/:id/allocate', requirePermission('REQUISITIONS','EDIT'), async c => {
+  const id=Number(c.req.param('id'));
+  const b=await jsonBody(c);
+  const serials=[...new Set((Array.isArray(b.serials)?b.serials:[]).map(normalizeSerial).filter(Boolean))];
+  if(!serials.length)return fail(c,'Select at least one available serial to allocate.');
+  const req=await first(c.env.DB,`SELECT * FROM erp_requisitions WHERE id=?`,[id]);
+  if(!req)return fail(c,'Requisition not found',404);
+  if(['CANCELLED','FULFILLED','ISSUED','APPROVED'].includes(req.status))
+    return fail(c,`Requisition ${req.requisition_no} is ${req.status} and can no longer be allocated.`,409);
+  const selected=[];
+  for(const serial of serials){
+    const asset=await first(c.env.DB,`SELECT * FROM erp_assets WHERE serial_no=? AND active=1`,[serial]);
+    if(!asset)return fail(c,`Serial ${serial} is not registered.`,404);
+    if(!isAvailable(asset))return fail(c,`Serial ${serial} is not available (${asset.current_status}/${asset.reconciliation_status}).`,409);
+    const inUse=await first(c.env.DB,`SELECT r.requisition_no FROM erp_requisition_allocations ra
+      JOIN erp_requisitions r ON r.id=ra.requisition_id
+      WHERE ra.asset_id=? AND ra.allocation_status IN ('SELECTED','RESERVED','ISSUED')
+        AND r.status NOT IN ('CANCELLED','FULFILLED') LIMIT 1`,[asset.id]);
+    if(inUse)return fail(c,`Serial ${serial} is already selected on ${inUse.requisition_no}.`,409);
+    let line=await first(c.env.DB,`SELECT * FROM erp_requisition_lines WHERE requisition_id=? AND item_id=? ORDER BY id LIMIT 1`,[id,asset.item_id]);
+    if(!line){
+      const lr=await run(c.env.DB,`INSERT INTO erp_requisition_lines(requisition_id,item_id,item_code,description,qty,serial_required)
+        VALUES(?,?,?,?,0,1)`,[id,asset.item_id,asset.item_code,asset.item_name]);
+      line={id:lr.meta.last_row_id};
+    }
+    await run(c.env.DB,`INSERT INTO erp_requisition_allocations(
+      requisition_id,requisition_line_id,asset_id,serial_no,item_id,item_code,quantity,selected_by)
+      VALUES(?,?,?,?,?,?,1,?)`,[id,line.id,asset.id,asset.serial_no,asset.item_id,asset.item_code,c.get('erpUser').email]);
+    selected.push({serialNo:asset.serial_no,itemCode:asset.item_code,category:asset.category});
+  }
+  await run(c.env.DB,`UPDATE erp_requisition_lines SET qty=(
+    SELECT COUNT(*) FROM erp_requisition_allocations ra
+    WHERE ra.requisition_line_id=erp_requisition_lines.id AND ra.asset_id IS NOT NULL)
+    WHERE requisition_id=? AND serial_required=1`,[id]);
+  if(!['SUBMITTED','DRAFT'].includes(req.status))
+    await run(c.env.DB,`UPDATE erp_requisitions SET status='SUBMITTED' WHERE id=?`,[id]);
+  await audit(c,{action:'ALLOCATE',module:'REQUISITIONS',recordType:'REQUISITION',recordId:id,
+    recordNo:req.requisition_no,after:{selected}});
+  return ok(c,{allocated:selected.length,selected,status:'SUBMITTED'});
+});
+
 requisitionRoutes.post('/:id/cancel', requirePermission('REQUISITIONS','EDIT'), async c => {
   const id=Number(c.req.param('id')); const b=await jsonBody(c); const before=await first(c.env.DB,`SELECT * FROM erp_requisitions WHERE id=?`,[id]); if(!before)return fail(c,'Requisition not found',404); if(['FULFILLED','CANCELLED'].includes(before.status))return fail(c,'Requisition cannot be cancelled',409);
   const allocations=await all(c.env.DB,`SELECT * FROM erp_requisition_allocations WHERE requisition_id=?`,[id]);
