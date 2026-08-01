@@ -150,7 +150,7 @@ button{cursor:pointer}
 /* v13.1 rollout usability and exact inventory controls */
 .enterprise-category{width:100%;position:relative;cursor:pointer;font-family:inherit}
 .enterprise-category span{display:block;padding:0 18px}
-.enterprise-category i{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:18px;height:18px;display:flex;align-items:center;justify-content:center;border:1px solid #aaa;border-radius:50%;background:#f3f3f3;font-style:normal;font-weight:800}
+.enterprise-category i{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;line-height:1;font-style:normal;font-weight:700;color:#555}
 .enterprise-column.collapsed .enterprise-category{height:56px}
 .enterprise-column.expanded .enterprise-category{background:#c8c8c8;border-color:#aaa}
 .enterprise-module-stack[hidden]{display:none!important}

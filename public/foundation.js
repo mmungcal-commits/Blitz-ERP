@@ -311,7 +311,7 @@ function renderLaunchpad(){
       <div class="enterprise-columns">${state.catalog.groups.map(group=>{
         const expanded=state.expandedGroups.has(group.code);
         return `<section class="enterprise-column ${expanded?'expanded':'collapsed'}" data-enterprise-group="${esc(group.code)}">
-          <button class="enterprise-category" type="button" data-group-toggle="${esc(group.code)}" aria-expanded="${expanded}"><span>${esc(group.title)}</span><i>${expanded?'−':'+'}</i></button>
+          <button class="enterprise-category" type="button" data-group-toggle="${esc(group.code)}" aria-expanded="${expanded}"><span>${esc(group.title)}</span><i>${expanded?'▾':'▸'}</i></button>
           <div class="enterprise-module-stack" ${expanded?'':'hidden'}>${group.items.map(item=>enterpriseButton(item)).join('')}</div>
         </section>`;
       }).join('')}</div>
@@ -2188,58 +2188,24 @@ async function renderInventoryAnalysisWorkspace(section){
 }
 
 async function renderInventoryAnalysisOverview(){
-  content.innerHTML='<div class="workspace-loading">Loading inventory analysis…</div>';
+  content.innerHTML='<div class="workspace-loading">Loading inventory…</div>';
   try{
-    const [analysis,plans,valuation,byClass]=await Promise.all([api('/inventory/analysis'),api('/inventory/plans'),api('/inventory/valuation'),api('/inventory/by-class')]);
-    const actions=analysis.rows.filter(row=>Number(row.available_qty)===0||Number(row.quarantine_qty)>0||Number(row.open_po_qty)>0).slice(0,20);
-    const rows=actions.map(row=>`<tr><td><b>${esc(row.item_code)}</b></td><td>${esc(row.item_name)}</td><td>${esc(row.category)}</td>
-      <td>${esc(row.on_hand_qty)}</td><td>${esc(row.available_qty)}</td><td>${esc(row.incoming_qty)}</td><td>${esc(row.open_po_qty)}</td>
-      <td>${esc(row.quarantine_qty)}</td><td>${Number(row.available_qty)===0?statusBadge('REVIEW ORDER'):Number(row.quarantine_qty)>0?statusBadge('QUALITY HOLD'):statusBadge('INCOMING')}</td></tr>`);
-    const valuationRows=valuation.rows.filter(row=>['BLOCKED_MISSING_COST','PROVISIONAL_REVIEW_REQUIRED'].includes(row.finance_readiness)).slice(0,30).map(row=>{
-      const canDecide=row.exception_id&&row.exception_status==='OPEN'&&Number(row.proposed_unit_cost||0)>0&&row.requested_by!==state.session.user.email&&can('INVENTORY','APPROVE');
-      const action=canDecide?`<button class="table-action" data-approve-valuation="${row.exception_id}">Approve</button>
-        <button class="table-action danger" data-reject-valuation="${row.exception_id}">Reject</button>`:
-        row.exception_status==='PENDING_POSTING'?'<small>Finance journal pending</small>':
-        row.exception_status==='OPEN'&&Number(row.proposed_unit_cost||0)>0?`<small>Requested by ${esc(row.requested_by||'user')}</small>`:
-        `<button class="table-action" data-request-valuation="${row.id}" data-current-cost="${row.unit_cost||0}">Set Cost</button>`;
-      return `<tr><td><b>${esc(row.serial_no)}</b></td><td>${esc(row.item_code)}</td><td>${esc(row.item_name)}</td><td>${esc(row.category)}</td>
-        <td class="num">${money(row.unit_cost)}</td><td>${statusBadge(row.valuation_status)}</td><td>${statusBadge(row.finance_readiness)}</td>
-        <td class="num">${row.proposed_unit_cost?money(row.proposed_unit_cost):'—'}</td><td>${action}</td></tr>`;
-    });
-    const _cls=(byClass&&(byClass.classes||byClass.rows))||[];
-    const _clsCards=_cls.map(c=>kpi((c.class_name||c.cls||c.class_code||'Class')+' · On Hand',Number(c.total||0).toLocaleString())).join('');
-    const body=`<div class="workspace-kpis inventory-class-kpis">${_clsCards}</div>
-      <div class="workspace-kpis">${kpi('ATLAS Incoming',analysis.totals.incoming)}${kpi('Open PO Qty',analysis.totals.openPO)}${kpi('Unvalued Serials',valuation.summary.unvalued_assets||0)}
-      ${kpi('Provisional Costs',valuation.summary.provisional_assets||0)}</div>
-      <div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
-        <header><div><h2>Supply Chain Inventory Monitor</h2><span>Ordering, replenishment, deployment, and finance readiness</span></div><button class="ramco-primary" data-section-link="approvals">Create Plan</button></header>
-        ${operationalTable(['Item','Description','Class','On Hand','Available','Incoming','Open PO','Quarantine','Action'],rows)}
-      </section>
-      <section class="workspace-card"><header><div><h2>Inventory Valuation Worklist</h2><span>Zero-cost posting is blocked; proposed costs require another approver and Finance posting</span></div></header>
-        ${operationalTable(['Serial','Item','Description','Class','Current Cost','Valuation','Finance Readiness','Proposed','Action'],valuationRows)}
-      </section></div><aside class="ramco-rail">
-        <section><header>Planning Actions</header><div class="ramco-action-links"><button data-section-link="records">Analyze Inventory</button>
-          <button data-section-link="approvals">Ordering / Deployment Plans</button><button data-section-link="reports">Planning Reports</button></div></section>
-        <section><header>Finance Readiness</header>${horizontalBars([['Valued',valuation.summary.valued_assets||0,'green'],['Unvalued',valuation.summary.unvalued_assets||0,'orange'],['Provisional',valuation.summary.provisional_assets||0,'blue']])}</section>
-        <section><header>Valuation</header><div class="definition-list"><div><b>Inventory Value</b><span>${money(valuation.summary.inventory_value||0)}</span></div>
-          <div><b>Fixed Asset NBV</b><span>${money(valuation.summary.fixed_asset_nbv||0)}</span></div><div><b>Pending Finance Posting</b><span>${esc(valuation.summary.pending_posting||0)}</span></div></div></section>
-      </aside></div>`;
-    content.innerHTML=workbenchShell(body,'center');bindOperationalShell();
-    $$('[data-request-valuation]').forEach(button=>button.onclick=async()=>{
-      const proposed=prompt('Enter the proposed unit cost',button.dataset.currentCost||'');if(proposed===null)return;
-      const reason=prompt('Enter the invoice, landed-cost basis, or supporting reason');if(!reason)return;
-      try{await api(`/inventory/valuation/${button.dataset.requestValuation}/request`,{method:'POST',body:JSON.stringify({proposedUnitCost:Number(proposed),reason,costSource:'USER_SUPPORTING_DOCUMENT'})});
-        toast('Valuation submitted for independent approval');await renderInventoryAnalysisOverview();}catch(error){toast(error.message,'error');}
-    });
-    $$('[data-approve-valuation]').forEach(button=>button.onclick=async()=>{
-      try{const result=await api(`/inventory/valuation/exceptions/${button.dataset.approveValuation}/decision`,{method:'POST',body:JSON.stringify({decision:'APPROVE',notes:'Reviewed supporting valuation'})});
-        toast(result.journalId?'Valuation approved; Finance journal submitted':'Valuation approved');await renderInventoryAnalysisOverview();}catch(error){toast(error.message,'error');}
-    });
-    $$('[data-reject-valuation]').forEach(button=>button.onclick=async()=>{
-      const notes=prompt('Reason for rejection');if(!notes)return;
-      try{await api(`/inventory/valuation/exceptions/${button.dataset.rejectValuation}/decision`,{method:'POST',body:JSON.stringify({decision:'REJECT',notes})});
-        toast('Valuation request rejected');await renderInventoryAnalysisOverview();}catch(error){toast(error.message,'error');}
-    });
+    const byClass=await api('/inventory/by-class');
+    const cls=(byClass.rows||[]);
+    const rows=cls.map(function(c){return '<tr><td><b>'+esc(c.class_name||c.cls||'Class')+'</b></td>'+
+      '<td class="num">'+Number(c.available||0).toLocaleString()+'</td>'+
+      '<td class="num">'+Number(c.leased||0).toLocaleString()+'</td>'+
+      '<td class="num">'+Number(c.sold||0).toLocaleString()+'</td>'+
+      '<td class="num">'+Number(c.deployed||0).toLocaleString()+'</td>'+
+      '<td class="num">'+Number(c.total||0).toLocaleString()+'</td>'+
+      '<td class="num">'+money(c.inventory_value)+'</td></tr>';});
+    const body='<section class="workspace-card"><header><div><h2>Inventory by Class — Operational Status</h2><span>Available, leased, sold, deployed (battery swapping), and on-hand per class</span></div><button class="ramco-primary" data-section-link="records">Open Stock Analysis</button></header>'+
+      operationalTable(['Inventory Class','Available','Leased','Sold','Deployed / Swapping','On Hand','Inventory Value'],rows,{key:'class-operational',emptyMessage:'No classified inventory records.'})+
+      '</section>'+
+      '<div class="ramco-layout"><div class="ramco-main"></div><aside class="ramco-rail">'+
+      '<section><header>Planning Actions</header><div class="ramco-action-links"><button data-section-link="records">Stock Analysis</button><button data-section-link="approvals">Ordering / Deployment Plans</button><button data-section-link="reports">Planning Reports</button></div></section></aside></div>';
+    content.innerHTML=workbenchShell(body,'center');
+    bindOperationalShell();
   }catch(error){showWorkspaceError(error);}
 }
 
