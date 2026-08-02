@@ -138,7 +138,8 @@ atlasRoutes.post('/:id/commit', requirePermission('SHIPMENTS','POST'), async(c)=
       itemGroups.get(groupKey).rows.push(row);
     }
 
-    let lineNo=0;
+    const maxLineRow=await first(c.env.DB,`SELECT COALESCE(MAX(line_no),0) m FROM erp_shipment_lines WHERE shipment_id=?`,[shipment.id]);
+    let lineNo=Number(maxLineRow?.m||0);
     for(const group of itemGroups.values()){
       lineNo+=1;
       const item=await ensureItem(c.env.DB,group.identity);

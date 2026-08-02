@@ -3,7 +3,7 @@ import { all, first, run } from '../lib/db.js';
 import { ok, fail, jsonBody, pageParams } from '../lib/http.js';
 import { requirePermission } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
-import { ensureItem, nextCode } from '../lib/codes.js';
+import { ensureItem, nextCode, normalizeText } from '../lib/codes.js';
 import { createAssetFromReceipt } from '../lib/inventory.js';
 import { classifyReceivingLines, getReceivingWorkbench, receivingAssetControl } from '../lib/receiving.js';
 import { captureFinanceEvent } from '../lib/finance.js';
@@ -160,10 +160,26 @@ receivingRoutes.post('/', requirePermission('RECEIVING','POST'), async(c)=>{
     let asset=null;
     if(!row.existingAsset){
       const control=receivingAssetControl(row.acceptance);
+      // Value the received unit at its class landed cost (falls back to any
+      // cost already supplied on the line). Drives the GOODS_RECEIPT GL posting.
+      let landedUnitCost=Number(row.unitCost||0);
+      if(landedUnitCost<=0){
+        let modelForRate=normalizeText(row.model||'');
+        if(!modelForRate && actualItemId){
+          const it=await first(c.env.DB,`SELECT model FROM erp_items WHERE id=?`,[actualItemId]);
+          modelForRate=normalizeText(it?.model||'');
+        }
+        const rate=await first(c.env.DB,
+          `SELECT landed_unit_cost FROM erp_landed_cost_rates
+             WHERE active=1 AND category=? AND (UPPER(COALESCE(model,''))=UPPER(?) OR model IS NULL OR model='')
+             ORDER BY (CASE WHEN UPPER(COALESCE(model,''))=UPPER(?) THEN 0 ELSE 1 END) LIMIT 1`,
+          [category,modelForRate,modelForRate]);
+        landedUnitCost=Number(rate?.landed_unit_cost||0);
+      }
       const created=await createAssetFromReceipt(c.env.DB,{
         serialNo:row.actualSerialNo,serialType:row.serialType||'OTHER',itemId:actualItemId,itemCode:actualItemCode,itemName:actualItemName,category,
         secondarySerial:row.secondarySerial,motorNo:row.motorNo,batchCode:shipment.batch_code,shipmentId:shipment.id,receiptId,
-        locationId:location.id,locationCode:location.code,status:control.status,unitCost:row.unitCost,
+        locationId:location.id,locationCode:location.code,status:control.status,unitCost:landedUnitCost,
         conditionCode:row.conditionCode||'GOOD',reconciliationStatus:control.reconciliation,sourceSystem:'RECEIVING',sourceKey:`${receiptNo}:${row.actualSerialNo}`
       });
       asset=created.asset;

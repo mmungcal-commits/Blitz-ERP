@@ -1208,7 +1208,20 @@ financeRoutes.get('/reports/inventory-reconciliation', requirePermission('FINANC
         'INVENTORY_WRITE_OFF','CYCLE_COUNT_ADJUSTMENT')
       GROUP BY status,event_type ORDER BY status,event_type`);
   const difference = round(Number(summary?.inventory_subledger || 0) - Number(summary?.inventory_general_ledger || 0));
-  return ok(c, { summary:{ ...summary, difference, reconciled:Math.abs(difference) <= 0.01 }, byCategory, sourceEvents });
+  // Reconciliation is judged PER CLASS against its own control account. A netted
+  // total can hide an offsetting break (one class over, another under), so the
+  // headline flag requires EVERY class to reconcile on its own.
+  const reviewClasses = byCategory.filter(x => x.status !== 'RECONCILED');
+  const reconciled = byCategory.length > 0 && reviewClasses.length === 0;
+  return ok(c, {
+    summary: {
+      ...summary,
+      netDifference: difference,
+      reconciled,
+      classesNeedingReview: reviewClasses.map(x => x.category),
+    },
+    byCategory, sourceEvents,
+  });
 });
 
 financeRoutes.get('/reports/budget-actual', requirePermission('FINANCE', 'VIEW'), async c => {
