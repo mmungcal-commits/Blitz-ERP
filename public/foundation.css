@@ -183,7 +183,7 @@ button{cursor:pointer}
 .operational-form input,.operational-form select,.operational-form textarea,.record-field input,.record-field select,.record-field textarea,.requisition-line input,.requisition-line select,.workspace-commandbar input,.workspace-commandbar select,.inline-control input,.inline-control select,.finance-lines input{font-size:12px}
 .record-fields .record-field span{font-size:11px}
 /* clickable KPI hint */
-.workspace-kpi{cursor:pointer}
+.workspace-kpi{cursor:default}.workspace-kpi.kpi-click{cursor:pointer;transition:box-shadow .12s}.workspace-kpi.kpi-click:hover{box-shadow:0 0 0 2px #9fc0e0 inset}.workspace-kpi.kpi-click:focus-visible{outline:2px solid #1f6fb2;outline-offset:1px}
 .loading-screen img{height:46px;width:auto;object-fit:contain;flex:none}
 /* Declutter: hide the confusing submodule bar; the module tabs are the primary navigation */
 .workbench-submodules{display:none!important}
@@ -263,3 +263,4 @@ button{cursor:pointer}
 .control-note{display:none!important}
 .serial-picker{display:flex;flex-direction:column;gap:4px;min-width:0}.serial-picker .serial-add{width:100%}.serial-chips{display:flex;flex-wrap:wrap;gap:4px}.serial-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 3px 2px 8px;background:#e8f1fb;border:1px solid #9fc0e0;border-radius:12px;font-size:11px;line-height:1.4;color:#12305f;max-width:100%}.serial-chip>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.serial-chip button{flex:none;border:0;background:#c9dcf0;color:#12305f;border-radius:50%;width:16px;height:16px;line-height:1;cursor:pointer;font-size:12px;padding:0}.serial-chip button:hover{background:#b52218;color:#fff}
 .outbound-empty{display:flex;flex-direction:column;align-items:center;gap:8px;padding:26px 18px;text-align:center;background:#f5f9fc;border:1px dashed #b8cbd7}.outbound-empty .oe-title{margin:0;font-weight:700;color:#12305f;font-size:13px}.outbound-empty .oe-detail{margin:0;max-width:560px;color:#556;font-size:12px;line-height:1.5}.outbound-empty .command{margin-top:4px}
+#discSummaryWrap.only-var tr.no-var{display:none}.var-hot{color:#b52218;font-weight:700}.disc-toggle{display:flex;align-items:center;gap:5px;font-size:11px;color:#556;cursor:pointer;white-space:nowrap}.recon-clean{padding:20px;text-align:center;background:#eef7ef;border:1px solid #bfe0c6}.recon-clean b{color:#1d6f3f;font-size:13px}.recon-clean p{margin:4px 0 0;color:#556;font-size:12px}

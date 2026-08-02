@@ -1570,22 +1570,33 @@ async function renderInboundDiscrepancies(){
       api('/receiving/reports/reconciliation'),
       api('/receiving/reports/discrepancies?status=OPEN'),
     ]);
-    const summaryRows=summary.rows.map(row=>`<tr><td><b>${esc(row.shipment_no)}</b></td><td>${esc(row.purchase_order_no||'-')}</td>
+    const __hasVar=row=>Number(row.quantity_variance||0)!==0||Number(row.open_variances||0)!==0;
+    const summaryRows=summary.rows.map(row=>{const qv=Number(row.quantity_variance||0),sv=Number(row.open_variances||0);
+      return `<tr class="disc-row ${__hasVar(row)?'has-var':'no-var'}"><td><b>${esc(row.shipment_no)}</b></td><td>${esc(row.purchase_order_no||'-')}</td>
       <td>${esc(row.receipt_locations||'-')}</td><td>${esc(row.expected_qty)}</td><td>${esc(row.received_qty)}</td>
-      <td>${esc(row.quantity_variance)}</td><td>${esc(row.open_variances)}</td><td>${statusBadge(row.reconciliation_status)}</td></tr>`);
+      <td${qv!==0?' class="var-hot"':''}>${esc(row.quantity_variance)}</td><td${sv!==0?' class="var-hot"':''}>${esc(row.open_variances)}</td><td>${statusBadge(row.reconciliation_status)}</td></tr>`;});
+    const __anyVar=summary.rows.some(__hasVar);const __odClick=Number(summary.totals.openVariances||0)>0;
     const detailRows=details.rows.map(row=>`<tr><td><b>${esc(row.variance_no)}</b></td><td>${esc(row.purchase_order_no||'-')}</td><td>${esc(row.shipment_no)}</td>
       <td>${esc(row.receipt_no)}</td><td>${esc(row.location_code)}</td><td>${esc(row.variance_type)}</td>
       <td>${esc(row.expected_serial_no||'-')}</td><td>${esc(row.actual_serial_no||'-')}</td><td>${esc(row.reason||'-')}</td>
       <td><button class="table-action" data-resolve-variance="${row.id}">Resolve</button></td></tr>`);
     const body=`${workflowStrip(['Purchase Order','ATLAS Expected Shipment','Goods Receipt','Warehouse Visibility'],3)}
-      <div class="workspace-kpis">${kpi('Shipments',summary.totals.shipments)}${kpi('Expected',summary.totals.expected)}
-        ${kpi('Received',summary.totals.received)}${kpi('Open Discrepancies',summary.totals.openVariances)}</div>
-      <section class="workspace-card"><header><h2>Expected Shipment vs Goods Receipt</h2></header>
-        ${operationalTable(['Shipment','Purchase Order','Receipt Locations','Expected','Received','Qty Variance','Serial Variances','Status'],summaryRows)}</section>
-      <section class="workspace-card"><header><h2>Open Serial Discrepancies</h2><span>${details.total} exceptions</span></header>
-        ${operationalTable(['Variance','PO','Shipment','Receipt','Location','Type','Expected Serial','Actual Serial','Reason','Action'],detailRows)}</section>`;
+      <div class="workspace-kpis">
+        <article class="workspace-kpi"><span>Shipments</span><strong>${esc(summary.totals.shipments)}</strong></article>
+        <article class="workspace-kpi"><span>Expected</span><strong>${esc(summary.totals.expected)}</strong></article>
+        <article class="workspace-kpi"><span>Received</span><strong>${esc(summary.totals.received)}</strong></article>
+        <article class="workspace-kpi ${__odClick?'kpi-click':''}" ${__odClick?'id="kpiOpenDisc" role="button" tabindex="0" title="Jump to the exceptions to resolve"':''}><span>Open Discrepancies</span><strong>${esc(summary.totals.openVariances)}</strong></article>
+      </div>
+      <section class="workspace-card"><header><div><h2>Expected Shipment vs Goods Receipt</h2></div>
+        <label class="disc-toggle"><input type="checkbox" id="discShowAll" ${__anyVar?'':'checked'}> Show shipments with no variance</label></header>
+        ${__anyVar?'':'<div class="recon-clean"><b>All shipments reconcile</b><p>Every received shipment matches its ATLAS manifest, with no quantity or serial variances.</p></div>'}
+        <div id="discSummaryWrap" class="${__anyVar?'only-var':''}">${operationalTable(['Shipment','Purchase Order','Receipt Locations','Expected','Received','Qty Variance','Serial Variances','Status'],summaryRows)}</div></section>
+      <section class="workspace-card" id="openDiscSection"><header><h2>Open Serial Discrepancies</h2><span>${details.total} exceptions</span></header>
+        ${details.total?operationalTable(['Variance','PO','Shipment','Receipt','Location','Type','Expected Serial','Actual Serial','Reason','Action'],detailRows):'<div class="recon-clean"><b>No open serial discrepancies</b><p>Nothing to resolve. Unexpected or missing serials from receiving would appear here.</p></div>'}</section>`;
     content.innerHTML=workbenchShell(body,'setup');
     bindOperationalShell();
+    const __kod=$('#kpiOpenDisc');if(__kod){const __jump=()=>{const el=document.getElementById('openDiscSection');if(el)el.scrollIntoView({behavior:'smooth',block:'start'});};__kod.onclick=__jump;__kod.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();__jump();}};}
+    const __sa=$('#discShowAll');if(__sa)__sa.onchange=()=>{const w=$('#discSummaryWrap');if(w)w.classList.toggle('only-var',!__sa.checked);};
     $$('[data-resolve-variance]').forEach(button=>button.onclick=()=>{
       modal('Resolve receiving discrepancy',`<form id="resolveVariance" class="operational-form"><label><span>Resolution</span><textarea name="resolution" required placeholder="Document the approved resolution"></textarea></label><button class="command primary">Resolve</button></form>`);
       $('#resolveVariance').onsubmit=async event=>{
