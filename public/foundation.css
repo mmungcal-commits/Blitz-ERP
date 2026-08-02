@@ -245,3 +245,16 @@ button{cursor:pointer}
 .pr-thumb img{width:100%;height:100%;object-fit:cover;display:block}
 .pr-thumb button{position:absolute;top:2px;right:2px;padding:1px 6px;line-height:1.2}
 .pr-3d model-viewer{width:100%;height:320px}
+
+/* Product registration list (r42) */
+.pr-search{width:100%;padding:7px 10px;margin-bottom:8px;border:1px solid #d3dceb;border-radius:8px;font-size:12px;box-sizing:border-box}
+.pr-list{max-height:62vh;overflow:auto;display:flex;flex-direction:column}
+.pr-listrow{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 8px;border:0;border-bottom:1px solid #eef2f7;background:#fff;cursor:pointer;font-size:12px}
+.pr-listrow:hover{background:#eef4ff}
+.pr-listrow b{flex:none;min-width:96px;color:#12305f}
+.pr-listrow .pr-ln{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#33445a}
+.pr-listrow em{flex:none;font-style:normal;font-size:11px;color:#8091a6;text-transform:uppercase}
+
+/* Warehouse class KPI: available + leased (r42) */
+.kpi-al small{font-size:11px;font-weight:600;color:#8091a6}
+.kpi-al em{display:block;margin-top:3px;font-style:normal;font-size:12px;color:#1f7a34;font-weight:700}

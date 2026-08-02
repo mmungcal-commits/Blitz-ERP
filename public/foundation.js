@@ -1978,7 +1978,7 @@ async function renderWarehouseVisibility(locationId='',search='',status='',categ
       <select id="unitLocation"><option value="">All locations</option>${lookups.locations.map(row=>`<option value="${row.id}" ${Number(row.id)===Number(locationId)?'selected':''}>${esc(row.code)} · ${esc(row.name)}</option>`).join('')}</select>
       <select id="unitStatus"><option value="">All statuses</option>${['AVAILABLE','ASSIGNED','QUARANTINE','UNDER_REPAIR','LEASED','SOLD'].map(value=>`<option ${value===status?'selected':''}>${value}</option>`).join('')}</select>
       <button class="command primary" id="applyUnitFilter">Apply</button><span class="command-spacer"></span><span class="workspace-mode">${Number(data.total||0).toLocaleString()} UNITS · PAGE ${page}/${pages}</span>
-    </div><div class="workspace-kpis inventory-class-kpis">${((byClass&&(byClass.classes||byClass.rows))||[]).map(c=>kpi((c.class_name||c.cls||c.class_code||'Class')+' \u00b7 On Hand',Number(c.total||0).toLocaleString())).join('')}</div>
+    </div><div class="workspace-kpis inventory-class-kpis">${((byClass&&(byClass.classes||byClass.rows))||[]).map(function(c){var av=Number(c.available||0),ls=Number(c.leased||0);return '<article class="workspace-kpi kpi-al"><span>'+esc(c.class_name||c.cls||c.class_code||'Class')+'</span><strong>'+av.toLocaleString()+' <small>available</small></strong><em>'+ls.toLocaleString()+' leased</em></article>';}).join('')}</div>
     <section class="workspace-card"><header><h2>Exact Serial Inventory Register</h2><span>Click any row for movement, custody, delivery, return, and Finance details</span></header>
       ${operationalTable(['Serial','Material Code','Tagged Item','Class','Location','Location Name','Status','Assigned To','Unit Cost','Valuation','Reconciliation'],rows,{key:'serial-inventory',emptyMessage:'No serial records match the filters. Confirm D1 migrations and opening data were loaded.'})}
       <div class="table-pager"><button class="command" id="previousUnitPage" ${page<=1?'disabled':''}>Previous</button><span>Page ${page} of ${pages}</span><button class="command" id="nextUnitPage" ${page>=pages?'disabled':''}>Next</button></div>
@@ -2494,7 +2494,7 @@ async function renderProductRegistration(editId){
     const cats=[['MC','Motorcycle'],['BAT','Battery'],['BSS','Swap Station / Locker'],['CHG','Charger'],['SP','Spare Part / Accessory'],['OTH','Other']];
     const it=current?current.item:{}; const pf=current?(current.profile||{}):{};
     const ptype=(pf.product_type||(it.serialized?'SERIALIZED':'QUANTITY'));
-    const listRows=items.map(function(r){return '<tr class="clickable-row" data-prod-open="'+r.id+'"><td><b>'+esc(r.item_code)+'</b></td><td>'+esc(r.item_name)+'</td><td>'+esc(r.category)+'</td><td>'+(r.serialized?'Serialized':'Quantity')+'</td><td class="num">'+money(r.standard_cost)+'</td></tr>';}).join('');
+    const listRows=items.map(function(r){var nm=(r.item_name||'').replace(/\s+/g,' ').trim();if(nm.length>52)nm=nm.slice(0,52)+'\u2026';var srch=((r.item_code||'')+' '+(r.item_name||'')+' '+(r.category||'')).toLowerCase();return '<button type="button" class="pr-listrow" data-prod-open="'+r.id+'" data-search="'+esc(srch)+'"><b>'+esc(r.item_code)+'</b><span class="pr-ln">'+esc(nm)+'</span><em>'+esc(r.category)+'</em></button>';}).join('');
     const catOpts=cats.map(function(x){return '<option value="'+x[0]+'"'+((it.category===x[0])?' selected':'')+'>'+x[1]+'</option>';}).join('');
     const typeOpt=function(v,label,desc){return '<label class="pdi-check"><input type="radio" name="ptype" value="'+v+'"'+(ptype===v?' checked':'')+'><span><b>'+label+'</b><br><small>'+desc+'</small></span></label>';};
     const body='<div class="workspace-commandbar"><span class="workspace-mode">PRODUCT REGISTRATION</span><span class="command-spacer"></span><button class="command" id="prNew">+ New Product</button></div>'+
@@ -2517,15 +2517,17 @@ async function renderProductRegistration(editId){
           '</div></div>'+
           '<button class="command primary">'+(current?'Save Changes':'Register Product')+'</button>'+
         '</form></section>'+
-        (current?('<section class="workspace-card" id="mediaCard"><header><div><h2>Photos & 3D</h2><span>Upload unit photos (JPG/PNG, max 4MB each). Multiple photos enable the 360 spin. Optional .glb/.gltf 3D model for a movable view.</span></div></header>'+
+        ('<section class="workspace-card" id="mediaCard"><header><div><h2>Photos & 3D</h2><span>'+(current?'Upload unit photos (JPG/PNG, max 4MB each). Multiple photos enable the 360 spin. Optional .glb/.gltf 3D model for a movable view.':'Enter a product name above, then pick a photo here - the product saves automatically and the image is attached. JPG/PNG, max 4MB each.')+'</span></div></header>'+
           '<div class="lease-unit-picker"><label><span>Add photo(s)</span><input type="file" id="prPhoto" accept="image/*" multiple></label>'+
           '<label><span>Add 3D model (.glb/.gltf)</span><input type="file" id="prModel" accept=".glb,.gltf,model/gltf-binary"></label></div>'+
-          '<div id="prMedia" class="pr-media"></div></section>'):'')+
+          '<div id="prMedia" class="pr-media"></div></section>')+
       '</div><aside class="ramco-rail"><section><header>All Products ('+items.length+')</header>'+
-        operationalTable(['Code','Name','Class','Type','Cost'],listRows?[listRows]:[],{key:'product-list',emptyMessage:'No products yet.'})+
+        '<input id="prSearch" class="pr-search" placeholder="Search code, name or class...">'+
+        '<div class="pr-list">'+(listRows||'<div class="workspace-empty">No products yet.</div>')+'</div>'+
       '</section></aside></div>';
     content.innerHTML=workbenchShell(body,'center');bindOperationalShell();
     $('#prNew')&&($('#prNew').onclick=function(){renderProductRegistration();});
+    var __ps=$('#prSearch');if(__ps)__ps.oninput=function(){var q=__ps.value.toLowerCase();$$('.pr-listrow').forEach(function(el){el.style.display=(!q||(el.getAttribute('data-search')||'').indexOf(q)>=0)?'':'none';});};
     $$('[data-prod-open]').forEach(function(row){row.onclick=function(){renderProductRegistration(row.getAttribute('data-prod-open'));};});
     $('#prodForm').onsubmit=async function(e){
       e.preventDefault();
@@ -2535,10 +2537,19 @@ async function renderProductRegistration(editId){
       try{ const r=await api('/masters/items/register',{method:'POST',body:JSON.stringify(p)}); toast('Product saved: '+(r.item&&r.item.item_code)); renderProductRegistration(r.item.id); }
       catch(err){ toast(err.message,'error'); }
     };
-    if(current){ __renderProductMedia(current); 
-      $('#prPhoto')&&($('#prPhoto').onchange=async function(ev){ for(const file of ev.target.files){ await __uploadProductMedia(it.id,file,'photo'); } renderProductRegistration(it.id); });
-      $('#prModel')&&($('#prModel').onchange=async function(ev){ const file=ev.target.files[0]; if(file){ await __uploadProductMedia(it.id,file,'model'); renderProductRegistration(it.id); } });
+    async function __ensureProductId(){
+      if(current) return it.id;
+      const form=$('#prodForm'); if(!form) return null;
+      if(!form.itemName||!form.itemName.value.trim()){ toast('Enter a product name first, then add photos','error'); return null; }
+      const p=formDataObject(form);
+      p.productType=(form.querySelector('input[name="ptype"]:checked')||{}).value||'SERIALIZED';
+      delete p.id;
+      const r=await api('/masters/items/register',{method:'POST',body:JSON.stringify(p)});
+      return r.item&&r.item.id;
     }
+    if(current){ __renderProductMedia(current); }
+    $('#prPhoto')&&($('#prPhoto').onchange=async function(ev){ try{ const id=await __ensureProductId(); if(!id)return; for(const file of ev.target.files){ await __uploadProductMedia(id,file,'photo'); } renderProductRegistration(id); }catch(e){toast(e.message,'error');} });
+    $('#prModel')&&($('#prModel').onchange=async function(ev){ try{ const id=await __ensureProductId(); if(!id)return; const file=ev.target.files[0]; if(file){ await __uploadProductMedia(id,file,'model'); renderProductRegistration(id); } }catch(e){toast(e.message,'error');} });
   }catch(error){showWorkspaceError(error);}
 }
 
@@ -3573,7 +3584,7 @@ init();
 
   const persist=()=>write(S);
   // --- Generic clickable-row record inspector (makes every table row open its details) ---
-  (function(){const st=document.createElement('style');st.textContent='table.record-table tbody tr{cursor:pointer}table.record-table tbody tr:hover>td{background:#eef7fc}';document.head.appendChild(st);})();
+  (function(){const st=document.createElement('style');st.textContent='table.record-table tbody tr.clickable-row{cursor:pointer}table.record-table tbody tr.clickable-row:hover>td{background:#eef7fc}';document.head.appendChild(st);})();
   function czOpenRowDetail(headers,tr){
     var cells=[].slice.call(tr.children);
     var first=(cells[0]?cells[0].textContent.trim():'')||'Record';
@@ -3647,18 +3658,7 @@ init();
     var pd=t.closest('[data-print-dlv]');if(pd){ev.preventDefault();ev.stopPropagation();czPrintDelivery(pd.getAttribute('data-print-dlv'));return;}
   },true);
 
-  document.addEventListener('click',function(ev){
-    if(ev.target.closest('button,a,input,select,textarea,label'))return;
-    var tr=ev.target.closest('table.record-table tbody tr'); if(!tr)return;
-    if(tr.classList.contains('clickable-row'))return;
-    if(tr.querySelector('[colspan]'))return;
-    if(![].slice.call(tr.children).some(function(td){return (td.textContent||'').trim();}))return;
-    var __first=(tr.children[0]?tr.children[0].textContent.trim():'');
-    var __isDoc=(/\d/.test(__first)&&(/-/.test(__first)||/^[A-Z]{2,}\d/.test(__first)));
-    if(!__isDoc)return;
-    var headers=[].slice.call(tr.closest('table').querySelectorAll('thead th')).map(function(th){return th.textContent.replace(/[▲▼]/g,'').trim();});
-    czOpenRowDetail(headers,tr);
-  })
+  /* generic row-inspector (Record / Print slip) removed per request */
   const esc2=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
   /* ---------- catalog overrides (data level, re-applied every render) ---------- */
