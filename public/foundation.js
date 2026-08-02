@@ -2331,25 +2331,25 @@ async function renderSupplierPortal(section){
   content.innerHTML='<div class="workspace-loading">Loading vendor accreditation...</div>';
   try{
     const lookups=await api('/masters/lookups');
-    const vendors=(lookups.vendors||[]);
+    let vendors=[];try{const __acc=await api('/masters/accredited-vendors');vendors=(__acc.rows||[]);}catch(e){vendors=[];}
     const defaultAdmin='https://script.google.com/a/macros/nrdev.ph/s/AKfycbwOPU2Ak4yJAnniNghLH9EBSEP6VZo6oFiWvHdl0VcFGRfAckEfb3Uoy_r4bYfm5fN8/exec';
     const portalUrl=localStorage.getItem('e88-accreditation-url')||defaultAdmin;
     const vendorUrl=portalUrl.indexOf('?')>=0?portalUrl+'&vendor=1':portalUrl+'?vendor=1';
     const stages=['Vendor Submits','Requestor Endorses','Document Review','Finance / Owner Approval','Accredited'];
     const docList=['DTI/SEC Registration','SEC GIS (General Information Sheet)','BIR Form 2303','Business Permit (current year)','Bank Certificate','Company Profile','Signed Non-Disclosure Agreement','Signed Compliance Declaration','Signed Anti-Bribery & Ethics Declaration','Latest Audited Financial Statement','Sample Sales/Service Invoice'];
-    const vrows=vendors.map(function(v){return '<tr><td><b>'+esc(v.name)+'</b></td><td>'+esc(v.partner_code||'-')+'</td><td>'+statusBadge('ON FILE')+'</td></tr>';});
+    const vrows=vendors.map(function(v){return '<tr><td><b>'+esc(v.vendor_name)+'</b></td><td>'+esc(v.partner_code||'-')+'</td><td>'+statusBadge(v.status||'-')+'</td></tr>';});
     const docItems=docList.map(function(d){return '<li>'+esc(d)+'</li>';}).join('');
     const portalBtn='<a class="portal-icon-btn" href="'+esc(portalUrl)+'" target="_blank" rel="noopener" title="Open the accreditation admin console">Console \u2197</a>'
       +'<a class="portal-icon-btn" href="'+esc(vendorUrl)+'" target="_blank" rel="noopener" title="Open the vendor submission form">Vendor form \u2197</a>'
       +'<button class="portal-icon-btn" id="setPortalUrl" title="Change the portal link">\u2699</button>';
     const body=workflowStrip(stages,4)+
       '<div class="workspace-commandbar"><span class="workspace-mode">VENDOR ACCREDITATION</span><span class="command-spacer"></span>'+portalBtn+'</div>'+
-      '<div class="workspace-kpis">'+kpi('Vendors on File',vendors.length)+kpi('Required Documents',docList.length)+kpi('Approval Stages',stages.length)+kpi('Portal',portalUrl?'Linked':'Not linked')+'</div>'+
+      '<div class="workspace-kpis">'+kpi('Vendors',vendors.length)+kpi('Accredited',vendors.filter(function(v){return /^accredited$/i.test((v.status||'').trim());}).length)+kpi('Required Documents',docList.length)+kpi('Portal',portalUrl?'Linked':'Not linked')+'</div>'+
       '<div class="ramco-layout"><div class="ramco-main">'+
         '<section class="workspace-card"><header><div><h2>How vendor accreditation works</h2></div></header>'+
           '<div class="control-note"><p>A vendor submits its documents and banking details, the E88 requestor endorses it, the documents are reviewed for completeness, then Finance and the owner give final approval. Accreditation confirms a vendor is qualified - it is not an award. Every engagement still requires the 1-3-1 canvass, the Vendor Selection Scorecard, and CEO approval before any funds are released.</p></div></section>'+
         '<section class="workspace-card"><header><div><h2>Vendor Directory</h2></div></header>'+
-          operationalTable(['Vendor','Vendor Code','Status'],vrows,{key:'vendor-directory',emptyMessage:'No vendors on file.'})+'</section>'+
+          operationalTable(['Vendor','Vendor Code','Status'],vrows,{key:'vendor-directory',emptyMessage:'No accredited vendors loaded.'})+'</section>'+
       '</div><aside class="ramco-rail">'+
         '<section><header>Required Documents</header><ul class="doc-checklist">'+docItems+'</ul></section>'+
         '<section><header>Approval Stages</header><div class="control-note"><p>1. Vendor submits<br>2. Requestor endorses<br>3. Document review<br>4. Finance / Owner approval<br>5. Accredited</p></div></section>'+
