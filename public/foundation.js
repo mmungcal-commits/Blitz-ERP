@@ -1765,7 +1765,7 @@ async function renderPreRelease(){
   try{
     const data=await api('/requisitions/outbound-workbench');
     const latest=new Map();for(const check of data.checks)if(!latest.has(check.serial_no))latest.set(check.serial_no,check);
-    const rows=data.allocations.filter(row=>row.asset_id&&row.category==='MC'&&['RESERVED','ISSUED'].includes(row.allocation_status)).map(row=>{
+    const rows=data.allocations.filter(row=>row.asset_id&&row.category==='MC'&&/^R5FBM/i.test(row.serial_no||'')&&['RESERVED','ISSUED'].includes(row.allocation_status)).map(row=>{
       const check=latest.get(row.serial_no);
       return `<tr><td><b>${esc(row.requisition_no)}</b></td><td>${esc(row.serial_no)}</td><td>${esc(row.item_name)}</td>
         <td>${esc(row.current_location_code||'-')}</td><td>${check?statusBadge(check.result):statusBadge('PENDING')}</td>
@@ -2496,7 +2496,7 @@ async function renderStockAnalysis(search=''){
     const mcUtil=mcTotal?Math.round(mcLeased/mcTotal*100):0;
     const batDeployed=cls.filter(c=>c.cls==='BAT').reduce((s,c)=>s+Number(c.deployed||0),0);
     const totVal=cls.reduce((s,c)=>s+Number(c.inventory_value||0),0);
-    const summaryRows=cls.map(function(c){var av=Number(c.available||0),ls=Number(c.leased||0),tot=av+ls;var util=tot?Math.round(ls/tot*100):0;return '<tr><td><b>'+esc(c.class_name||c.cls)+'</b></td><td class="num">'+av.toLocaleString()+'</td><td class="num">'+ls.toLocaleString()+'</td><td class="num"><b>'+tot.toLocaleString()+'</b></td><td class="num">'+util+'%</td><td class="num">'+money(c.inventory_value)+'</td></tr>';}).join('');
+    const summaryRows=cls.map(function(c){var av=Number(c.available||0),ls=Number(c.leased||0),tot=av+ls;var util=tot?Math.round(ls/tot*100):0;return '<tr><td><b>'+esc(c.class_name||c.cls)+'</b></td><td class="num">'+av.toLocaleString()+'</td><td class="num">'+ls.toLocaleString()+'</td><td class="num"><b>'+tot.toLocaleString()+'</b></td><td class="num">'+util+'%</td><td class="num">'+money(c.inventory_value)+'</td></tr>';});
     const rows=filtered.map(row=>{var av=Number(row.available_qty||0),ls=Number(row.leased_qty||0);return `<tr class="clickable-row" data-analysis-item="${esc(row.item_code)}" data-analysis-class="${esc(row.category)}"><td><b>${esc(row.item_code)}</b></td><td>${esc(row.item_name)}</td><td>${esc(row.category)}</td>
       <td>${esc(row.primary_location||'-')}</td><td class="num">${av.toLocaleString()}</td><td class="num">${ls.toLocaleString()}</td><td class="num">${Number(row.sold_qty||0).toLocaleString()}</td><td class="num"><b>${(av+ls).toLocaleString()}</b></td>
       <td class="num">${money(row.inventory_value)}</td></tr>`;});
@@ -2752,7 +2752,7 @@ async function renderSalesOrderWorkspace(section){
     }
     const center=section==='center';
     const body=`${center?`<div class="workspace-kpis">${kpi('Order Value',money(value))}${kpi('Open Drafts',drafts.length)}
-      ${kpi('Approved for Fulfilment',approved.length)}${kpi('Motorcycles Available',(lookups.assets||[]).filter(a=>a.category==='MC').length)}${kpi('Batteries Available',(lookups.assets||[]).filter(a=>a.category==='BAT').length)}${kpi('Swap Stations Available',(lookups.assets||[]).filter(a=>a.category==='BSS').length)}</div>
+      ${kpi('Approved for Fulfilment',approved.length)}${kpi('Motorcycles Available',(lookups.assets||[]).filter(a=>a.category==='MC'&&/^R5FBM/i.test(a.serial_no||'')).length)}${kpi('Batteries Available',(lookups.assets||[]).filter(a=>a.category==='BAT').length)}${kpi('Swap Stations Available',(lookups.assets||[]).filter(a=>a.category==='BSS').length)}</div>
       ${workflowStrip(['CRM / Customer','Sales Order','Approval','Requisition & Allocation','Pre-release','Goods Issue / Delivery'],2)}`:''}
       <div class="workspace-commandbar"><button class="command primary" id="newSalesOrder" ${can('SALES','CREATE')?'':'disabled'}>New Sales Order</button>
         <span class="command-spacer"></span><span class="workspace-mode">${section==='approvals'?'ORDER APPROVAL':'CONNECTED ORDER REGISTER'}</span></div>
