@@ -1719,6 +1719,11 @@ async function renderOutboundRequisitions(){
   }catch(error){showWorkspaceError(error);}
 }
 
+function serialChipify(picker){if(!picker)return;const adder=picker.querySelector('.serial-add'),chips=picker.querySelector('.serial-chips');if(!adder||!chips)return;
+  adder.onchange=()=>{const opt=adder.selectedOptions[0];if(!opt||!opt.value)return;const chip=document.createElement('span');chip.className='serial-chip';chip.dataset.serial=opt.value;
+    chip.innerHTML=`<span>${esc(opt.value)}</span><button type="button" title="Remove" aria-label="Remove ${esc(opt.value)}">×</button>`;
+    chip.querySelector('button').onclick=()=>{opt.hidden=false;chip.remove();};opt.hidden=true;chips.append(chip);adder.value='';};}
+function serialChipValues(picker){return picker?[...picker.querySelectorAll('.serial-chip')].map(c=>c.dataset.serial):[];}
 async function openRequisitionDetail(id,lookups){
   try{
     const data=await api('/requisitions/'+id);
@@ -1734,7 +1739,7 @@ async function openRequisitionDetail(id,lookups){
       <section class="record-sublist">
         <header><div><h3>Allocate Available Serials</h3><p>Pick the exact units to reserve on this requisition. Motorcycles then flow to the Pre-release checklist.</p></div></header>
         <div class="lease-unit-picker"><label><span>Available Serial Numbers</span>
-          <select id="reqAllocSerials" multiple size="10">${optgroups||'<option disabled>No available serials</option>'}</select></label>
+          <div class="serial-picker" id="reqAllocPicker"><select class="serial-add"><option value="">Add a serial…</option>${optgroups||''}</select><div class="serial-chips"></div></div></label>
           <div><button type="button" class="command primary" id="reqAllocBtn">Allocate Selected Serials</button></div></div>
       </section>`:'';
     const approveBtn=(['SUBMITTED','DRAFT'].includes(h.status)&&can('REQUISITIONS','APPROVE'))?`<button type="button" class="command primary" id="reqApproveBtn">Approve &amp; Create Delivery</button>`:'';
@@ -1752,9 +1757,10 @@ async function openRequisitionDetail(id,lookups){
       <div class="modal-actions">${approveBtn}<button type="button" class="table-action" data-print-req="${id}">Print Requisition Slip</button></div>`;
     modal('Requisition '+esc(h.requisition_no||id),body,esc(h.holder_name||''));
     const mb=$('#modalBody');
+    serialChipify(mb.querySelector('#reqAllocPicker'));
     const allocBtn=mb.querySelector('#reqAllocBtn');
     if(allocBtn)allocBtn.onclick=async()=>{
-      const serials=[...mb.querySelector('#reqAllocSerials').selectedOptions].map(o=>o.value);
+      const serials=serialChipValues(mb.querySelector('#reqAllocPicker'));
       if(!serials.length){toast('Select at least one serial.','error');return;}
       try{const r=await api('/requisitions/'+id+'/allocate',{method:'POST',body:JSON.stringify({serials})});
         toast(r.allocated+' serial(s) allocated. Requisition is ready to approve.');closeModal();await renderOutboundRequisitions();openRequisitionDetail(id,lookups);}
@@ -1784,10 +1790,9 @@ async function renderPreRelease(){
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],1)}
       <section class="workspace-card"><header><div><h2>Pre-release Checklist Worklist</h2></div></header>
         ${operationalTable(['Requisition','Serial','Unit','Location','Result','Checked','Action'],rows)}</section>`;
-    let __regRows=[];try{let __all=[];for(let __p=1;__p<=8;__p++){const __rg=await api('/checklists?size=250&page='+__p);const __rr=(__rg.rows||[]);__all=__all.concat(__rr);if(__rr.length<250)break;}__regRows=__all.map(r=>`<tr><td><b>${esc(r.checklist_no)}</b></td><td>${esc((r.serial_no||'').slice(0,48))}</td><td>${statusBadge(r.result)}</td><td>${esc(r.approved_by||'-')}</td><td>${esc((r.created_at||'').slice(0,10))}</td></tr>`);}catch(e){}const __regBody=`<section class="workspace-card"><header><div><h2>Pre-release Checklist Register</h2><span>All ${__regRows.length} inspection records (actuals).</span></div></header>${operationalTable(['Checklist #','Serial / Unit','Result','Approved By','Recorded'],__regRows)}</section>`;content.innerHTML=workbenchShell(body+__regBody,'approvals');bindOperationalShell();
-    const PDI_ITEMS=[['identity','VIN / engine no. matches record'],['body','Body, panels & paint - no visible damage'],['brakes','Brakes (front & rear) functioning'],['lights','Headlight, tail & signal lights working'],['tires','Tires & wheels - condition and pressure'],['battery','Batteries (x2) seated & charged'],['charger','Charger present and tested'],['electricals','Horn, dashboard & electricals'],['mirrors','Mirrors & side accessories complete'],['documents','Documents, plate & keys complete'],['apptest','App / GPS pairing tested'],['account','Rider account created & batteries assigned']];
-    $$('[data-checklist]').forEach(button=>button.onclick=()=>{
-      const serial=button.dataset.checklist,unit=button.dataset.unit||'',req=button.dataset.req||'';
+    let __regRows=[];try{let __all=[];for(let __p=1;__p<=8;__p++){const __rg=await api('/checklists?size=250&page='+__p);const __rr=(__rg.rows||[]);__all=__all.concat(__rr);if(__rr.length<250)break;}__regRows=__all.map(r=>{const pend=/PENDING/i.test(r.result||'');const raw=r.serial_no||'';const m=raw.match(/R5FBM\w+/i);const cs=m?m[0]:raw;const act=pend?`<button class="table-action" data-open-pdi="${esc(cs)}" data-unit="${esc(raw.slice(0,40))}">Open & inspect</button>`:'-';return `<tr><td><b>${esc(r.checklist_no)}</b></td><td>${esc(raw.slice(0,48))}</td><td>${statusBadge(r.result)}</td><td>${esc(r.approved_by||'-')}</td><td>${esc((r.created_at||'').slice(0,10))}</td><td>${act}</td></tr>`;});}catch(e){}const __regBody=`<section class="workspace-card"><header><div><h2>Pre-release Checklist Register</h2><span>All ${__regRows.length} inspection records (actuals). Pending rows can be opened and completed.</span></div></header>${operationalTable(['Checklist #','Serial / Unit','Result','Approved By','Recorded','Action'],__regRows)}</section>`;content.innerHTML=workbenchShell(body+__regBody,'approvals');bindOperationalShell();
+    const PDI_ITEMS=[['vin','VIN matches the record'],['batteryA','Battery A seated & assigned'],['batteryB','Battery B seated & assigned'],['charger','Charger provided & tested'],['pdi','PDI (physical pre-delivery inspection) done'],['pdiform','PDI form completed & signed'],['hydra','Batteries assigned in Hydra'],['apptest','App testing done'],['account','Rider account created']];
+    const openPdi=(serial,unit,req)=>{
       const items=PDI_ITEMS.map(([k,label])=>`<label class="pdi-check"><input type="checkbox" data-pdi="${k}" checked><span>${esc(label)}</span></label>`).join('');
       modal('Pre-release Inspection · '+serial,`<form id="pdiForm" class="operational-form">
         <div class="pdi-grid">${items}</div>
@@ -1811,7 +1816,9 @@ async function renderPreRelease(){
           toast(`${r.checklistNo}: ${r.result}`);closeModal();await renderPreRelease();}
         catch(err){toast(err.message,'error');}
       };
-    });
+    };
+    $$('[data-checklist]').forEach(button=>button.onclick=()=>openPdi(button.dataset.checklist,button.dataset.unit||'',button.dataset.req||''));
+    $$('[data-open-pdi]').forEach(button=>button.onclick=()=>openPdi(button.dataset.openPdi,button.dataset.unit||'',''));
   }catch(error){showWorkspaceError(error);}
 }
 
@@ -3205,9 +3212,7 @@ function renderRecordForm(record=null,documents=[],connected={}){
       <header><div><h3>Leased Units / Annex A</h3><p>Select only available serialized motorcycles, batteries, equipment, or other lease assets.</p></div>
         <span>${connected.units?.length||0} units linked</span></header>
       <div class="lease-unit-picker">
-        <label><span>Available Serial Numbers</span><select id="leaseAvailableUnits" multiple size="8">
-          ${(connected.availableAssets||[]).map(asset=>`<option value="${esc(asset.serial_no)}">${esc(asset.category)} · ${esc(asset.serial_no)} · ${esc(asset.item_name)} · ${esc(asset.current_location_code||'No location')}</option>`).join('')}
-        </select></label>
+        <label><span>Available Serial Numbers</span><div class="serial-picker" id="leaseUnitPicker"><select class="serial-add"><option value="">Add a serial…</option>${(connected.availableAssets||[]).map(asset=>`<option value="${esc(asset.serial_no)}">${esc(asset.category)} · ${esc(asset.serial_no)} · ${esc(asset.item_name)} · ${esc(asset.current_location_code||'No location')}</option>`).join('')}</select><div class="serial-chips"></div></div></label>
         <div><label><span>Replacement Value / Unit</span><input id="leaseReplacementValue" type="number" step="0.01" value="${esc(connected.lease?.replacement_value||0)}"></label>
           <label><span>Daily Rate VAT-Ex / Unit</span><input id="leaseDailyRate" type="number" step="0.01" value="${esc(connected.lease?.daily_rate_vat_ex||0)}"></label>
           <button type="button" class="command primary" id="addLeaseUnits">Add Selected Units</button></div>
@@ -3280,8 +3285,9 @@ function renderRecordForm(record=null,documents=[],connected={}){
     try{await api(`/workspace/modules/${state.module.code}/records/${record.id}/documents`,{method:'POST',body});toast('Document uploaded');await openRecord(record.id);}
     catch(error){toast(error.message,'error');}
   };
+  serialChipify($('#leaseUnitPicker'));
   if($('#addLeaseUnits'))$('#addLeaseUnits').onclick=async()=>{
-    const serials=[...$('#leaseAvailableUnits').selectedOptions].map(option=>option.value);
+    const serials=serialChipValues($('#leaseUnitPicker'));
     if(!serials.length)return toast('Select one or more available serial numbers.','error');
     try{
       await api(`/workspace/modules/sd-lease-contract-management/records/${record.id}/units`,{
