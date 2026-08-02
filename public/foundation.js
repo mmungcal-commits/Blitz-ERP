@@ -460,6 +460,9 @@ function recordsTable(rows){
 function operationalEmpty(message){
   return `<div class="workspace-empty"><b>${esc(message)}</b></div>`;
 }
+function outboundEmptyHint(title,detail){
+  return `<div class="outbound-empty"><p class="oe-title">${esc(title)}</p><p class="oe-detail">${esc(detail)}</p><button type="button" class="command primary" data-section-link="records">Go to Requisitions</button></div>`;
+}
 function operationalTable(headers,rows,options={}){
   if(!rows.length)return operationalEmpty(options.emptyMessage||'No records');
   const key=options.key||headers.join('|').replace(/[^a-z0-9]+/gi,'-').toLowerCase();
@@ -1832,7 +1835,7 @@ async function renderGoodsIssuance(){
       <td><button class="table-action" data-release-delivery="${row.id}">Post Goods Issuance</button></td></tr>`);
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],2)}
       <section class="workspace-card"><header><div><h2>Goods Issuance Worklist</h2></div></header>
-      ${operationalTable(['Delivery','Requisition','Assignment','Schedule','Destination','Holder','Serials','Status','Action'],rows)}</section>`;
+      ${rows.length?operationalTable(['Delivery','Requisition','Assignment','Schedule','Destination','Holder','Serials','Status','Action'],rows):outboundEmptyHint('No deliveries are waiting to be issued.','A delivery lands here automatically once you approve a requisition (Requisitions tab, Approve & Create Delivery). For motorcycles, pass the Pre-release checklist first, then use Post Goods Issuance here.')}</section>`;
     let __gi=[];try{for(let __p=1;__p<=8;__p++){const __r=await api('/deliveries?size=250&page='+__p);const __rr=(__r.rows||[]);__gi=__gi.concat(__rr);if(__rr.length<250)break;}}catch(e){}
     const __giRows=__gi.map(r=>`<tr><td><b>${esc(r.delivery_no)}</b> <button class="table-action" data-print-dlv="${r.id}">Print</button></td><td>${esc(r.requisition_no||r.sales_order_no||'\u2014')}</td><td>${esc(r.assignment_no||'\u2014')}</td><td>${esc(r.destination||'\u2014')}</td><td>${esc(r.recipient_name||'\u2014')}</td><td>${esc(r.asset_count||0)}</td><td>${statusBadge(r.status)}</td><td>${esc((r.scheduled_date||r.created_at||'').slice(0,10))}</td></tr>`);
     const __giBody=`<section class="workspace-card"><header><div><h2>Goods Issuance Register</h2><span>All ${__gi.length} outbound movements (actuals).</span></div></header>${operationalTable(['Delivery','Requisition','Assignment','Destination','Holder','Serials','Status','Date'],__giRows)}</section>`;
@@ -1865,7 +1868,7 @@ async function renderDeliveryReturns(){
       <td>${statusBadge(row.status)}</td><td>${row.status==='DRAFT'?`<button class="table-action" data-post-return="${row.id}">Post Return</button>`:'-'}</td></tr>`;});
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],3)}
       <section class="workspace-card"><header><h2>Delivery Confirmation</h2></header>
-        ${operationalTable(['Delivery','Requisition','Assignment / Sale','Destination','Holder','Status','Action'],deliveryRows)}</section>
+        ${deliveryRows.length?operationalTable(['Delivery','Requisition','Assignment / Sale','Destination','Holder','Status','Action'],deliveryRows):outboundEmptyHint('No deliveries are ready to confirm.','A delivery appears here after you Post Goods Issuance in the previous tab. Start a new requisition to begin the chain, or use Create Goods Return below to take a unit back.')}</section>
       ${__dallBody}
       <section class="workspace-card"><header><div><h2>Create Goods Return</h2></div></header>
         <form id="returnForm" class="operational-form grid">
