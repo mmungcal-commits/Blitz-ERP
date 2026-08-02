@@ -319,7 +319,7 @@ function renderLaunchpad(){
       <div class="enterprise-addons-title"><span>Enterprise Add-ons</span></div>
       <div class="enterprise-addons">${state.catalog.addons.map(item=>enterpriseButton(item,'enterprise-addon-button')).join('')}</div>
       <footer class="enterprise-brand-strip">
-        <div class="enterprise-brand-primary">E88</div>
+        <div class="enterprise-brand-primary">E88 Ventures Inc.</div>
         <div class="enterprise-brand-secondary">Finance Console · © 2026 AL23</div>
       </footer>
     </div>
