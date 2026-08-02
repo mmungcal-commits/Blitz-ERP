@@ -21,7 +21,7 @@ async function issueAuthLink(c, user, mode) {
   await run(c.env.DB, `INSERT OR IGNORE INTO erp_user_credentials(user_id) VALUES(?)`, [user.id]);
   await run(c.env.DB,
     activation
-      ? `UPDATE erp_user_credentials SET activation_token_hash=?,activation_expires_at=datetime('now','+24 hours'),updated_at=datetime('now') WHERE user_id=?`
+      ? `UPDATE erp_user_credentials SET activation_token_hash=?,activation_expires_at=datetime('now','+48 hours'),updated_at=datetime('now') WHERE user_id=?`
       : `UPDATE erp_user_credentials SET reset_token_hash=?,reset_expires_at=datetime('now','+1 hour'),updated_at=datetime('now') WHERE user_id=?`,
     [tokenHash, user.id]);
   const url = new URL(c.req.url);
