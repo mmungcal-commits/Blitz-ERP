@@ -1662,20 +1662,30 @@ async function renderOutboundRequisitions(){
     const addLine=()=>{
       const row=document.createElement('div');row.className='requisition-line';
       row.innerHTML=`<select data-req="itemId"><option value="">Select item…</option>${lookups.items.map(item=>`<option value="${item.id}" data-serialized="${item.serialized}" data-code="${esc(item.item_code)}">${esc(item.category)} · ${esc(item.item_code)} · ${esc(item.item_name)}</option>`).join('')}</select>
-        <select data-req="serials" multiple size="4" title="Select one or more available serials"><option disabled>Select an item first</option></select>
+        <div class="serial-picker" data-req="serials"><select class="serial-add" disabled><option value="">Select an item first</option></select><div class="serial-chips"></div></div>
         <input data-req="qty" type="number" min="0.01" step="0.01" value="1" placeholder="Quantity">
         <input data-req="description" placeholder="Line description"><button type="button" class="remove-line">×</button>`;
       const itemSelect=row.querySelector('[data-req="itemId"]');
-      const serialSelect=row.querySelector('[data-req="serials"]');
+      const picker=row.querySelector('.serial-picker');
+      const adder=picker.querySelector('.serial-add');
+      const chips=picker.querySelector('.serial-chips');
+      const qtyInput=row.querySelector('[data-req="qty"]');
+      const syncQty=()=>{if(picker.dataset.serialized==='1')qtyInput.value=chips.querySelectorAll('.serial-chip').length||1;};
+      const addChip=(serial,loc)=>{const chip=document.createElement('span');chip.className='serial-chip';chip.dataset.serial=serial;chip.dataset.loc=loc||'';
+        chip.innerHTML=`<span>${esc(serial)}</span><button type="button" title="Remove" aria-label="Remove ${esc(serial)}">×</button>`;
+        chip.querySelector('button').onclick=()=>{const o=document.createElement('option');o.value=serial;o.dataset.loc=loc||'';o.textContent=serial+(loc?` · ${loc}`:'');adder.append(o);chip.remove();syncQty();};
+        chips.append(chip);};
       itemSelect.onchange=()=>{
         const itemId=Number(itemSelect.value);
         const item=lookups.items.find(value=>value.id===itemId);
         const assets=lookups.assets.filter(asset=>asset.item_id===itemId);
-        serialSelect.innerHTML=assets.length?assets.map(asset=>`<option value="${esc(asset.serial_no)}">${esc(asset.serial_no)} · ${esc(asset.current_location_code||'No location')}</option>`).join(''):'<option disabled>No available serials</option>';
-        serialSelect.disabled=!item?.serialized;
-        row.querySelector('[data-req="qty"]').readOnly=!!item?.serialized;
+        chips.innerHTML='';picker.dataset.serialized=item?.serialized?'1':'0';
+        if(item?.serialized){
+          adder.innerHTML=assets.length?'<option value="">Add a serial…</option>'+assets.map(asset=>`<option value="${esc(asset.serial_no)}" data-loc="${esc(asset.current_location_code||'')}">${esc(asset.serial_no)} · ${esc(asset.current_location_code||'No location')}</option>`).join(''):'<option value="">No available serials</option>';
+          adder.disabled=!assets.length;picker.style.display='';qtyInput.readOnly=true;qtyInput.value=1;
+        }else{adder.innerHTML='<option value="">Not serialized</option>';adder.disabled=true;picker.style.display='none';qtyInput.readOnly=false;}
       };
-      serialSelect.onchange=()=>{row.querySelector('[data-req="qty"]').value=serialSelect.selectedOptions.length||1;};
+      adder.onchange=()=>{const opt=adder.selectedOptions[0];if(!opt||!opt.value)return;addChip(opt.value,opt.dataset.loc);opt.remove();adder.value='';syncQty();};
       row.querySelector('.remove-line').onclick=()=>row.remove();$('#requisitionLines').append(row);
     };
     addLine();$('#addRequisitionLine').onclick=addLine;
@@ -1695,7 +1705,7 @@ async function renderOutboundRequisitions(){
         const itemId=Number(row.querySelector('[data-req="itemId"]').value);
         const item=lookups.items.find(value=>value.id===itemId);
         return {itemId,itemCode:item?.item_code,itemName:item?.item_name,category:item?.category,
-          serialRequired:!!item?.serialized,serials:[...row.querySelector('[data-req="serials"]').selectedOptions].map(option=>option.value),
+          serialRequired:!!item?.serialized,serials:[...row.querySelectorAll('.serial-chip')].map(chip=>chip.dataset.serial),
           qty:Number(row.querySelector('[data-req="qty"]').value||0),description:row.querySelector('[data-req="description"]').value||item?.item_name};
       }).filter(line=>line.itemId);
       try{const result=await api('/requisitions',{method:'POST',body:JSON.stringify(payload)});toast(`${result.requisitionNo} created`);await renderOutboundRequisitions();}
