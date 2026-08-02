@@ -72,6 +72,11 @@ masterRoutes.post('/partners/:id/credit', requirePermission('CUSTOMERS','APPROVE
 });
 
 
+masterRoutes.get('/accredited-vendors', requireAnyPermission(['FINANCE','PROCUREMENT','ADMIN'],'VIEW'), async (c) => {
+  const rows = await all(c.env.DB, `SELECT partner_code,vendor_name,status FROM erp_vendor_accreditation ORDER BY vendor_name`);
+  return ok(c,{rows});
+});
+
 /* ---------- Product Registration + media (free, D1-backed) ---------- */
 function abToB64(buf){const b=new Uint8Array(buf);let s='';const c=0x8000;for(let i=0;i<b.length;i+=c)s+=String.fromCharCode.apply(null,b.subarray(i,i+c));return btoa(s);}
 function b64ToBytes(x){const bin=atob(x);const n=bin.length;const a=new Uint8Array(n);for(let i=0;i<n;i++)a[i]=bin.charCodeAt(i);return a;}
