@@ -603,7 +603,7 @@ async function renderJournalRegister(){
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newJournal" ${can('FINANCE','CREATE')?'':'disabled'}>New Journal</button>
       <button class="command" id="refreshJournals">Refresh</button><span class="command-spacer"></span>
       <span class="workspace-mode">${data.rows.length} JOURNALS</span></div>
-      <section class="workspace-card"><header><h2>Journal Register</h2><span>Manual and system-generated entries</span></header>
+      <section class="workspace-card"><header><h2>Journal Register</h2></header>
         ${financeTable(['Journal','Date','Type','Source','Description','Amount','Status'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'records');bindWorkbench();
     $('#newJournal').onclick=openNewJournal;
@@ -787,7 +787,7 @@ async function renderAccountingSetup(){
       <button class="command" id="generatePeriods">Generate ${new Date().getFullYear()} Periods</button></div>
       <section class="workspace-card"><header><h2>Chart of Accounts</h2><span>${master.accounts.length} accounts</span></header>
         ${financeTable(['Code','Account Name','Type','Control','Posting','Status'],accountRows)}</section>
-      <section class="workspace-card"><header><h2>Accounting Periods</h2><span>Closed periods reject postings</span></header>
+      <section class="workspace-card"><header><h2>Accounting Periods</h2></header>
         ${financeTable(['Period','Start','End','Status','Control'],periodRows)}</section>`;
     content.innerHTML=workbenchShell(body,'setup');bindWorkbench();
     $('#generatePeriods').onclick=async()=>{try{await api('/finance/periods/generate',{method:'POST',body:JSON.stringify({entityCode:'E88',year:new Date().getFullYear()})});
@@ -831,7 +831,7 @@ async function renderSubledger(){
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newSubledger">New Invoice / Bill / Receipt</button>
       <button class="command" id="generateLeaseBilling">Generate Lease Billing</button><span class="command-spacer"></span>
       <span class="workspace-mode">${data.rows.length} DOCUMENTS</span></div>
-      <section class="workspace-card"><header><h2>AR/AP Document Register</h2><span>Open balances and journal status</span></header>
+      <section class="workspace-card"><header><h2>AR/AP Document Register</h2></header>
         ${financeTable(['Document','Date','Type','Customer / Supplier','Gross','Open','Status','Journal'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'records');bindWorkbench();
     $('#newSubledger').onclick=()=>openSubledgerForm(master);
@@ -962,7 +962,7 @@ async function renderFixedAssetsFinance(section){
         <td>${financeStatus(row.status)}</td></tr>`);
       const body=`<div class="workspace-commandbar"><button class="command primary" id="capitalizeAsset">Capitalize Inventory Asset</button>
         <span class="command-spacer"></span><span class="workspace-mode">${data.rows.length} FIXED ASSETS</span></div>
-        <section class="workspace-card"><header><h2>Fixed Asset Register</h2><span>Linked to exact inventory serials</span></header>
+        <section class="workspace-card"><header><h2>Fixed Asset Register</h2></header>
           ${financeTable(['Serial','Asset','Class','Capitalized','Cost','Accumulated Depreciation','Net Book Value','Status'],rows)}</section>`;
       content.innerHTML=workbenchShell(body,'records');bindWorkbench();
       $('#capitalizeAsset').onclick=()=>openCapitalizeForm(data.candidates);
@@ -972,7 +972,7 @@ async function renderFixedAssetsFinance(section){
         <td>${row.status==='DRAFT'?`<button class="table-action" data-dep-approve="${row.id}">Approve</button>`:
           row.status==='APPROVED'?`<button class="table-action" data-dep-post="${row.id}">Post</button>`:esc(row.journal_no||'-')}</td></tr>`);
       const body=`<div class="workspace-commandbar"><button class="command primary" id="newDepRun">New Depreciation Run</button></div>
-        <section class="workspace-card"><header><h2>Depreciation Runs</h2><span>One controlled run per entity and period</span></header>
+        <section class="workspace-card"><header><h2>Depreciation Runs</h2></header>
           ${financeTable(['Run','Entity','Period','Date','Depreciation','Status','Action'],rows)}</section>`;
       content.innerHTML=workbenchShell(body,'approvals');bindWorkbench();
       $('#newDepRun').onclick=()=>openDepreciationRun();
@@ -1036,7 +1036,7 @@ async function renderManagementAccounting(section){
           `<button class="table-action" data-retry-event="${row.id}">Retry</button>`:'-'}</td></tr>`);
       const body=`<div class="workspace-commandbar"><button class="command primary" id="syncFinance">Synchronize Operational Transactions</button>
         <span class="command-spacer"></span><span class="workspace-mode">${data.rows.length} SOURCE EVENTS</span></div>
-        <section class="workspace-card"><header><h2>Operational Source-to-Ledger Control</h2><span>Every inventory and commercial event</span></header>
+        <section class="workspace-card"><header><h2>Operational Source-to-Ledger Control</h2></header>
           ${financeTable(['Source','Date','Module','Event','Amount','Status','Journal / Error','Action'],rows)}</section>`;
       content.innerHTML=workbenchShell(body,'records');bindWorkbench();
       $('#syncFinance').onclick=async()=>{try{const result=await api('/finance/sync-operational',{method:'POST',body:'{}'});
@@ -1062,7 +1062,7 @@ async function renderInventoryFinanceReconciliation(){
     const body=`<div class="workspace-kpis">${kpi('Inventory Subledger',money(data.summary.inventory_subledger))}
       ${kpi('Inventory General Ledger',money(data.summary.inventory_general_ledger))}
       ${kpi('Difference',money(data.summary.difference))}${kpi('Status',data.summary.reconciled?'RECONCILED':'REVIEW REQUIRED')}</div>
-      <section class="workspace-card"><header><h2>Separate Inventory Control Accounts</h2><span>Motorcycles, batteries, lockers/BSS, chargers, spare parts, and other inventory are not combined</span></header>
+      <section class="workspace-card"><header><h2>Separate Inventory Control Accounts</h2></header>
         ${financeTable(['Inventory Class','Inventory GL','COGS GL','Units','Valued','Missing Cost','Subledger','General Ledger','Difference','Status'],rows)}</section>
       <section class="workspace-card"><header><h2>Inventory Finance Events</h2></header>
         ${financeTable(['Status','Event Type','Events','Amount'],data.sourceEvents.map(row=>`<tr><td>${financeStatus(row.status)}</td>
@@ -1079,7 +1079,7 @@ async function renderBudgetActual(){
       <td>${esc(row.account_title)}</td><td class="num">${money(row.budget_amount)}</td><td class="num">${money(row.actual_amount)}</td>
       <td class="num">${money(row.variance)}</td><td class="num">${money(row.utilizationPct)}%</td></tr>`);
     const body=`<div class="workspace-commandbar"><span class="workspace-mode">${data.year} BUDGET PERFORMANCE</span></div>
-      <section class="workspace-card"><header><h2>Department Budget vs Actual</h2><span>Date-controlled posted ledger actuals</span></header>
+      <section class="workspace-card"><header><h2>Department Budget vs Actual</h2></header>
         ${financeTable(['Department','Cost Center','Account','Budget','Actual','Remaining / (Over)','Utilization'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'reports');bindWorkbench();
   }catch(error){showWorkspaceError(error);}
@@ -1106,7 +1106,7 @@ async function renderConsolidation(section){
     const body=`<div class="workspace-kpis">${kpi('Consolidated Revenue',money(totals.revenue))}
       ${kpi('Consolidated Gross Profit',money(totals.revenue-totals.cogs))}${kpi('Consolidated Net Income',money(totals.net))}
       ${kpi('Consolidated Assets',money(totals.assets))}</div>
-      <section class="workspace-card"><header><h2>Entity Financial Statements</h2><span>Before intercompany eliminations</span></header>
+      <section class="workspace-card"><header><h2>Entity Financial Statements</h2></header>
         ${financeTable(['Entity','Revenue','COGS','Operating Expense','Net Income','Assets','Liabilities'],rows)}</section>
       <section class="workspace-card"><header><h2>Consolidation Control</h2></header>
         <div class="control-note"><b>Elimination entries use General Accounting</b><p>Create an elimination journal, tag the entity and source reference, route it for approval, then post before final consolidated reporting.</p></div></section>`;
@@ -1142,7 +1142,7 @@ async function renderTreasury(section){
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newBank">New Bank Account</button>
       <button class="command" id="importBankTx">Enter Bank Transaction</button>
       <button class="command" id="newReconciliation">Prepare Reconciliation</button></div>
-      <section class="workspace-card"><header><h2>Bank Accounts</h2><span>Separate by legal entity</span></header>
+      <section class="workspace-card"><header><h2>Bank Accounts</h2></header>
         ${financeTable(['Code','Entity','Bank','Account','Number','Statement Balance','Unmatched'],bankRows)}</section>
       <section class="workspace-card"><header><h2>${section==='reports'?'Cash Movement Report':'Bank Statement Transactions'}</h2><span>${transactions.rows.length} lines</span></header>
         ${financeTable(['Date','Bank','Reference','Description','Direction','Amount','Status','Journal','Match'],txRows)}</section>
@@ -1224,7 +1224,7 @@ async function renderFinancePlanning(section){
 }
 
 function renderFinanceControlNotes(title,items){
-  const body=`<section class="workspace-card"><header><h2>${esc(title)}</h2><span>Connected finance controls</span></header>
+  const body=`<section class="workspace-card"><header><h2>${esc(title)}</h2></header>
     <div class="definition-list finance-control-list">${items.map(([label,text])=>`<div><b>${esc(label)}</b><span>${esc(text)}</span></div>`).join('')}</div></section>`;
   content.innerHTML=workbenchShell(body,state.section);bindWorkbench();
 }
@@ -1368,7 +1368,7 @@ async function renderExpectedShipments(){
       <div class="ramco-layout">
         <div class="ramco-main">
           <section class="workspace-card atlas-upload-card">
-            <header><h2>ATLAS Expected Shipment Upload</h2><span>Approved PO required</span></header>
+            <header><h2>ATLAS Expected Shipment Upload</h2></header>
             <form id="atlasForm" class="operational-form">
               <label><span>Purchase Order</span><select name="purchaseOrderId" required><option value="">Select approved PO…</option>${eligible.map(po=>`<option value="${po.id}">${esc(po.purchase_order_no)} · ${esc(po.vendor_name)} · ${money(po.total_amount)} ${esc(po.currency)}</option>`).join('')}</select></label>
               <label><span>ATLAS Excel file</span><input type="file" name="file" accept=".xlsx,.xls" required></label>
@@ -1577,7 +1577,7 @@ async function renderInboundDiscrepancies(){
     const body=`${workflowStrip(['Purchase Order','ATLAS Expected Shipment','Goods Receipt','Warehouse Visibility'],3)}
       <div class="workspace-kpis">${kpi('Shipments',summary.totals.shipments)}${kpi('Expected',summary.totals.expected)}
         ${kpi('Received',summary.totals.received)}${kpi('Open Discrepancies',summary.totals.openVariances)}</div>
-      <section class="workspace-card"><header><h2>Expected Shipment vs Goods Receipt</h2><span>Quantity reconciliation</span></header>
+      <section class="workspace-card"><header><h2>Expected Shipment vs Goods Receipt</h2></header>
         ${operationalTable(['Shipment','Purchase Order','Receipt Locations','Expected','Received','Qty Variance','Serial Variances','Status'],summaryRows)}</section>
       <section class="workspace-card"><header><h2>Open Serial Discrepancies</h2><span>${details.total} exceptions</span></header>
         ${operationalTable(['Variance','PO','Shipment','Receipt','Location','Type','Expected Serial','Actual Serial','Reason','Action'],detailRows)}</section>`;
@@ -1617,7 +1617,7 @@ async function renderOutboundOverview(){
       <div class="workspace-kpis">${kpi('Open Requisitions',open.length)}${kpi('Ready to Issue',ready.length)}
         ${kpi('Out for Delivery',inTransit.length)}${kpi('Expected Returns',returnable.length)}</div>
       <div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
-        <header><div><h2>Outbound & Custody Work Summary</h2><span>Customer, employee, demo, pilot, internal, project, and lease movements</span></div>
+        <header><div><h2>Outbound & Custody Work Summary</h2></div>
           <button class="ramco-primary" data-section-link="records">New Requisition</button></header>
         ${operationalTable(['Requisition','Purpose','Holder Type','Holder','Required','Serials','Total Qty','Status'],rows)}
       </section></div><aside class="ramco-rail"><section><header>Transaction Launchpad</header><div class="ramco-action-links">
@@ -1637,7 +1637,7 @@ async function renderOutboundRequisitions(){
       <td>${esc(row.serial_count||0)}</td><td>${esc(row.total_qty||0)}</td><td>${date(row.required_date)}</td><td>${statusBadge(row.status)}</td>
       <td><button class="table-action" data-req-open="${row.id}">Open</button>${['SUBMITTED','DRAFT'].includes(row.status)&&can('REQUISITIONS','APPROVE')?`<button class="table-action" data-approve-requisition="${row.id}">Approve</button>`:''}<button class="table-action" data-print-req="${row.id}">Print Slip</button></td></tr>`);
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],0)}
-      <section class="workspace-card"><header><div><h2>Create Requisition Slip</h2><span>Select the holder, available items, and exact serials for full custody traceability.</span></div><span>AUTO REFERENCE</span></header>
+      <section class="workspace-card"><header><div><h2>Create Requisition Slip</h2></div><span>AUTO REFERENCE</span></header>
         <form id="requisitionForm" class="operational-form grid">
           <label><span>Request Type</span><select name="requestType">${lookups.requestTypes.map(value=>`<option>${esc(value)}</option>`).join('')}</select></label>
           <label><span>Holder Type</span><select name="holderType" id="holderType">${lookups.holderTypes.map(value=>`<option>${esc(value)}</option>`).join('')}</select></label>
@@ -1772,7 +1772,7 @@ async function renderPreRelease(){
         <td>${check?date(check.check_date):'-'}</td><td><button class="table-action" data-checklist="${esc(row.serial_no)}" data-unit="${esc(row.item_name)}" data-req="${esc(row.requisition_no)}">Open checklist</button></td></tr>`;
     });
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],1)}
-      <section class="workspace-card"><header><div><h2>Pre-release Checklist Worklist</h2><span>Motorcycles require a passed inspection before goods issuance.</span></div></header>
+      <section class="workspace-card"><header><div><h2>Pre-release Checklist Worklist</h2></div></header>
         ${operationalTable(['Requisition','Serial','Unit','Location','Result','Checked','Action'],rows)}</section>`;
     let __regRows=[];try{let __all=[];for(let __p=1;__p<=8;__p++){const __rg=await api('/checklists?size=250&page='+__p);const __rr=(__rg.rows||[]);__all=__all.concat(__rr);if(__rr.length<250)break;}__regRows=__all.map(r=>`<tr><td><b>${esc(r.checklist_no)}</b></td><td>${esc((r.serial_no||'').slice(0,48))}</td><td>${statusBadge(r.result)}</td><td>${esc(r.approved_by||'-')}</td><td>${esc((r.created_at||'').slice(0,10))}</td></tr>`);}catch(e){}const __regBody=`<section class="workspace-card"><header><div><h2>Pre-release Checklist Register</h2><span>All ${__regRows.length} inspection records (actuals).</span></div></header>${operationalTable(['Checklist #','Serial / Unit','Result','Approved By','Recorded'],__regRows)}</section>`;content.innerHTML=workbenchShell(body+__regBody,'approvals');bindOperationalShell();
     const PDI_ITEMS=[['identity','VIN / engine no. matches record'],['body','Body, panels & paint - no visible damage'],['brakes','Brakes (front & rear) functioning'],['lights','Headlight, tail & signal lights working'],['tires','Tires & wheels - condition and pressure'],['battery','Batteries (x2) seated & charged'],['charger','Charger present and tested'],['electricals','Horn, dashboard & electricals'],['mirrors','Mirrors & side accessories complete'],['documents','Documents, plate & keys complete'],['apptest','App / GPS pairing tested'],['account','Rider account created & batteries assigned']];
@@ -1814,7 +1814,7 @@ async function renderGoodsIssuance(){
       <td>${esc(row.recipient_name)}</td><td>${esc(row.serial_count)}</td><td>${statusBadge(row.status)}</td>
       <td><button class="table-action" data-release-delivery="${row.id}">Post Goods Issuance</button></td></tr>`);
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],2)}
-      <section class="workspace-card"><header><div><h2>Goods Issuance Worklist</h2><span>Posting creates the serial-level outbound stock movement.</span></div></header>
+      <section class="workspace-card"><header><div><h2>Goods Issuance Worklist</h2></div></header>
       ${operationalTable(['Delivery','Requisition','Assignment','Schedule','Destination','Holder','Serials','Status','Action'],rows)}</section>`;
     let __gi=[];try{for(let __p=1;__p<=8;__p++){const __r=await api('/deliveries?size=250&page='+__p);const __rr=(__r.rows||[]);__gi=__gi.concat(__rr);if(__rr.length<250)break;}}catch(e){}
     const __giRows=__gi.map(r=>`<tr><td><b>${esc(r.delivery_no)}</b> <button class="table-action" data-print-dlv="${r.id}">Print</button></td><td>${esc(r.requisition_no||r.sales_order_no||'\u2014')}</td><td>${esc(r.assignment_no||'\u2014')}</td><td>${esc(r.destination||'\u2014')}</td><td>${esc(r.recipient_name||'\u2014')}</td><td>${esc(r.asset_count||0)}</td><td>${statusBadge(r.status)}</td><td>${esc((r.scheduled_date||r.created_at||'').slice(0,10))}</td></tr>`);
@@ -1847,10 +1847,10 @@ async function renderDeliveryReturns(){
       <td>${esc(row.return_location_code||'-')}</td><td>${esc(row.line_count)}</td><td>${row.return_type==='SALES_RETURN'&&Number(row.refund_gross_amount||0)>0?money(row.refund_gross_amount):'-'}</td>
       <td>${statusBadge(row.status)}</td><td>${row.status==='DRAFT'?`<button class="table-action" data-post-return="${row.id}">Post Return</button>`:'-'}</td></tr>`;});
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],3)}
-      <section class="workspace-card"><header><h2>Delivery Confirmation</h2><span>Released units awaiting proof of delivery</span></header>
+      <section class="workspace-card"><header><h2>Delivery Confirmation</h2></header>
         ${operationalTable(['Delivery','Requisition','Assignment / Sale','Destination','Holder','Status','Action'],deliveryRows)}</section>
       ${__dallBody}
-      <section class="workspace-card"><header><div><h2>Create Goods Return</h2><span>Return exact serials from a company deployment or completed customer sale. Finance treatment follows the source transaction.</span></div></header>
+      <section class="workspace-card"><header><div><h2>Create Goods Return</h2></div></header>
         <form id="returnForm" class="operational-form grid">
           <label><span>Return Source</span><select name="sourceType" id="returnSourceType"><option value="ASSIGNMENT">Deployment / Custody</option><option value="CUSTOMER_SALE">Customer Sale</option></select></label>
           <label class="wide" id="returnAssignmentWrap"><span>Active Deployment / Assignment</span><select name="assignmentId" id="returnAssignment"><option value="">Select deployment…</option>${assignmentReturns.rows.map(row=>`<option value="${row.id}">${esc(row.assignment_no)} · ${esc(row.assignment_type)} · ${esc(row.holder_name||row.partner_name)} · ${esc(row.asset_count)} units</option>`).join('')}</select></label>
@@ -1942,10 +1942,10 @@ async function renderWarehouseOverview(){
       <td>${Number(row.total||0).toLocaleString()}</td><td>${Number(row.available||0).toLocaleString()}</td><td>${Number(row.deployed||0).toLocaleString()}</td>
       <td>${Number(row.quarantine||0).toLocaleString()}</td><td>${Number(row.unvalued||0).toLocaleString()}</td><td class="num">${money(row.inventory_value)}</td></tr>`);
     const body=`<div class="workspace-kpis inventory-class-kpis">${classKpis}</div>
-      <section class="workspace-card"><header><div><h2>Inventory by Exact Material Code</h2><span>Separate class, item, serial quantity, status, and value from the STAR item master</span></div><button class="ramco-primary" data-section-link="records">Open Serial Register</button></header>
+      <section class="workspace-card"><header><div><h2>Inventory by Exact Material Code</h2></div><button class="ramco-primary" data-section-link="records">Open Serial Register</button></header>
         ${operationalTable(['Inventory Class','Material Code','Tagged Item / Description','Total Serials','Available','Deployed','Quarantine','Missing Cost','Inventory Value'],items,{key:'warehouse-items',emptyMessage:'No classified inventory records. Apply migration 0022 and verify opening data.'})}</section>
       <div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
-        <header><div><h2>Warehouse & Retail Location Visibility</h2><span>Click a location to open its exact serial records</span></div></header>
+        <header><div><h2>Warehouse & Retail Location Visibility</h2></div></header>
         ${operationalTable(['Location','Name','Type','Total Units','Available','Quarantine','Unreconciled'],locations,{key:'warehouse-locations'})}
       </section></div><aside class="ramco-rail">
         <section><header>Visibility Actions</header><div class="ramco-action-links"><button data-section-link="records">Find Units</button>
@@ -1979,7 +1979,7 @@ async function renderWarehouseVisibility(locationId='',search='',status='',categ
       <select id="unitStatus"><option value="">All statuses</option>${['AVAILABLE','ASSIGNED','QUARANTINE','UNDER_REPAIR','LEASED','SOLD'].map(value=>`<option ${value===status?'selected':''}>${value}</option>`).join('')}</select>
       <button class="command primary" id="applyUnitFilter">Apply</button><span class="command-spacer"></span><span class="workspace-mode">${Number(data.total||0).toLocaleString()} UNITS · PAGE ${page}/${pages}</span>
     </div><div class="workspace-kpis inventory-class-kpis">${((byClass&&(byClass.classes||byClass.rows))||[]).map(function(c){var av=Number(c.available||0),ls=Number(c.leased||0);return '<article class="workspace-kpi kpi-al"><span>'+esc(c.class_name||c.cls||c.class_code||'Class')+'</span><strong>'+av.toLocaleString()+' <small>available</small></strong><em>'+ls.toLocaleString()+' leased</em></article>';}).join('')}</div>
-    <section class="workspace-card"><header><h2>Exact Serial Inventory Register</h2><span>Click any row for movement, custody, delivery, return, and Finance details</span></header>
+    <section class="workspace-card"><header><h2>Exact Serial Inventory Register</h2></header>
       ${operationalTable(['Serial','Material Code','Tagged Item','Class','Location','Location Name','Status','Assigned To','Unit Cost','Valuation','Reconciliation'],rows,{key:'serial-inventory',emptyMessage:'No serial records match the filters. Confirm D1 migrations and opening data were loaded.'})}
       <div class="table-pager"><button class="command" id="previousUnitPage" ${page<=1?'disabled':''}>Previous</button><span>Page ${page} of ${pages}</span><button class="command" id="nextUnitPage" ${page>=pages?'disabled':''}>Next</button></div>
     </section>`;
@@ -2028,7 +2028,7 @@ async function renderStockMovement(){
       <td>${esc(row.movement_type)}</td><td>${esc(row.serial_no)}</td><td>${esc(row.item_name||row.item_code||'-')}</td>
       <td>${esc(row.from_location_code||'-')}</td><td>${esc(row.to_location_code||'-')}</td><td>${esc(row.to_status||'-')}</td><td>${esc(row.posted_by||'-')}</td></tr>`);
     const body=`<div class="ramco-layout"><div class="ramco-main">
-      <section class="workspace-card"><header><h2>Post Stock Movement</h2><span>Transfer, placement, or status change</span></header>
+      <section class="workspace-card"><header><h2>Post Stock Movement</h2></header>
         <form id="movementForm" class="operational-form grid">
           <label><span>Serial Number</span><div class="scan-field"><input name="serialNo" id="moveSerial" required placeholder="Scan or enter serial"><button type="button" class="table-action" id="moveScan">Scan QR</button></div></label>
           <label><span>Movement</span><select name="movementType"><option>TRANSFER</option><option>PLACEMENT</option><option>STATUS_CHANGE</option><option>ADJUSTMENT</option></select></label>
@@ -2057,7 +2057,7 @@ async function renderStockMovement(){
 
 async function renderQrTrace(){
   const body=`<div class="ramco-layout"><div class="ramco-main"><section class="workspace-card qr-trace-card">
-    <header><h2>QR / Serial Trace</h2><span>Mobile-ready unit lookup</span></header>
+    <header><h2>QR / Serial Trace</h2></header>
     <div class="scan-entry"><input id="traceSerial" placeholder="Scan or enter serial number"><button class="command primary" id="traceLookup">Trace Unit</button>
       <button class="command" id="traceCamera">Scan QR</button></div><div id="traceResult">${operationalEmpty('Scan a unit to see its current location and status.')}</div>
   </section></div><aside class="ramco-rail"><section><header>Trace Result</header><div class="control-note"><b>Inventory or expected</b><p>The lookup checks received inventory, ATLAS expected shipments, and open serial exceptions.</p></div></section></aside></div>`;
@@ -2088,7 +2088,7 @@ async function renderLocationMaster(){
     const lookups=await api('/masters/lookups');
     const rows=lookups.locations.map(row=>`<tr><td><b>${esc(row.code)}</b></td><td>${esc(row.name)}</td><td>${esc(row.location_type)}</td><td>${esc(row.partner_name||'-')}</td></tr>`);
     const body=`<div class="ramco-layout"><div class="ramco-main">
-      <section class="workspace-card"><header><h2>Location Master</h2><span>Warehouses, retail stores, depots, and stock points</span></header>
+      <section class="workspace-card"><header><h2>Location Master</h2></header>
         <form id="locationForm" class="operational-form grid"><label><span>Code (optional)</span><input name="code"></label>
           <label><span>Location Name</span><input name="name" required></label><label><span>Type</span><select name="locationType">
             <option>WAREHOUSE</option><option>RETAIL</option><option>STORE</option><option>DEPOT</option><option>STATION</option><option>OTHER</option>
@@ -2124,7 +2124,7 @@ async function renderCycleOverview(){
       <td>${esc(row.counted_units)}</td><td>${esc(row.variance_units)}</td><td>${statusBadge(row.status)}</td></tr>`);
     const body=`<div class="workspace-kpis">${kpi('Count Plans',data.total)}${kpi('Open Counts',open)}${kpi('For Approval',submitted)}${kpi('Variances',variances)}</div>
       <div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
-        <header><div><h2>Inventory Cycle Counting</h2><span>Print, scan, count, and reconcile by location</span></div><button class="ramco-primary" data-section-link="records">New Count Plan</button></header>
+        <header><div><h2>Inventory Cycle Counting</h2></div><button class="ramco-primary" data-section-link="records">New Count Plan</button></header>
         ${operationalTable(['Count No.','Date','Location','Category','Expected','Counted','Variance','Status'],rows)}
       </section></div><aside class="ramco-rail"><section><header>Counting Actions</header><div class="ramco-action-links">
         <button data-section-link="records">Create / Print Count Plan</button><button data-section-link="approvals">Mobile Physical Count</button>
@@ -2142,7 +2142,7 @@ async function renderCyclePlans(){
       <td>${esc(row.location_code)} · ${esc(row.location_name)}</td><td>${esc(row.location_type)}</td><td>${esc(row.category||'All')}</td>
       <td>${esc(row.assigned_to||'-')}</td><td>${esc(row.expected_units)}</td><td>${statusBadge(row.status)}</td></tr>`);
     const body=`<div class="ramco-layout"><div class="ramco-main">
-      <section class="workspace-card"><header><h2>Create Cycle Count Plan</h2><span>Snapshot expected serials at one location</span></header>
+      <section class="workspace-card"><header><h2>Create Cycle Count Plan</h2></header>
         <form id="cyclePlanForm" class="operational-form grid">
           <label><span>Warehouse / Retail Location</span><select name="locationId" required><option value="">Select location…</option>${lookups.locations.map(row=>`<option value="${row.id}">${esc(row.code)} · ${esc(row.name)}</option>`).join('')}</select></label>
           <label><span>Count Date</span><input name="countDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></label>
@@ -2346,9 +2346,9 @@ async function renderSupplierPortal(section){
       '<div class="workspace-commandbar"><span class="workspace-mode">VENDOR ACCREDITATION</span><span class="command-spacer"></span>'+portalBtn+'</div>'+
       '<div class="workspace-kpis">'+kpi('Vendors on File',vendors.length)+kpi('Required Documents',docList.length)+kpi('Approval Stages',stages.length)+kpi('Portal',portalUrl?'Linked':'Not linked')+'</div>'+
       '<div class="ramco-layout"><div class="ramco-main">'+
-        '<section class="workspace-card"><header><div><h2>How vendor accreditation works</h2><span>Vendors are accredited through the E88 Vendor Accreditation Portal before any engagement or payment.</span></div></header>'+
+        '<section class="workspace-card"><header><div><h2>How vendor accreditation works</h2></div></header>'+
           '<div class="control-note"><p>A vendor submits its documents and banking details, the E88 requestor endorses it, the documents are reviewed for completeness, then Finance and the owner give final approval. Accreditation confirms a vendor is qualified - it is not an award. Every engagement still requires the 1-3-1 canvass, the Vendor Selection Scorecard, and CEO approval before any funds are released.</p></div></section>'+
-        '<section class="workspace-card"><header><div><h2>Vendor Directory</h2><span>Vendors on record in E88. Live accreditation status and documents are maintained in the portal.</span></div></header>'+
+        '<section class="workspace-card"><header><div><h2>Vendor Directory</h2></div></header>'+
           operationalTable(['Vendor','Vendor Code','Status'],vrows,{key:'vendor-directory',emptyMessage:'No vendors on file.'})+'</section>'+
       '</div><aside class="ramco-rail">'+
         '<section><header>Required Documents</header><ul class="doc-checklist">'+docItems+'</ul></section>'+
@@ -2499,7 +2499,7 @@ async function renderProductRegistration(editId){
     const typeOpt=function(v,label,desc){return '<label class="pdi-check"><input type="radio" name="ptype" value="'+v+'"'+(ptype===v?' checked':'')+'><span><b>'+label+'</b><br><small>'+desc+'</small></span></label>';};
     const body='<div class="workspace-commandbar"><span class="workspace-mode">PRODUCT REGISTRATION</span><span class="command-spacer"></span><button class="command" id="prNew">+ New Product</button></div>'+
       '<div class="ramco-layout"><div class="ramco-main">'+
-        '<section class="workspace-card"><header><div><h2>'+(current?('Edit - '+esc(it.item_code)):'Register a Product')+'</h2><span>Inventoriable (serialized or quantity) or non-inventoriable service. Photos and 3D models are optional.</span></div></header>'+
+        '<section class="workspace-card"><header><div><h2>'+(current?('Edit - '+esc(it.item_code)):'Register a Product')+'</h2></div></header>'+
         '<form id="prodForm" class="operational-form grid">'+
           '<input type="hidden" name="id" value="'+(current?it.id:'')+'">'+
           '<label><span>Product Name</span><input name="itemName" required value="'+esc(it.item_name||'')+'"></label>'+
@@ -2606,9 +2606,9 @@ async function renderStockAnalysis(search=''){
     const body=`<div class="workspace-commandbar"><input id="analysisSearch" value="${esc(search)}" placeholder="Search material code, item, or class">
       <button class="command primary" id="runAnalysisSearch">Apply</button><span class="command-spacer"></span><span class="workspace-mode">${filtered.length} ITEMS</span></div>
       <div class="workspace-kpis">${kpi('Fleet Utilization',mcUtil+'%')}${kpi('Motorcycles Idle',mcAvail.toLocaleString())}${kpi('Battery Swap Pool',batDeployed.toLocaleString())}${kpi('Inventory Value',money(totVal))}</div>
-      <section class="workspace-card"><header><div><h2>Utilization by Class</h2><span>Utilization = leased / total units held. High = fleet earning; low available = idle capital. Motorcycles are the leaseable unit; batteries/chargers ride along.</span></div></header>
+      <section class="workspace-card"><header><div><h2>Utilization by Class</h2></div></header>
         ${operationalTable(['Inventory Class','Available (Idle)','Leased','Total Units','Utilization','Inventory Value'],summaryRows,{key:'analysis-by-class'})}</section>
-      <section class="workspace-card"><header><div><h2>Inventory by Item</h2><span>Each material code is one distinct item - click a row to open its serial register</span></header></header>
+      <section class="workspace-card"><header><div><h2>Inventory by Item</h2></header></header>
         ${operationalTable(['Material Code','Item','Class','Location','Available','Leased','Sold','Total Units','Inventory Value'],rows,{key:'inventory-analysis',emptyMessage:'No items with stock match your search.'})}</section>`;
     content.innerHTML=workbenchShell(body,'records');bindOperationalShell();
     $('#runAnalysisSearch').onclick=()=>renderStockAnalysis($('#analysisSearch').value);
@@ -2625,7 +2625,7 @@ async function renderInventoryPlans(){
       <td>${esc(row.source_location_code||'-')}</td><td>${esc(row.destination_location_code||'-')}</td><td>${esc(row.line_count)}</td>
       <td>${esc(row.planned_units)}</td><td>${statusBadge(row.status)}</td><td>${row.status==='DRAFT'&&can('INVENTORY','APPROVE')?`<button class="table-action" data-approve-plan="${row.id}">Approve</button>`:''}</td></tr>`);
     const body=`<div class="ramco-layout"><div class="ramco-main">
-      <section class="workspace-card"><header><h2>Create Inventory Plan</h2><span>Ordering, deployment, or replenishment</span></header>
+      <section class="workspace-card"><header><h2>Create Inventory Plan</h2></header>
         <form id="inventoryPlanForm" class="operational-form grid">
           <label><span>Plan Type</span><select name="planType" id="planType"><option>ORDERING</option><option>DEPLOYMENT</option><option>REPLENISHMENT</option></select></label>
           <label><span>Plan Date</span><input name="planDate" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
@@ -2693,9 +2693,9 @@ async function renderInventoryPlanningReports(){
     const deployRows=deployable.map(r=>`<tr><td><b>${esc(r.item_code)}</b></td><td>${esc(clip(r.item_name))}</td><td>${esc(r.category)}</td><td>${esc(r.primary_location||'-')}</td><td class="num">${Number(r.available_qty||0).toLocaleString()}</td></tr>`);
     const body=`<section class="workspace-card"><header><div><h2>How planning works here</h2></div></header><div class="control-note"><p>Motorcycles, batteries and lockers are unique serialized units - each is received once and cannot be re-ordered. For them the planning signal is how many are available to deploy (idle capital), not a reorder point. Only Spare Parts &amp; Accessories behave like recurring stock that runs out and is reordered.</p></div></section>
       <div class="workspace-kpis">${kpi('Spare Parts to Reorder',spareReorder.length)}${kpi('Motorcycles Idle',mcAvail.toLocaleString())}${kpi('Batteries Available',batAvail.toLocaleString())}${kpi('Spare-Part Units on Hand',spUnits.toLocaleString())}</div>
-      <section class="workspace-card"><header><h2>Spare Parts to Reorder</h2><span>Recurring items with no available stock - candidates for a purchase order</span></header>
+      <section class="workspace-card"><header><h2>Spare Parts to Reorder</h2></header>
         ${operationalTable(['Material Code','Item','Available','Incoming','Open PO'],spareRows,{emptyMessage:'No spare-part lines are out of stock.'})}</section>
-      <section class="workspace-card"><header><h2>Available to Deploy</h2><span>Serialized units on hand and ready to lease, sell, or assign</span></header>
+      <section class="workspace-card"><header><h2>Available to Deploy</h2></header>
         ${operationalTable(['Material Code','Item','Class','Location','Available Units'],deployRows,{emptyMessage:'No serialized units are currently available.'})}</section>`;
     content.innerHTML=workbenchShell(body,'reports');bindOperationalShell();
   }catch(error){showWorkspaceError(error);}
@@ -2791,14 +2791,14 @@ async function renderModuleSetup(){
   const body=`<div class="setup-grid">
     <section class="workspace-card"><header><h2>${esc(definition.noun)} Record Types</h2><span>${definition.recordTypes.length} configured</span></header>
       <div class="module-type-grid">${definition.recordTypes.map(type=>`<div><b>${esc(type)}</b><span>Auto-number: ${esc(definition.prefix)}-########</span></div>`).join('')}</div></section>
-    <section class="workspace-card"><header><h2>Connected Modules</h2><span>End-to-end document flow</span></header>
+    <section class="workspace-card"><header><h2>Connected Modules</h2></header>
       <div class="connected-module-grid">${connections||operationalEmpty('No downstream module is configured.')}</div></section>
-    <section class="workspace-card wide-card"><header><h2>Approval-Controlled Workflow</h2><span>Requester and approver separation applies</span></header>
+    <section class="workspace-card wide-card"><header><h2>Approval-Controlled Workflow</h2></header>
       ${operationalTable(['Action','Allowed From','Result','Required Authority'],actionRows)}
       <div class="control-note"><b>Protected history</b><p>Posted, active, completed, closed, terminated, expired, or reversed records cannot be edited. Void and reversal require a reason and approval by another authorized user.</p></div></section>
     ${submoduleRows.length?`<section class="workspace-card wide-card"><header><h2>Functional Submodules</h2><span>${submoduleRows.length} connected process areas</span></header>
       ${operationalTable(['Submodule','Primary Record','Connected Module','Finance Event'],submoduleRows)}</section>`:''}
-    <section class="workspace-card wide-card"><header><h2>Amount-Based Approval Matrix</h2><span>Role, department, document type and threshold</span></header>
+    <section class="workspace-card wide-card"><header><h2>Amount-Based Approval Matrix</h2></header>
       <div id="approvalMatrixHost"><div class="workspace-loading">Loading approval authority…</div></div></section>
     <section class="workspace-card wide-card"><header><h2>Module Data Dictionary</h2><span>${definition.fields.length} operational fields</span></header>
       ${operationalTable(['Field','Data Type','Validation','Used In'],fieldRows)}</section>
@@ -2953,9 +2953,9 @@ async function renderSourcingWorkspace(section){
         <td>${row.status!=='POSTED'&&can('PROCUREMENT','POST')?`<button class="table-action" data-post-landed="${row.id}">Post</button>`:'-'}</td></tr>`);
       const body=`<div class="workspace-kpis">${kpi('Approved Commitments',money(commitments))}${kpi('Purchase Orders',po.total)}
         ${kpi('Open Sourcing',source.counts.total-source.counts.completed)}${kpi('Landed Cost Batches',landed.rows.length)}</div>
-        <section class="workspace-card"><header><h2>Purchase Commitment Report</h2><span>Approved POs connected to expected shipments and AP</span></header>
+        <section class="workspace-card"><header><h2>Purchase Commitment Report</h2></header>
           ${operationalTable(['PO','Date','Supplier','Expected','Lines','Total','Status','Action'],poRows)}</section>
-        <section class="workspace-card"><header><h2>Landed Cost Register</h2><span>Freight, duties, handling and other inventory cost</span></header>
+        <section class="workspace-card"><header><h2>Landed Cost Register</h2></header>
           ${operationalTable(['Landed Cost','Shipment / PO','Allocation','Total','Status','Action'],landedRows)}</section>`;
       content.innerHTML=workbenchShell(body,'reports');bindOperationalShell();bindProcurementRows();return;
     }
@@ -2964,7 +2964,7 @@ async function renderSourcingWorkspace(section){
       ${workflowStrip(['Purchase Request','RFQ & Comparison','Purchase Order','Expected Shipment / ATLAS','Goods Receipt','AP & Payment'],section==='approvals'?2:1)}
       <div class="workspace-commandbar"><button class="command primary" id="newPurchaseOrder" ${can('PROCUREMENT','CREATE')?'':'disabled'}>New Purchase Order</button>
         <button class="command" id="openSourcingCases">Sourcing & RFQ Register</button><span class="command-spacer"></span><span class="workspace-mode">${section==='approvals'?'PURCHASE ORDER APPROVAL':'PROCUREMENT CENTER'}</span></div>
-      <section class="workspace-card"><header><div><h2>Purchase Orders</h2><span>Approved orders become selectable in ATLAS expected shipments</span></div></header>
+      <section class="workspace-card"><header><div><h2>Purchase Orders</h2></div></header>
         ${operationalTable(['PO','Date','Supplier','Expected','Lines','Total','Status','Action'],poRows)}</section>`;
     content.innerHTML=workbenchShell(body,section);bindOperationalShell();
     $('#newPurchaseOrder').onclick=()=>openPurchaseOrderForm(lookups);
@@ -3419,7 +3419,7 @@ async function renderAccessAudit(search=''){
     const body=`<div class="workspace-commandbar"><input id="accessAuditSearch" value="${esc(search)}" placeholder="Search user, action, module, or reference">
       <button class="command primary" id="runAccessAudit">Search</button><button class="command" id="refreshAccessAudit">Refresh</button>
       <span class="command-spacer"></span><span class="workspace-mode">${data.total} AUDIT EVENTS</span></div>
-      <section class="workspace-card"><header><div><h2>Immutable Access & Transaction Audit</h2><span>User, approval, credential, permission, and business record actions</span></div></header>
+      <section class="workspace-card"><header><div><h2>Immutable Access & Transaction Audit</h2></div></header>
         ${operationalTable(['Event Time','User','Action','Module','Record Type','Reference','Environment','IP','Request ID'],rows)}</section>`;
     content.innerHTML=adminWorkbenchShell(body,'audit');bindAdminWorkbench();
     $('#runAccessAudit').onclick=()=>renderAccessAudit($('#accessAuditSearch').value);

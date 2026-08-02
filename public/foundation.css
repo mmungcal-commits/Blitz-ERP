@@ -258,3 +258,6 @@ button{cursor:pointer}
 /* Warehouse class KPI: available + leased (r42) */
 .kpi-al small{font-size:11px;font-weight:600;color:#8091a6}
 .kpi-al em{display:block;margin-top:3px;font-style:normal;font-size:12px;color:#1f7a34;font-weight:700}
+
+/* Remove instructional prose notes across modules (r43) */
+.control-note{display:none!important}
