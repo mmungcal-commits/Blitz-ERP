@@ -22,6 +22,7 @@ import { planningRoutes } from './routes/planning.js';
 import { workspaceRoutes } from './routes/workspace.js';
 import { financeRoutes } from './routes/finance.js';
 import { enterpriseRoutes } from './routes/enterprise.js';
+import { analyticsRoutes } from './routes/analytics.js';
 
 const app = new Hono();
 
@@ -43,6 +44,7 @@ app.route('/api/auth',authRoutes);
 app.use('/api/*', requireUser);
 app.route('/api/session',sessionRoutes);
 app.route('/api/dashboard',dashboardRoutes);
+app.route('/api/analytics',analyticsRoutes);
 app.route('/api/masters',masterRoutes);
 app.route('/api/atlas',atlasRoutes);
 app.route('/api/shipments',shipmentRoutes);
