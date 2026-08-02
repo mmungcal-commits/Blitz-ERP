@@ -3,10 +3,15 @@ import { nextCode, normalizeSerial } from './codes.js';
 import { captureFinanceEvent } from './finance.js';
 
 export async function getAsset(db, serialOrId) {
-  if (typeof serialOrId === 'number' || /^\d+$/.test(String(serialOrId))) {
-    return first(db, `SELECT * FROM erp_assets WHERE id=?`, [Number(serialOrId)]);
+  const raw = String(serialOrId);
+  // Serial first: battery barcodes are all-numeric and must not be mistaken for row ids.
+  const bySerial = await first(db, `SELECT * FROM erp_assets WHERE serial_no=?`, [normalizeSerial(serialOrId)]);
+  if (bySerial) return bySerial;
+  // Fall back to row id only for small integers (real ids), never for long barcodes.
+  if (/^\d+$/.test(raw) && Number(raw) <= 2147483647) {
+    return first(db, `SELECT * FROM erp_assets WHERE id=?`, [Number(raw)]);
   }
-  return first(db, `SELECT * FROM erp_assets WHERE serial_no=?`, [normalizeSerial(serialOrId)]);
+  return null;
 }
 
 export function isAvailable(asset) {
