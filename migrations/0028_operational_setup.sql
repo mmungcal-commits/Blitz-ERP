@@ -11,3 +11,25 @@ SELECT 'BDO-MAIN',
        (SELECT id FROM erp_chart_accounts WHERE account_code='1010'),
        0, 1
 WHERE NOT EXISTS (SELECT 1 FROM erp_bank_accounts WHERE bank_account_code='BDO-MAIN');
+
+-- Product registration: item profile (type) + media (photos / 3D models), D1-backed, free.
+CREATE TABLE IF NOT EXISTS erp_item_profile(
+  item_id INTEGER PRIMARY KEY,
+  product_type TEXT DEFAULT 'SERIALIZED',
+  inventoriable INTEGER DEFAULT 1,
+  description TEXT,
+  sale_price REAL DEFAULT 0,
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS erp_item_media(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'photo',
+  file_name TEXT,
+  content_type TEXT,
+  data_base64 TEXT NOT NULL,
+  sort_order INTEGER DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now')),
+  created_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_item_media_item ON erp_item_media(item_id);
