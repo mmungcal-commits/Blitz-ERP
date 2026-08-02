@@ -2473,12 +2473,104 @@ async function renderInventoryAnalysisOverview(){
       operationalTable(['Inventory Class','Available','Leased','Total Units','Sold (reference)','Inventory Value'],rows,{key:'class-operational',emptyMessage:'No classified inventory records.'})+
       '</section>'+moveCard+
       '<div class="ramco-layout"><div class="ramco-main"></div><aside class="ramco-rail">'+
-      '<section><header>Planning Actions</header><div class="ramco-action-links"><button data-section-link="records">Stock Analysis</button><button data-section-link="approvals">Ordering / Deployment Plans</button><button data-section-link="reports">Planning Reports</button></div></section></aside></div>';
+      '<section><header>Planning Actions</header><div class="ramco-action-links"><button data-open-product-reg>Register / Edit Product</button><button data-section-link="records">Stock Analysis</button><button data-section-link="approvals">Ordering / Deployment Plans</button><button data-section-link="reports">Planning Reports</button></div></section></aside></div>';
     content.innerHTML=workbenchShell(body,'center');
     bindOperationalShell();
+    var prb=$('[data-open-product-reg]');if(prb)prb.onclick=function(){renderProductRegistration();};
     var ab=$('#invApplyDates');if(ab)ab.onclick=function(){var f=$('#invFrom').value||'',t=$('#invTo').value||'';if(!f||!t){toast('Select both From and To dates.','error');return;}__invFrom=f;__invTo=t;renderInventoryAnalysisOverview();};
     var cb=$('#invClearDates');if(cb)cb.onclick=function(){__invFrom='';__invTo='';renderInventoryAnalysisOverview();};
   }catch(error){showWorkspaceError(error);}
+}
+
+function __mvEnsure(){ if(window.__mvLoaded)return; window.__mvLoaded=true; var sc=document.createElement('script'); sc.type='module'; sc.src='https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js'; sc.onerror=function(){window.__mvFailed=true;}; document.head.appendChild(sc); }
+
+async function renderProductRegistration(editId){
+  content.innerHTML='<div class="workspace-loading">Loading product registration...</div>';
+  try{
+    const list=await api('/masters/items?size=500');
+    const items=(list.rows||[]);
+    let current=null;
+    if(editId){ try{ current=await api('/masters/items/'+editId+'/full'); }catch(e){} }
+    const cats=[['MC','Motorcycle'],['BAT','Battery'],['BSS','Swap Station / Locker'],['CHG','Charger'],['SP','Spare Part / Accessory'],['OTH','Other']];
+    const it=current?current.item:{}; const pf=current?(current.profile||{}):{};
+    const ptype=(pf.product_type||(it.serialized?'SERIALIZED':'QUANTITY'));
+    const listRows=items.map(function(r){return '<tr class="clickable-row" data-prod-open="'+r.id+'"><td><b>'+esc(r.item_code)+'</b></td><td>'+esc(r.item_name)+'</td><td>'+esc(r.category)+'</td><td>'+(r.serialized?'Serialized':'Quantity')+'</td><td class="num">'+money(r.standard_cost)+'</td></tr>';}).join('');
+    const catOpts=cats.map(function(x){return '<option value="'+x[0]+'"'+((it.category===x[0])?' selected':'')+'>'+x[1]+'</option>';}).join('');
+    const typeOpt=function(v,label,desc){return '<label class="pdi-check"><input type="radio" name="ptype" value="'+v+'"'+(ptype===v?' checked':'')+'><span><b>'+label+'</b><br><small>'+desc+'</small></span></label>';};
+    const body='<div class="workspace-commandbar"><span class="workspace-mode">PRODUCT REGISTRATION</span><span class="command-spacer"></span><button class="command" id="prNew">+ New Product</button></div>'+
+      '<div class="ramco-layout"><div class="ramco-main">'+
+        '<section class="workspace-card"><header><div><h2>'+(current?('Edit - '+esc(it.item_code)):'Register a Product')+'</h2><span>Inventoriable (serialized or quantity) or non-inventoriable service. Photos and 3D models are optional.</span></div></header>'+
+        '<form id="prodForm" class="operational-form grid">'+
+          '<input type="hidden" name="id" value="'+(current?it.id:'')+'">'+
+          '<label><span>Product Name</span><input name="itemName" required value="'+esc(it.item_name||'')+'"></label>'+
+          '<label><span>Item Code</span><input name="itemCode" value="'+esc(it.item_code||'')+'" placeholder="Auto if blank"'+(current?' readonly':'')+'></label>'+
+          '<label><span>Class</span><select name="category">'+catOpts+'</select></label>'+
+          '<label><span>Model / Variant</span><input name="model" value="'+esc(it.model||'')+'" placeholder="e.g. D400, R280, R280 Sport"></label>'+
+          '<label><span>Unit of Measure</span><input name="uom" value="'+esc(it.base_uom||'EA')+'"></label>'+
+          '<label><span>Standard / Landed Cost</span><input name="standardCost" type="number" step="0.01" value="'+esc(it.standard_cost||0)+'"></label>'+
+          '<label><span>Sale / List Price</span><input name="salePrice" type="number" step="0.01" value="'+esc(pf.sale_price||0)+'"></label>'+
+          '<label class="wide"><span>Description</span><textarea name="description">'+esc(pf.description||'')+'</textarea></label>'+
+          '<div class="wide"><span style="font-size:12px;color:#607080">Product Type</span><div class="pdi-grid">'+
+            typeOpt('SERIALIZED','Inventoriable - Serialized','Each unit tracked by serial (motorcycles, batteries, stations)')+
+            typeOpt('QUANTITY','Inventoriable - Quantity','Stocked by count (spare parts, accessories)')+
+            typeOpt('SERVICE','Non-inventoriable','Service / expense item, not held in stock')+
+          '</div></div>'+
+          '<button class="command primary">'+(current?'Save Changes':'Register Product')+'</button>'+
+        '</form></section>'+
+        (current?('<section class="workspace-card" id="mediaCard"><header><div><h2>Photos & 3D</h2><span>Upload unit photos (JPG/PNG, max 4MB each). Multiple photos enable the 360 spin. Optional .glb/.gltf 3D model for a movable view.</span></div></header>'+
+          '<div class="lease-unit-picker"><label><span>Add photo(s)</span><input type="file" id="prPhoto" accept="image/*" multiple></label>'+
+          '<label><span>Add 3D model (.glb/.gltf)</span><input type="file" id="prModel" accept=".glb,.gltf,model/gltf-binary"></label></div>'+
+          '<div id="prMedia" class="pr-media"></div></section>'):'')+
+      '</div><aside class="ramco-rail"><section><header>All Products ('+items.length+')</header>'+
+        operationalTable(['Code','Name','Class','Type','Cost'],listRows?[listRows]:[],{key:'product-list',emptyMessage:'No products yet.'})+
+      '</section></aside></div>';
+    content.innerHTML=workbenchShell(body,'center');bindOperationalShell();
+    $('#prNew')&&($('#prNew').onclick=function(){renderProductRegistration();});
+    $$('[data-prod-open]').forEach(function(row){row.onclick=function(){renderProductRegistration(row.getAttribute('data-prod-open'));};});
+    $('#prodForm').onsubmit=async function(e){
+      e.preventDefault();
+      const p=formDataObject(e.currentTarget);
+      p.productType=(e.currentTarget.querySelector('input[name="ptype"]:checked')||{}).value||'SERIALIZED';
+      if(!p.id)delete p.id;
+      try{ const r=await api('/masters/items/register',{method:'POST',body:JSON.stringify(p)}); toast('Product saved: '+(r.item&&r.item.item_code)); renderProductRegistration(r.item.id); }
+      catch(err){ toast(err.message,'error'); }
+    };
+    if(current){ __renderProductMedia(current); 
+      $('#prPhoto')&&($('#prPhoto').onchange=async function(ev){ for(const file of ev.target.files){ await __uploadProductMedia(it.id,file,'photo'); } renderProductRegistration(it.id); });
+      $('#prModel')&&($('#prModel').onchange=async function(ev){ const file=ev.target.files[0]; if(file){ await __uploadProductMedia(it.id,file,'model'); renderProductRegistration(it.id); } });
+    }
+  }catch(error){showWorkspaceError(error);}
+}
+
+async function __uploadProductMedia(itemId,file,kind){
+  const fd=new FormData(); fd.append('file',file); fd.append('kind',kind);
+  try{ await api('/masters/items/'+itemId+'/media',{method:'POST',body:fd}); toast(kind+' uploaded'); }
+  catch(e){ toast(e.message,'error'); }
+}
+
+function __renderProductMedia(full){
+  const host=$('#prMedia'); if(!host)return;
+  const media=(full.media||[]);
+  const photos=media.filter(function(m){return m.kind==='photo';});
+  const models=media.filter(function(m){return m.kind==='model';});
+  const fileUrl=function(m){return '/api/masters/items/media/'+m.id+'/file';};
+  let html='';
+  if(models.length){ __mvEnsure(); html+='<div class="pr-3d"><h4>3D Model (drag to rotate)</h4><model-viewer src="'+fileUrl(models[0])+'" camera-controls auto-rotate touch-action="pan-y" style="width:100%;height:320px;background:#0e1b2b;border-radius:10px" ar></model-viewer><div><a href="'+fileUrl(models[0])+'" target="_blank" rel="noopener">Download model</a> · <button class="table-action danger" data-del-media="'+models[0].id+'">Remove</button></div></div>'; }
+  if(photos.length>=2){ html+='<div class="pr-spin"><h4>360 Spin ('+photos.length+' frames - drag left/right)</h4><div id="prSpin" class="pr-spin-stage" style="background-image:url('+fileUrl(photos[0])+')"></div></div>'; }
+  if(photos.length){ html+='<div class="pr-gallery"><h4>Photos</h4><div class="pr-thumbs">'+photos.map(function(m){return '<div class="pr-thumb"><img src="'+fileUrl(m)+'" alt=""><button class="table-action danger" data-del-media="'+m.id+'">x</button></div>';}).join('')+'</div></div>'; }
+  if(!media.length){ html='<div class="workspace-empty">No photos or model yet. Add photos above; two or more enable the 360 spin.</div>'; }
+  host.innerHTML=html;
+  // 360 drag
+  const spin=$('#prSpin');
+  if(spin&&photos.length>=2){ let idx=0,down=false,sx=0; const frames=photos.map(fileUrl);
+    const set=function(i){idx=(i%frames.length+frames.length)%frames.length;spin.style.backgroundImage='url('+frames[idx]+')';};
+    spin.addEventListener('mousedown',function(e){down=true;sx=e.clientX;});
+    window.addEventListener('mouseup',function(){down=false;});
+    spin.addEventListener('mousemove',function(e){if(!down)return;var dx=e.clientX-sx;if(Math.abs(dx)>18){set(idx+(dx>0?1:-1));sx=e.clientX;}});
+    spin.addEventListener('touchstart',function(e){down=true;sx=e.touches[0].clientX;},{passive:true});
+    spin.addEventListener('touchmove',function(e){if(!down)return;var dx=e.touches[0].clientX-sx;if(Math.abs(dx)>18){set(idx+(dx>0?1:-1));sx=e.touches[0].clientX;}},{passive:true});
+  }
+  host.querySelectorAll('[data-del-media]').forEach(function(b){b.onclick=async function(){ try{ await api('/masters/items/media/'+b.getAttribute('data-del-media')+'/delete',{method:'POST',body:'{}'}); renderProductRegistration(full.item.id);}catch(e){toast(e.message,'error');} };});
 }
 
 async function renderStockAnalysis(search=''){
