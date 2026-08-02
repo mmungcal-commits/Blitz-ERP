@@ -795,7 +795,7 @@ async function renderAccountingSetup(){
     $$('[data-close-period]').forEach(button=>button.onclick=async()=>{const reason=prompt('Month-end close reason:','Month-end review completed');
       if(!reason)return;try{await api(`/finance/periods/${button.dataset.closePeriod}/close-request`,{method:'POST',body:JSON.stringify({reason})});
       toast('Period close sent for independent approval');}catch(error){toast(error.message,'error');}});
-    $('#newAccount').onclick=()=>modal('New Chart of Account',`<form id="accountForm" class="operational-form grid">
+    $('#newAccount').onclick=()=>{modal('New Chart of Account',`<form id="accountForm" class="operational-form grid">
       <label><span>Account Code</span><input name="accountCode" required></label><label><span>Account Name</span><input name="accountName" required></label>
       <label><span>Account Type</span><select name="accountType"><option>ASSET</option><option>LIABILITY</option><option>EQUITY</option>
         <option>REVENUE</option><option>COGS</option><option>EXPENSE</option></select></label>
@@ -804,7 +804,7 @@ async function renderAccountingSetup(){
       <label><span>Cash Flow Group</span><select name="cashFlowGroup"><option>OPERATING</option><option>INVESTING</option><option>FINANCING</option></select></label>
       <button class="command primary">Create Account</button></form>`);
     $('#accountForm').onsubmit=async event=>{event.preventDefault();try{await api('/finance/accounts',{method:'POST',body:JSON.stringify(formDataObject(event.currentTarget))});
-      closeModal();toast('Account created');await renderAccountingSetup();}catch(error){toast(error.message,'error');}};
+      closeModal();toast('Account created');await renderAccountingSetup();}catch(error){toast(error.message,'error');}};};
   }catch(error){showWorkspaceError(error);}
 }
 
