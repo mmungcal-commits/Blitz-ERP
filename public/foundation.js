@@ -1879,7 +1879,7 @@ async function renderDeliveryReturns(){
       <td>${statusBadge(row.status)}</td><td>${row.status==='DRAFT'?`<button class="table-action" data-post-return="${row.id}">Post Return</button>`:'-'}</td></tr>`;});
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],3)}
       <section class="workspace-card"><header><h2>Delivery Confirmation</h2></header>
-        ${deliveryRows.length?operationalTable(['Delivery','Requisition','Assignment / Sale','Destination','Holder','Status','Action'],deliveryRows):outboundEmptyHint('No deliveries are ready to confirm.','A delivery appears here after you Post Goods Issuance in the previous tab. Start a new requisition to begin the chain, or use Create Goods Return below to take a unit back.')}</section>
+        ${deliveryRows.length?operationalTable(['Delivery','Requisition','Assignment / Sale','Destination','Holder','Status','Action'],deliveryRows):outboundEmptyHint('No deliveries are ready to confirm.','This list is only for confirming outbound deliveries to a customer or holder, which flow from an approved requisition then Goods Issuance. To bring a delivered unit back to the warehouse you do NOT need a requisition; use Create Goods Return below.')}</section>
       ${__dallBody}
       <section class="workspace-card"><header><div><h2>Create Goods Return</h2></div></header>
         <form id="returnForm" class="operational-form grid">
