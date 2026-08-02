@@ -50,11 +50,11 @@ UPDATE erp_assets SET unit_cost=24695.61
 UPDATE erp_assets SET unit_cost=113257.77
  WHERE active=1 AND current_status NOT IN ('SOLD','WRITTEN_OFF') AND UPPER(COALESCE(category,''))='BSS'
    AND NOT EXISTS(SELECT 1 FROM erp_fixed_asset_books f WHERE f.asset_id=erp_assets.id);
-UPDATE erp_assets SET unit_cost=(
-   SELECT CASE v.class_code WHEN 'D400' THEN 83137.60 WHEN 'R280' THEN 45487.12 WHEN 'RSPORT' THEN 45487.12 ELSE erp_assets.unit_cost END
-   FROM (SELECT DISTINCT item_id,class_code FROM vw_erp_inventory_by_item_class) v WHERE v.item_id=erp_assets.item_id)
+UPDATE erp_assets SET unit_cost=CASE
+   WHEN item_id IN (SELECT item_id FROM vw_erp_inventory_by_item_class WHERE class_code='D400') THEN 83137.60
+   WHEN item_id IN (SELECT item_id FROM vw_erp_inventory_by_item_class WHERE class_code IN ('R280','RSPORT')) THEN 45487.12
+   ELSE unit_cost END
  WHERE active=1 AND current_status NOT IN ('SOLD','WRITTEN_OFF') AND UPPER(COALESCE(category,''))='MC'
-   AND item_id IN (SELECT item_id FROM vw_erp_inventory_by_item_class WHERE class_code IN ('D400','R280','RSPORT'))
    AND NOT EXISTS(SELECT 1 FROM erp_fixed_asset_books f WHERE f.asset_id=erp_assets.id);
 
 -- 2) Balanced revaluation journal (header)
@@ -62,13 +62,11 @@ INSERT OR IGNORE INTO erp_journal_headers(
   journal_no,entity_id,journal_date,period_id,journal_type,source_module,source_type,
   source_no,source_event_key,description,currency,exchange_rate,total_debit,total_credit,
   status,created_by,submitted_by,submitted_at,approved_by,approved_at,posted_by,posted_at)
-SELECT 'JE-INV-LANDED-REVAL-2026',e.id,date('now'),p.id,'REVALUATION','FINANCE','REVALUATION',
+SELECT 'JE-INV-LANDED-REVAL-2026',e.id,date('now'),(SELECT id FROM erp_accounting_periods WHERE entity_id=e.id ORDER BY fiscal_year DESC,period_no DESC LIMIT 1),'REVALUATION','FINANCE','REVALUATION',
   'LANDED-COST-REVAL','FINANCE_LANDED_COST_REVALUATION_2026',
   'Inventory revaluation to landed cost (provisional, per financial model)','PHP',1,0,0,
   'POSTED','system-reval','system-reval',datetime('now'),'system-reval',datetime('now'),'system-reval',datetime('now')
 FROM erp_legal_entities e
-JOIN erp_accounting_periods p ON p.entity_id=e.id
-  AND p.fiscal_year=CAST(strftime('%Y','now') AS INTEGER) AND p.period_no=CAST(strftime('%m','now') AS INTEGER)
 WHERE e.entity_code='E88';
 
 -- helper: delta per class = new subledger - current GL
