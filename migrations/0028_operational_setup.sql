@@ -116,3 +116,34 @@ UPDATE erp_journal_headers SET
   total_debit=(SELECT COALESCE(SUM(debit),0) FROM erp_journal_lines l WHERE l.journal_id=erp_journal_headers.id),
   total_credit=(SELECT COALESCE(SUM(credit),0) FROM erp_journal_lines l WHERE l.journal_id=erp_journal_headers.id)
  WHERE source_event_key='FINANCE_LANDED_COST_REVALUATION_2026';
+
+-- Vendor accreditation directory (authoritative, from E88 accreditation portal)
+CREATE TABLE IF NOT EXISTS erp_vendor_accreditation(
+  partner_code TEXT PRIMARY KEY, vendor_name TEXT NOT NULL, status TEXT NOT NULL,
+  updated_at TEXT DEFAULT (datetime('now')));
+DELETE FROM erp_vendor_accreditation;
+INSERT INTO erp_vendor_accreditation(partner_code,vendor_name,status) VALUES
+ ('EV-2026-0003','APSAY ELECTRONICS ENGINEERING SERVICES','Accredited'),
+ ('EV-2026-0004','Golden Laptops Incorporated','Accredited'),
+ ('EV-2026-0007','Western Guaranty Corporation','Accredited'),
+ ('EV-2026-0008','CAIO BUILDERS INCORPORATED','Disapproved'),
+ ('EV-2026-0009','DISINI LAW OFFICE','Accredited'),
+ ('EV-2026-0010','TRIPLE-A PEST TERMINATOR, INC.','Accredited'),
+ ('EV-2026-0011','F.C. De Jesus Electrical Services','Accredited'),
+ ('EV-2026-0012','HORWIN HUANGSHAN INTERNATIONAL INC','Accredited'),
+ ('EV-2026-0013','i30 Degree Electrical Engineering Services','Accredited'),
+ ('EV-2026-0014','ERT Solutions and Services OPC','Accredited'),
+ ('EV-2026-0015','BIOMIC WHIZ TRADING','Disapproved'),
+ ('EV-2026-0016','STM BUILDERS AND TRADING CORP.','Resubmitted - For approval'),
+ ('EV-2026-0017','Constructspace Inc.','Disapproved'),
+ ('EV-2026-0018','ThingsPh Inc.','Blocked'),
+ ('EV-2026-0019','TGG ELECTRICAL AND INDUSTRIAL SERVICES','Resubmitted - For approval'),
+ ('EV-2026-0021','PRESTIGE INT''L CONTAINER CO.','Accredited'),
+ ('EV-2026-0022','DIGICORE INTEGRATED IT SOLUTION','Disapproved'),
+ ('EV-2026-0023','SGR INDUSTRIES CORPORATION','Disapproved'),
+ ('EV-2026-0024','RAR Engineering Services','Disapproved'),
+ ('EV-2026-0025','Tech One Global Phils., Inc.','Accredited'),
+ ('EV-2026-0026','Business Partner Ent. Phils. Inc.','Disapproved'),
+ ('EV-2026-0027','AXL Electro Mechanical Services','Resubmitted - For approval'),
+ ('EV-2026-0028','Integrated Control System and Supply Corp.','Accredited'),
+ ('EV-2026-0030','3G POWERPLUS 2C CORPORATION','Endorsed by requestor - for document review');
