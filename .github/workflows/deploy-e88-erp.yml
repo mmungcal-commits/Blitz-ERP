@@ -96,6 +96,7 @@ jobs:
         run: |
           npx wrangler d1 execute DB --remote --file=migrations/0024_landed_cost_at_receipt.sql
           npx wrangler d1 execute DB --remote --file=migrations/0026_by_class_reconciliation_views.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0028_operational_setup.sql
 
       # ---------- Empty-database bootstrap (unchanged) ----------
       - name: Confirm D1 is empty before bootstrap
