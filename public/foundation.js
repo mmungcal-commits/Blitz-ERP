@@ -2391,28 +2391,29 @@ async function renderSupplierPortal(section){
 }
 
 function reportsCatalog(){return [
-  {key:'fin-trial-balance',cat:'FIN',title:'Trial Balance',desc:'All accounts with debit, credit and balance',endpoint:'/finance/reports/trial-balance',
+  {key:'fin-trial-balance',cat:'FIN',title:'Trial Balance',desc:'All accounts with debit, credit and balance',endpoint:'/finance/reports/trial-balance',dateMode:'ASOF',asOfParam:'dateTo',groupBy:'account_type',totals:['debit','credit'],filters:[['account_type','Type']],
     columns:[['account_code','Account'],['account_name','Name'],['account_type','Type'],['debit','Debit','money'],['credit','Credit','money'],['balance','Balance','money']]},
-  {key:'fin-ar-aging',cat:'FIN',title:'AR Aging',desc:'Open customer receivables by aging bucket',endpoint:'/finance/aging/AR',asOf:true,
+  {key:'fin-ar-aging',cat:'FIN',title:'AR Aging',desc:'Open customer receivables by aging bucket',endpoint:'/finance/aging/AR',dateMode:'ASOF',asOfParam:'asOf',groupBy:'aging_bucket',totals:['open_balance'],filters:[['aging_bucket','Bucket']],
     columns:[['partner_name','Customer'],['document_no','Document'],['document_date','Date','date'],['due_date','Due','date'],['open_balance','Open Balance','money'],['aging_bucket','Bucket']]},
-  {key:'fin-ap-aging',cat:'FIN',title:'AP Aging',desc:'Open supplier payables by aging bucket',endpoint:'/finance/aging/AP',asOf:true,
+  {key:'fin-ap-aging',cat:'FIN',title:'AP Aging',desc:'Open supplier payables by aging bucket',endpoint:'/finance/aging/AP',dateMode:'ASOF',asOfParam:'asOf',groupBy:'aging_bucket',totals:['open_balance'],filters:[['aging_bucket','Bucket']],
     columns:[['partner_name','Supplier'],['document_no','Document'],['document_date','Date','date'],['due_date','Due','date'],['open_balance','Open Balance','money'],['aging_bucket','Bucket']]},
-  {key:'sd-sales-orders',cat:'SD',title:'Sales & Lease Orders',desc:'All customer orders (sale and lease)',endpoint:'/sales?size=250',
+  {key:'sd-sales-orders',cat:'SD',title:'Sales & Lease Orders',desc:'All customer orders (sale and lease)',endpoint:'/sales',fetchAll:true,dateMode:'RANGE',dateField:'order_date',totals:['gross_amount','line_count'],filters:[['transaction_type','Type'],['status','Status']],
     columns:[['sales_order_no','Order'],['customer_name','Customer'],['transaction_type','Type'],['order_date','Date','date'],['gross_amount','Amount','money'],['line_count','Lines','num'],['status','Status']]},
-  {key:'sd-deliveries',cat:'SD',title:'Deliveries',desc:'All deliveries and their status',endpoint:'/deliveries?size=250',
-    columns:[['delivery_no','Delivery'],['requisition_no','Requisition'],['destination','Destination'],['recipient_name','Holder'],['asset_count','Serials','num'],['status','Status']]},
-  {key:'sd-returns',cat:'SD',title:'Goods Returns',desc:'Customer and custody returns',endpoint:'/returns?size=250',
-    columns:[['return_no','Return'],['return_type','Type'],['customer_name','Customer / Holder',null,r=>r.customer_name||r.partner_name||''],['return_date','Date','date'],['line_count','Lines','num'],['status','Status']]},
-  {key:'sd-units-by-month',cat:'SD',title:'Units Sold by Month',desc:'Sold units and value per month and class - filter by date range',endpoint:'/sales/reports/units-by-month',range:true,
+  {key:'sd-deliveries',cat:'SD',title:'Deliveries',desc:'All deliveries and their status',endpoint:'/deliveries',fetchAll:true,dateMode:'RANGE',dateField:function(r){return r.actual_delivery_date||r.scheduled_date||r.created_at;},totals:['asset_count'],filters:[['status','Status']],
+    columns:[['delivery_no','Delivery'],['requisition_no','Requisition'],['delivery_date','Date','date',function(r){return r.actual_delivery_date||r.scheduled_date||r.created_at;}],['destination','Destination'],['recipient_name','Holder'],['asset_count','Serials','num'],['status','Status']]},
+  {key:'sd-returns',cat:'SD',title:'Goods Returns',desc:'Customer and custody returns',endpoint:'/returns',fetchAll:true,dateMode:'RANGE',dateField:'return_date',totals:['line_count'],filters:[['return_type','Type'],['status','Status']],
+    columns:[['return_no','Return'],['return_type','Type'],['customer_name','Customer / Holder',null,function(r){return r.customer_name||r.partner_name||'';}],['return_date','Date','date'],['line_count','Lines','num'],['status','Status']]},
+  {key:'sd-units-by-month',cat:'SD',title:'Units Sold by Month',desc:'Sold units and value per month and class',endpoint:'/sales/reports/units-by-month',dateMode:'RANGE',dateField:'ym',dateGranularity:'month',totals:['units','amount'],filters:[['class_name','Class']],
     columns:[['ym','Month'],['class_name','Class'],['units','Units','num'],['amount','Gross Amount','money']]},
-  {key:'ip-by-class',cat:'IP',title:'Inventory by Class',desc:'Available, leased, total and value per class',endpoint:'/inventory/by-class',
-    columns:[['class_name','Inventory Class'],['available','Available','num'],['leased','Leased','num'],['total_units','Total Units','num',r=>Number(r.available||0)+Number(r.leased||0)],['sold','Sold (ref)','num'],['inventory_value','Inventory Value','money']]},
-  {key:'ip-stock-analysis',cat:'IP',title:'Inventory by Item',desc:'Per-item available, leased, sold and value',endpoint:'/inventory/analysis',
-    filter:r=>(Number(r.available_qty||0)+Number(r.leased_qty||0)+Number(r.sold_qty||0)+Number(r.on_hand_qty||0))>0,
+  {key:'ip-by-class',cat:'IP',title:'Inventory by Class',desc:'Available, leased, total and value per class',endpoint:'/inventory/by-class',dateMode:'NONE',totals:['available','leased','total_units','sold','inventory_value'],
+    columns:[['class_name','Inventory Class'],['available','Available','num'],['leased','Leased','num'],['total_units','Total Units','num',function(r){return Number(r.available||0)+Number(r.leased||0);}],['sold','Sold (ref)','num'],['inventory_value','Inventory Value','money']]},
+  {key:'ip-stock-analysis',cat:'IP',title:'Inventory by Item',desc:'Per-item available, leased, sold and value',endpoint:'/inventory/analysis',dateMode:'NONE',totals:['available_qty','leased_qty','sold_qty','inventory_value'],filters:[['category','Class'],['primary_location','Location']],
+    filter:function(r){return (Number(r.available_qty||0)+Number(r.leased_qty||0)+Number(r.sold_qty||0)+Number(r.on_hand_qty||0))>0;},
     columns:[['item_code','Material Code'],['item_name','Item'],['category','Class'],['primary_location','Location'],['available_qty','Available','num'],['leased_qty','Leased','num'],['sold_qty','Sold','num'],['inventory_value','Inventory Value','money']]},
-  {key:'ip-movements',cat:'IP',title:'Stock Movement Register',desc:'Serialized stock-ledger movements',endpoint:'/inventory/movements?size=250',
+  {key:'ip-movements',cat:'IP',title:'Stock Movement Register',desc:'Serialized stock-ledger movements',endpoint:'/inventory/movements',fetchAll:true,maxPages:24,dateMode:'RANGE',dateField:'movement_date',filters:[['movement_type','Type']],
     columns:[['movement_no','Movement'],['movement_date','Date','date'],['movement_type','Type'],['serial_no','Serial'],['item_name','Item'],['from_location_code','From'],['to_location_code','To'],['posted_by','Posted By']]}
 ];}
+
 function reportRows(def,data){var r=def.rowsPath?def.rowsPath(data):(data.rows||data.items||[]);return def.filter?r.filter(def.filter):r;}
 function reportCellValue(col,row){return col[3]?col[3](row):row[col[0]];}
 async function renderReportsHub(){
@@ -2426,46 +2427,75 @@ async function renderReportsHub(){
   $('#reportsBack').onclick=renderLaunchpad;
   $$('[data-report]').forEach(b=>b.onclick=()=>renderReport(b.dataset.report));
 }
+function reportDateVal(def,row){if(!def.dateField)return null;return typeof def.dateField==='function'?def.dateField(row):row[def.dateField];}
+function reportColByKey(def,key){for(var i=0;i<def.columns.length;i++)if(def.columns[i][0]===key)return def.columns[i];return null;}
+function reportSum(def,rows,key){var col=reportColByKey(def,key);var sm=0;for(var i=0;i<rows.length;i++){var v=col?reportCellValue(col,rows[i]):rows[i][key];v=Number(v);if(!isNaN(v))sm+=v;}return sm;}
+function reportNumFmt(v){return new Intl.NumberFormat('en-US').format(Number(v)||0);}
 async function renderReport(key,opts){
-  opts=opts||{};
-  const def=reportsCatalog().find(d=>d.key===key);
+  opts=opts||{};opts.filters=opts.filters||{};
+  var def=reportsCatalog().find(function(d){return d.key===key;});
   if(!def)return renderReportsHub();
   content.innerHTML='<div class="workspace-loading">Loading report...</div>';
   try{
-    let path=def.endpoint;
-    if(def.asOf){var ao=opts.asOf||new Date().toISOString().slice(0,10);path+=(path.indexOf('?')>=0?'&':'?')+'asOf='+encodeURIComponent(ao);}
-    if(def.range&&opts.from&&opts.to){path+=(path.indexOf('?')>=0?'&':'?')+'from='+encodeURIComponent(opts.from)+'&to='+encodeURIComponent(opts.to);}
-    const data=await api(path);
-    const rows=reportRows(def,data);
-    const cols=def.columns;
-    const head=cols.map(c=>'<th'+((c[2]==='money'||c[2]==='num')?' class="num"':'')+'>'+esc(c[1])+'</th>').join('');
-    const body=rows.map(function(r){return '<tr>'+cols.map(function(c){var v=reportCellValue(c,r);var cls=(c[2]==='money'||c[2]==='num')?' class="num"':'';var disp=c[2]==='money'?money(v):(c[2]==='date'?date(v):esc(v==null?'':v));return '<td'+cls+'>'+disp+'</td>';}).join('')+'</tr>';}).join('');
-    const asOfBar=def.asOf?('<label class="inline-control"><span>As of</span><input type="date" id="reportAsOf" value="'+esc(opts.asOf||new Date().toISOString().slice(0,10))+'"></label><button class="command primary" id="reportApply">Apply</button>'):'';
-    const rangeBar=def.range?('<label class="inline-control"><span>From</span><input type="date" id="reportFrom" value="'+esc(opts.from||'')+'"></label><label class="inline-control"><span>To</span><input type="date" id="reportTo" value="'+esc(opts.to||'')+'"></label><button class="command primary" id="reportApplyRange">Apply</button>'+((opts.from||opts.to)?'<button class="command" id="reportClearRange">Clear</button>':'')):'';
-    content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>'+esc(def.title)+'</h1><p>'+esc(def.desc||'')+' &middot; '+rows.length+' rows</p></div><div class="report-actions"><button class="command" id="reportBackHub">&larr; All Reports</button><button class="command primary" id="reportExcel">Export to Excel</button><button class="command" id="reportPrint">Print</button></div></div>'+
-      ((asOfBar||rangeBar)?('<div class="workspace-commandbar">'+asOfBar+rangeBar+'</div>'):'')+
-      '<section class="workspace-card"><div class="record-table-wrap"><table class="record-table"><thead><tr>'+head+'</tr></thead><tbody>'+(body||('<tr><td colspan="'+cols.length+'" style="text-align:center;padding:24px;color:#64748b">No records.</td></tr>'))+'</tbody></table></div></section></div>';
-    window.__reportExport={cols:cols,rows:rows,def:def};
+    var asOf=(def.dateMode==='ASOF')?(opts.asOf||new Date().toISOString().slice(0,10)):null;
+    var basePath=def.endpoint;
+    if(asOf){var ap=def.asOfParam||'asOf';basePath+=(basePath.indexOf('?')>=0?'&':'?')+ap+'='+encodeURIComponent(asOf);}
+    var allRows=[];
+    if(def.fetchAll){var page=1,size=def.pageSize||250,cap=def.maxPages||20;while(page<=cap){var sep=basePath.indexOf('?')>=0?'&':'?';var dd=await api(basePath+sep+'size='+size+'&page='+page);var rr=reportRows(def,dd);allRows=allRows.concat(rr);if(rr.length<size)break;page++;}}
+    else{var d1=await api(basePath);allRows=reportRows(def,d1);}
+    var rows=allRows.slice();
+    if(def.dateMode==='RANGE'&&(opts.from||opts.to)){rows=rows.filter(function(r){var v=reportDateVal(def,r);if(!v)return false;v=String(v);if(def.dateGranularity==='month'){v=v.slice(0,7);var f=opts.from?opts.from.slice(0,7):null,t=opts.to?opts.to.slice(0,7):null;return (!f||v>=f)&&(!t||v<=t);}v=v.slice(0,10);return (!opts.from||v>=opts.from)&&(!opts.to||v<=opts.to);});}
+    if(def.filters)def.filters.forEach(function(fl){var val=opts.filters[fl[0]];if(val)rows=rows.filter(function(r){return String(r[fl[0]]==null?'':r[fl[0]])===val;});});
+    var cols=def.columns;
+    var pt=[];
+    if(def.dateMode==='RANGE')pt.push('Period: '+(opts.from?date(opts.from):'Beginning')+' to '+(opts.to?date(opts.to):'Today'));
+    if(def.dateMode==='ASOF')pt.push('As of '+date(asOf));
+    if(def.filters)def.filters.forEach(function(fl){if(opts.filters[fl[0]])pt.push(fl[1]+': '+opts.filters[fl[0]]);});
+    var paramText=pt.join(' · ')||'All records';
+    var nowd=new Date();
+    var masthead='<div class="report-masthead"><div class="rm-co">E88 Ventures Inc.</div><div class="rm-title">'+esc(def.title)+'</div><div class="rm-meta">'+esc(paramText)+'</div><div class="rm-meta rm-sub">Generated '+date(nowd.toISOString())+' '+nowd.toTimeString().slice(0,5)+' · '+rows.length+' rows</div></div>';
+    var ctrl='';
+    if(def.dateMode==='ASOF')ctrl+='<label class="inline-control"><span>As of</span><input type="date" id="rAsOf" value="'+esc(asOf)+'"></label>';
+    if(def.dateMode==='RANGE')ctrl+='<label class="inline-control"><span>From</span><input type="date" id="rFrom" value="'+esc(opts.from||'')+'"></label><label class="inline-control"><span>To</span><input type="date" id="rTo" value="'+esc(opts.to||'')+'"></label>';
+    if(def.filters)def.filters.forEach(function(fl){var seen={},vals=[];allRows.forEach(function(r){var v=r[fl[0]];if(v!=null&&v!==''&&!seen[v]){seen[v]=1;vals.push(String(v));}});vals.sort();ctrl+='<label class="inline-control"><span>'+esc(fl[1])+'</span><select data-rfilter="'+esc(fl[0])+'"><option value="">All</option>'+vals.map(function(v){return '<option'+(opts.filters[fl[0]]===String(v)?' selected':'')+'>'+esc(v)+'</option>';}).join('')+'</select></label>';});
+    var hasParams=(opts.from||opts.to||opts.asOf||Object.keys(opts.filters).some(function(k){return opts.filters[k];}));
+    if(ctrl){ctrl+='<button class="command primary" id="rApply">Apply</button>';if(hasParams)ctrl+='<button class="command" id="rClear">Clear</button>';}
+    var head=cols.map(function(c){return '<th'+((c[2]==='money'||c[2]==='num')?' class="num"':'')+'>'+esc(c[1])+'</th>';}).join('');
+    function cellsFor(r){return cols.map(function(c){var v=reportCellValue(c,r);var cls=(c[2]==='money'||c[2]==='num')?' class="num"':'';var disp=c[2]==='money'?money(v):(c[2]==='date'?date(v):esc(v==null?'':v));return '<td'+cls+'>'+disp+'</td>';}).join('');}
+    function totalRowHtml(label,subset,klass){return '<tr class="'+klass+'">'+cols.map(function(c,i){var cls=(c[2]==='money'||c[2]==='num')?' class="num"':'';if(i===0)return '<td'+cls+'>'+esc(label)+'</td>';if(def.totals&&def.totals.indexOf(c[0])>=0){var sv=reportSum(def,subset,c[0]);return '<td'+cls+'>'+(c[2]==='money'?money(sv):reportNumFmt(sv))+'</td>';}return '<td'+cls+'></td>';}).join('')+'</tr>';}
+    var bodyHtml='';
+    if(def.groupBy&&rows.length){var gcol=reportColByKey(def,def.groupBy);var sorted=rows.slice().sort(function(a,b){var av=String(reportCellValue(gcol,a)||''),bv=String(reportCellValue(gcol,b)||'');return av<bv?-1:(av>bv?1:0);});var cur=null,bucket=[];sorted.forEach(function(r){var g=String(reportCellValue(gcol,r)||'');if(cur===null)cur=g;if(g!==cur){bodyHtml+=bucket.map(function(x){return '<tr>'+cellsFor(x)+'</tr>';}).join('');if(def.totals&&def.totals.length)bodyHtml+=totalRowHtml(cur+' subtotal',bucket,'report-subtotal');cur=g;bucket=[];}bucket.push(r);});if(bucket.length){bodyHtml+=bucket.map(function(x){return '<tr>'+cellsFor(x)+'</tr>';}).join('');if(def.totals&&def.totals.length)bodyHtml+=totalRowHtml(cur+' subtotal',bucket,'report-subtotal');}}
+    else{bodyHtml=rows.map(function(r){return '<tr>'+cellsFor(r)+'</tr>';}).join('');}
+    var grand=(def.totals&&def.totals.length&&rows.length)?totalRowHtml('Total',rows,'report-total'):'';
+    var empty='<tr><td colspan="'+cols.length+'" style="text-align:center;padding:24px;color:#64748b">No records for these parameters.</td></tr>';
+    var tableHtml='<div class="record-table-wrap"><table class="record-table"><thead><tr>'+head+'</tr></thead><tbody>'+(bodyHtml||empty)+grand+'</tbody></table></div>';
+    content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>'+esc(def.title)+'</h1><p>'+esc(def.desc||'')+'</p></div><div class="report-actions"><button class="command" id="reportBackHub">&larr; All Reports</button><button class="command primary" id="reportExcel">Export to Excel</button><button class="command" id="reportPrint">Print</button></div></div>'+(ctrl?('<div class="workspace-commandbar report-params">'+ctrl+'</div>'):'')+masthead+'<section class="workspace-card report-body-card">'+tableHtml+'</section></div>';
+    window.__reportExport={cols:cols,rows:rows,def:def,paramText:paramText};
     $('#reportBackHub').onclick=renderReportsHub;
     $('#reportExcel').onclick=exportReportExcel;
-    $('#reportPrint').onclick=()=>window.print();
-    if($('#reportApply'))$('#reportApply').onclick=()=>renderReport(key,{asOf:$('#reportAsOf').value});
-    if($('#reportApplyRange'))$('#reportApplyRange').onclick=function(){var f=$('#reportFrom').value,t=$('#reportTo').value;if(!f||!t){toast('Select both From and To dates.','error');return;}renderReport(key,{from:f,to:t});};
-    if($('#reportClearRange'))$('#reportClearRange').onclick=function(){renderReport(key,{});};
-  }catch(error){showWorkspaceError(error);}
+    $('#reportPrint').onclick=function(){window.print();};
+    if($('#rApply'))$('#rApply').onclick=function(){var no={filters:{}};if($('#rAsOf'))no.asOf=$('#rAsOf').value;if($('#rFrom'))no.from=$('#rFrom').value;if($('#rTo'))no.to=$('#rTo').value;$$('[data-rfilter]').forEach(function(sel){if(sel.value)no.filters[sel.getAttribute('data-rfilter')]=sel.value;});renderReport(key,no);};
+    if($('#rClear'))$('#rClear').onclick=function(){renderReport(key,{});};
+  }catch(error){var m=String(error&&error.message||error);if(/long-running export|D1_ERROR/i.test(m)){content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>'+esc(def.title)+'</h1></div><div class="report-actions"><button class="command" id="reportBackHub">&larr; All Reports</button></div></div><div class="workspace-empty" style="padding:30px;text-align:center"><b>The database is finishing a background task.</b><p style="margin:8px 0 14px;color:#556">This happens briefly during a backup or deploy. Try again in a few seconds.</p><button class="command primary" id="rRetry">Retry</button></div></div>';var rb=$('#rRetry');if(rb)rb.onclick=function(){renderReport(key,opts);};var bh=$('#reportBackHub');if(bh)bh.onclick=renderReportsHub;}else showWorkspaceError(error);}
 }
+
 function exportReportExcel(){
-  var x=window.__reportExport;if(!x)return;
-  function esc2(v){if(v==null)v='';return '"'+String(v).replace(/"/g,'""')+'"';}
-  var head=x.cols.map(c=>esc2(c[1])).join(',');
-  var lines=x.rows.map(function(r){return x.cols.map(function(c){var v=reportCellValue(c,r);if(c[2]==='money'||c[2]==='num')v=(v==null||v==='')?'':Number(v);return esc2(v);}).join(',');});
-  var csv=[head].concat(lines).join('\r\n');
-  var blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8;'});
-  var url=URL.createObjectURL(blob);var a=document.createElement('a');
-  a.href=url;a.download=(x.def.key||'report')+'-'+new Date().toISOString().slice(0,10)+'.csv';
-  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
-  if(typeof toast==='function')toast('Exported '+x.rows.length+' rows to Excel (CSV)');
+  var x=window.__reportExport;if(!x)return;var def=x.def,cols=x.cols,rows=x.rows;
+  function q(v){if(v==null)v='';return '"'+String(v).replace(/"/g,'""')+'"';}
+  var lines=[];
+  lines.push(q('E88 Ventures Inc.'));
+  lines.push(q(def.title));
+  lines.push(q(x.paramText||''));
+  lines.push(q('Generated '+new Date().toLocaleString()));
+  lines.push('');
+  lines.push(cols.map(function(c){return q(c[1]);}).join(','));
+  rows.forEach(function(r){lines.push(cols.map(function(c){var v=reportCellValue(c,r);if(c[2]==='money'||c[2]==='num')v=(v==null||v==='')?'':Number(v);return q(v);}).join(','));});
+  if(def.totals&&def.totals.length&&rows.length){lines.push(cols.map(function(c,i){if(i===0)return q('Total');if(def.totals.indexOf(c[0])>=0)return String(reportSum(def,rows,c[0]));return q('');}).join(','));}
+  var csv='﻿'+lines.join('\r\n');
+  var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});var url=URL.createObjectURL(blob);var a=document.createElement('a');a.href=url;a.download=(def.key||'report')+'-'+new Date().toISOString().slice(0,10)+'.csv';document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(url);},1000);
+  if(typeof toast==='function')toast('Exported '+rows.length+' rows to Excel (CSV)');
 }
+
 
 async function renderInventoryAnalysisWorkspace(section){
   if(section==='records')return renderStockAnalysis();
