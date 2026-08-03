@@ -222,7 +222,7 @@ function showAuth(mode='login'){
   if(resetToken)mode='reset';
   const host=$('#authContent');
   if(mode==='login'){
-    host.innerHTML=`<div class="auth-heading"><h1>Sign in</h1><p>E88 Finance Console</p></div>
+    host.innerHTML=`<div class="auth-heading"><h1>Sign in</h1><p>Enterprise System</p></div>
       <form id="loginForm" class="auth-form">
         ${authField('Corporate email','email','email',email,'autocomplete="username" placeholder="name@nrdev.ph" required')}
         ${authField('Password','password','password','','autocomplete="current-password" required')}
@@ -279,6 +279,8 @@ async function init(){
   try{
     state.session=await api('/session');
     state.catalog=state.session.workspaceCatalog||{groups:[],tools:[],addons:[]};
+    var __hiddenModules=['sd-crm','sd-demand-planning','sd-warranty-management','sd-pim','sd-customer-portal','sd-lease-contract-management','ip-inventory-analysis','ip-subcontracting'];
+    if(state.catalog&&state.catalog.groups)state.catalog.groups.forEach(function(g){if(g.items)g.items=g.items.filter(function(it){return __hiddenModules.indexOf(it.code)<0;});});
     state.workspaceAccess=state.session.workspaceAccess||[];
     $('#userBadge').innerHTML=`<b>${esc(state.session.user.displayName||state.session.user.email)}</b><small>${esc(state.session.user.role)} · ${esc(state.session.user.email)}</small>`;
     $('#accessBtn').classList.toggle('hidden',state.session.user.role!=='ADMIN');
@@ -414,7 +416,7 @@ function workbenchShell(body,active=state.section){
     ${submodules.length?`<nav class="workbench-submodules"><span>Submodules</span>${submodules.map(sub=>`<button data-submodule-code="${esc(sub.submodule_code)}" data-submodule-type="${esc(sub.record_type||'')}" data-submodule-connected="${esc(sub.connected_module_code||'')}" title="${esc(sub.posting_event_type||'Operational submodule')}">${esc(sub.submodule_name)}</button>`).join('')}</nav>`:''}
     </div>
     <main class="workbench-canvas">${body}</main>
-    <footer class="workbench-footer"><span>E88 Finance Console</span><span>Connected Workspace · © 2026 AL23</span></footer>
+    <footer class="workbench-footer"><span>Enterprise System</span><span>Connected Workspace · © 2026 AL23</span></footer>
   </section>`;
 }
 function bindWorkbench(){
@@ -3421,7 +3423,7 @@ function adminWorkbenchShell(body,active='users'){
     </div>
     <nav class="workbench-tabs">${tabs.map(([id,label])=>`<button data-admin-section="${id}" class="${active===id?'active':''}">${esc(label)}</button>`).join('')}</nav>
     <main class="workbench-canvas">${body}</main>
-    <footer class="workbench-footer"><span>E88 Finance Console</span><span>Controlled Module Access · © 2026 AL23</span></footer>
+    <footer class="workbench-footer"><span>Enterprise System</span><span>Controlled Module Access · © 2026 AL23</span></footer>
   </section>`;
 }
 function bindAdminWorkbench(){
@@ -3658,14 +3660,14 @@ init();
   }
   function czWireRowInspector(){}
   function czPrintSlip(title,fields){
-    var brand=(S.branding&&S.branding.appTitle)||'E88 Finance Console';
+    var brand=(S.branding&&S.branding.appTitle)||'Enterprise System';
     var rows=fields.map(function(f){return '<tr><th>'+esc2(f.label)+'</th><td>'+esc2(f.value)+'</td></tr>';}).join('');
     var w=window.open('','_blank','width=840,height=920'); if(!w){alert('Please allow pop-ups to print.');return;}
     w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+esc2(title)+'</title><style>*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#17212b;padding:26px}header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0a2239;padding-bottom:10px;margin-bottom:16px}h1{font-size:18px;margin:0;color:#0a2239}.doc{margin-top:3px;color:#555;font-size:13px;font-weight:700}.meta{text-align:right;color:#666;font-size:11px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #c9d3db;padding:7px 10px;text-align:left;vertical-align:top}th{background:#eef2f6;width:220px;color:#334}.sign{display:flex;gap:34px;margin-top:52px}.sign>div{flex:1;border-top:1px solid #333;padding-top:6px;font-size:11px;color:#555;text-align:center}.bar{margin-top:22px}.bar button{padding:9px 18px;border:1px solid #0a2239;background:#0a2239;color:#fff;border-radius:4px;cursor:pointer;font-size:12px}@media print{.bar{display:none}}</style></head><body><header><div><h1>'+esc2(brand)+'</h1><div class="doc">'+esc2(title)+'</div></div><div class="meta">Printed '+new Date().toLocaleString()+'</div></header><table>'+rows+'</table><div class="sign"><div>Prepared by / Date</div><div>Approved by / Date</div><div>Received by / Date</div></div><div class="bar"><button onclick="window.print()">Print this document</button></div></body></html>');
     w.document.close();
   }
   function czDocHtml(opts){
-    var brand=(S.branding&&S.branding.appTitle)||'E88 Finance Console';
+    var brand=(S.branding&&S.branding.appTitle)||'Enterprise System';
     var meta=(opts.meta||[]).filter(function(m){return m&&m[1]!=null&&String(m[1]).trim()!==''&&String(m[1])!=='Invalid Date';}).map(function(m){return '<div><small>'+esc2(m[0])+'</small><b>'+esc2(m[1])+'</b></div>';}).join('');
     var lines='';
     if(opts.lineHead&&opts.lineRows&&opts.lineRows.length){
