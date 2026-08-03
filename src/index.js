@@ -23,6 +23,7 @@ import { workspaceRoutes } from './routes/workspace.js';
 import { financeRoutes } from './routes/finance.js';
 import { enterpriseRoutes } from './routes/enterprise.js';
 import { analyticsRoutes } from './routes/analytics.js';
+import { poApprovalPublicRoutes } from './routes/po-approval-public.js';
 
 const app = new Hono();
 
@@ -41,6 +42,7 @@ app.get('/api/health', async c=>{
     r2Bound:!!c.env.DOCS,r2Ready,r2Error,environment:c.env.ENVIRONMENT||'unknown',time:new Date().toISOString()});
 });
 app.route('/api/auth',authRoutes);
+app.route('/api/po-approve',poApprovalPublicRoutes);
 app.use('/api/*', requireUser);
 app.route('/api/session',sessionRoutes);
 app.route('/api/dashboard',dashboardRoutes);
