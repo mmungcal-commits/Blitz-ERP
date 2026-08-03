@@ -16,6 +16,7 @@ on:
           - upgrade_existing            # SAFE: keep all data, apply code + new migrations
           - clean_rebuild_from_atlas    # DESTRUCTIVE: back up, wipe, reload opening stock from ATLAS
           - bootstrap_empty_database
+          - wipe_transactions           # DESTRUCTIVE: back up, clear ALL business data (keep system config)
       rebuild_confirmation:
         description: For clean_rebuild ONLY, type E88_WIPE_AND_REBUILD (otherwise leave blank)
         required: false
@@ -70,6 +71,10 @@ jobs:
             echo "clean_rebuild_from_atlas selected but rebuild_confirmation is not E88_WIPE_AND_REBUILD. Aborting to protect data."
             exit 1
           fi
+          if [ "${{ inputs.database_mode }}" = "wipe_transactions" ] && [ "${{ inputs.rebuild_confirmation }}" != "E88_WIPE_AND_REBUILD" ]; then
+            echo "wipe_transactions selected but rebuild_confirmation is not E88_WIPE_AND_REBUILD. Aborting to protect data."
+            exit 1
+          fi
 
       - name: Install dependencies
         run: npm ci
@@ -116,6 +121,13 @@ jobs:
           echo "Backup already uploaded as artifact d1-backup-${{ github.run_id }}."
           npx wrangler d1 execute DB --remote --file=rebuild/wipe_data_keep_config.sql
           npx wrangler d1 execute DB --remote --file=rebuild/0027_opening_inventory_from_atlas.sql
+
+      # ---------- DESTRUCTIVE full data reset (gated) ----------
+      - name: Full data reset — clear ALL business data (keep system config)
+        if: ${{ inputs.database_mode == 'wipe_transactions' && inputs.rebuild_confirmation == 'E88_WIPE_AND_REBUILD' }}
+        run: |
+          echo "Backup already uploaded as artifact d1-backup-${{ github.run_id }}."
+          npx wrangler d1 execute DB --remote --file=rebuild/wipe_all_business_keep_system.sql
 
       # ---------- Deploy the Worker ----------
       - name: Deploy Worker with D1 binding
