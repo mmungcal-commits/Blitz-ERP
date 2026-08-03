@@ -1557,9 +1557,15 @@ async function renderGoodsReceipt(selectedShipmentId=''){
           lines:state.inbound.receiptLines,
         })});
         toast(`${result.receiptNo} posted to ${result.location.code}`);
-        try{if(window.czPrintGRN&&result.receiptId)window.czPrintGRN(result.receiptId);}catch(e){}
         state.inbound.receiptLines=[];state.inbound.shipment=null;state.inbound.locationId=null;
+        const __rid=result.receiptId,__rno=result.receiptNo,__loc=(result.location&&result.location.code)||'';
         await renderGoodsReceipt();
+        modal('Goods Receipt posted',`<div class="operational-form"><p><b>${esc(__rno)}</b> was posted${__loc?(' to '+esc(__loc)):''}.</p><p style="color:#556;font-size:12px;margin:4px 0 10px">Print the Goods Receipt Note now, or reprint it anytime from the receipt row.</p><div class="modal-actions"><button type="button" class="command primary" id="grPrintNow">Print GR</button><button type="button" class="command" id="grReprint">Reprint</button><button type="button" class="command" id="grDone">Done</button></div></div>`);
+        const __pf=()=>{try{if(window.czPrintGRN&&__rid)window.czPrintGRN(__rid);}catch(e){}};
+        const __mb=$('#modalBody');
+        if(__mb){if(__mb.querySelector('#grPrintNow'))__mb.querySelector('#grPrintNow').onclick=__pf;
+          if(__mb.querySelector('#grReprint'))__mb.querySelector('#grReprint').onclick=__pf;
+          if(__mb.querySelector('#grDone'))__mb.querySelector('#grDone').onclick=()=>closeModal();}
       }catch(error){toast(error.message,'error');}
     };
   }catch(error){showWorkspaceError(error);}
@@ -2057,7 +2063,7 @@ async function renderStockMovement(){
   content.innerHTML='<div class="workspace-loading">Loading movement workbench…</div>';
   try{
     const [lookups,movements]=await Promise.all([api('/masters/lookups'),api('/inventory/movements')]);
-    const rows=movements.rows.slice(0,250).map(row=>`<tr><td><b>${esc(row.movement_no)}</b></td><td>${date(row.movement_date)}</td>
+    const rows=movements.rows.slice(0,250).map(row=>`<tr data-move-serial="${esc(row.serial_no)}" style="cursor:pointer" title="Click to move this serial to another location"><td><b>${esc(row.movement_no)}</b></td><td>${date(row.movement_date)}</td>
       <td>${esc(row.movement_type)}</td><td>${esc(row.serial_no)}</td><td>${esc(row.item_name||row.item_code||'-')}</td>
       <td>${esc(row.from_location_code||'-')}</td><td>${esc(row.to_location_code||'-')}</td><td>${esc(row.to_status||'-')}</td><td>${esc(row.posted_by||'-')}</td></tr>`);
     const body=`<div class="ramco-layout"><div class="ramco-main">
@@ -2073,10 +2079,13 @@ async function renderStockMovement(){
       </section>
       <section class="workspace-card"><header><h2>Movement Register</h2><span>${movements.total} entries</span></header>
         ${operationalTable(['Movement','Date','Type','Serial','Item','From','To','Status','Posted By'],rows)}</section>
-      </div><aside class="ramco-rail"><section><header>Stock Control</header><div class="control-note"><b>One serial, one position</b><p>Every movement updates current location and writes an immutable stock-ledger entry.</p></div></section></aside></div>`;
+      </div><aside class="ramco-rail"><section><header>Stock Control</header><div class="control-note"><b>One serial, one position</b><p>Every movement updates current location and writes an immutable stock-ledger entry. Click any register row to move that serial.</p></div></section>
+      <section><header>Master Data</header><div class="ramco-action-links"><button type="button" id="openItemMaster">Item Master (Products)</button></div></section></aside></div>`;
     content.innerHTML=workbenchShell(body,'approvals');
     bindOperationalShell();
     var __ms=$('#moveScan');if(__ms)__ms.onclick=()=>scanQrWithCamera(value=>{var el=$('#moveSerial');if(el)el.value=value;});
+    $$('[data-move-serial]').forEach(function(tr){tr.onclick=function(){var s=tr.getAttribute('data-move-serial');var el=$('#moveSerial');if(el){el.value=s;el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});toast('Serial '+s+' loaded into Post Stock Movement');}};});
+    var __im=$('#openItemMaster');if(__im)__im.onclick=function(){renderProductRegistration();};
     $('#movementForm').onsubmit=async event=>{
       event.preventDefault();
       const payload=formDataObject(event.currentTarget);
