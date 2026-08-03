@@ -3650,7 +3650,7 @@ init();
     var first=(cells[0]?cells[0].textContent.trim():'')||'Record';
     var fields=headers.map(function(h,i){return {label:h||('Column '+(i+1)),value:cells[i]?cells[i].textContent.replace(/\s+/g,' ').trim():''};}).filter(function(f){return f.value!=='';});
     var grid='<div class="inventory-detail-grid">'+fields.map(function(f){return '<div><small>'+esc2(f.label)+'</small><b>'+esc2(f.value)+'</b></div>';}).join('')+'</div>';
-    var isDoc=(/\d/.test(first)&&(/-/.test(first)||/^[A-Z]{2,}\d/.test(first)));
+    var isDoc=/^(REQ|RS|PO|RFP|DEL|DR|DO|GRN|GRF|RCV|GRR|SO|SI|SHP|STO|MRF|GIS|GP|IT|JE|CRV|PV|PAY|IMP)(?:[-\s]|\d)/i.test(first);
     var body=grid+(isDoc?'<div class="modal-actions"><button class="button secondary" id="czPrintRow">Print slip</button></div>':'');
     try{ modal('Record - '+first,body,isDoc?'Full details - click Print slip for a formal document':'Full record details');
       var pb=document.getElementById('czPrintRow'); if(pb) pb.onclick=function(){czPrintSlip(first,fields);};
