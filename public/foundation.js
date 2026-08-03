@@ -1330,16 +1330,40 @@ async function renderPurchaseOrderForm(){
     </form>`;
   content.innerHTML=workbenchShell(body,'records');
   bindOperationalShell();
+  const itemOptionHtml=item=>`<option value="${item.id}" data-code="${esc(item.item_code)}" data-name="${esc(item.item_name)}" data-category="${esc(item.category)}">${esc(item.item_code)} · ${esc(item.item_name)}</option>`;
+  const openNewItemModal=targetRow=>{
+    const cats=['MC','BAT','BSS','SP','CHG','OTH'];
+    modal('Create new item',`<form id="newItemForm" class="operational-form grid">
+      <label><span>Item name</span><input name="itemName" required placeholder="e.g. Brake lever (D400)"></label>
+      <label><span>Class</span><select name="category">${cats.map(c=>`<option>${c}</option>`).join('')}</select></label>
+      <label class="wide"><span>Item type</span><select name="productType"><option value="SERIALIZED">Inventoriable, serialized (per-unit serial)</option><option value="QUANTITY">Inventoriable, quantity (bulk stock)</option><option value="SERVICE">Non-inventoriable (service / expense)</option></select></label>
+      <label><span>Unit of measure</span><input name="uom" value="PCS"></label>
+      <label><span>Standard cost</span><input name="standardCost" type="number" min="0" step="0.01" value="0"></label>
+      <div class="modal-actions wide"><button type="submit" class="command primary">Create item</button><button type="button" class="command" id="niCancel">Cancel</button></div>
+    </form>`,'Add a locally purchased or missing item to the master');
+    const mb=$('#modalBody');const f=mb.querySelector('#newItemForm');
+    mb.querySelector('#niCancel').onclick=()=>closeModal();
+    f.onsubmit=async e=>{e.preventDefault();const p=formDataObject(f);
+      try{const r=await api('/masters/items/register',{method:'POST',body:JSON.stringify({itemName:p.itemName,category:p.category,productType:p.productType,uom:p.uom,standardCost:Number(p.standardCost||0)})});
+        const item=r.item||r;lookups.items.push(item);
+        $$('#poLines select[data-line="itemId"]').forEach(sel=>sel.insertAdjacentHTML('beforeend',itemOptionHtml(item)));
+        const tsel=targetRow.querySelector('select[data-line="itemId"]');tsel.value=String(item.id);
+        targetRow.querySelector('[data-line="description"]').value=(tsel.selectedOptions[0]&&tsel.selectedOptions[0].dataset.name)||item.item_name||'';
+        if(Number(p.standardCost||0))targetRow.querySelector('[data-line="unitCost"]').value=Number(p.standardCost);
+        closeModal();toast('Item created: '+(item.item_code||item.item_name));
+      }catch(err){toast(err.message,'error');}};
+  };
   const addLine=()=>{
     const row=document.createElement('div');
     row.className='line-editor-row po-line';
-    row.innerHTML=`<select data-line="itemId" required><option value="">Item…</option>${lookups.items.map(item=>`<option value="${item.id}" data-code="${esc(item.item_code)}" data-name="${esc(item.item_name)}" data-category="${esc(item.category)}">${esc(item.item_code)} · ${esc(item.item_name)}</option>`).join('')}</select>
+    row.innerHTML=`<div class="po-item-cell"><select data-line="itemId" required><option value="">Item…</option>${lookups.items.map(itemOptionHtml).join('')}</select><button type="button" class="table-action po-newitem" title="Create a new item not in the master">+ New</button></div>
       <input data-line="description" placeholder="Description"><input data-line="qty" type="number" min="0.01" step="0.01" value="1" aria-label="Quantity">
       <input data-line="unitCost" type="number" min="0" step="0.01" value="0" aria-label="Unit cost"><button type="button" class="remove-line">×</button>`;
     row.querySelector('select').onchange=()=>{
       const option=row.querySelector('select').selectedOptions[0];
       row.querySelector('[data-line="description"]').value=option?.dataset.name||'';
     };
+    row.querySelector('.po-newitem').onclick=()=>openNewItemModal(row);
     row.querySelector('.remove-line').onclick=()=>row.remove();
     $('#poLines').append(row);
   };
