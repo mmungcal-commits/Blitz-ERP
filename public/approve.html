@@ -1,0 +1,89 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Purchase Order Approval · E88 Ventures Inc.</title>
+<style>
+ body{margin:0;background:#eef2f7;font-family:Arial,Helvetica,sans-serif;color:#12305f}
+ .wrap{max-width:820px;margin:0 auto;padding:18px}
+ .card{background:#fff;border:1px solid #d5deea;border-radius:8px;padding:18px;margin-bottom:14px}
+ .po-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+ .brand{font-weight:800;font-size:18px;letter-spacing:.02em}
+ .brand small{display:block;font-weight:400;color:#66788c;font-size:11px}
+ h1{font-size:16px;margin:0 0 2px}
+ table{width:100%;border-collapse:collapse;font-size:13px}
+ th,td{border-bottom:1px solid #e3e9f0;padding:6px 8px;text-align:left}
+ th{background:#f4f7fb} td.num,th.num{text-align:right}
+ .tot{font-weight:700}
+ .chain{font-size:12px}
+ .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700}
+ .b-APPROVED{background:#e5f4ea;color:#1d6f3f}.b-PENDING{background:#fdf3e0;color:#96631a}.b-REJECTED{background:#fbe9e9;color:#a3282a}
+ .sigpad{border:1px dashed #9fb4c8;border-radius:6px;background:#fbfdff;touch-action:none;width:100%;max-width:420px;height:150px;display:block}
+ .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0}
+ input[type=text]{height:34px;padding:4px 8px;border:1px solid #a9bccd;border-radius:4px;font-size:14px}
+ button{height:38px;padding:0 16px;border-radius:5px;border:1px solid #12305f;cursor:pointer;font-size:14px;font-weight:600}
+ .primary{background:#12305f;color:#fff}.ghost{background:#fff;color:#12305f}.danger{background:#fff;color:#a3282a;border-color:#c98b8b}
+ .tabs{display:flex;gap:6px;margin-bottom:6px}.tabs button{height:30px;font-size:12px;font-weight:600}
+ .muted{color:#66788c;font-size:12px}
+ .done{padding:18px;text-align:center}
+ .sig-view{max-height:52px}
+</style></head>
+<body><div class="wrap" id="app"><div class="card">Loading approval…</div></div>
+<script>
+const app=document.getElementById('app');
+const token=new URLSearchParams(location.search).get('token');
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const money=n=>Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+async function api(method,body){const r=await fetch('/api/po-approve/'+encodeURIComponent(token),{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const j=await r.json();if(!r.ok||j.ok===false)throw new Error((j&&(j.error||j.message))||'Request failed');return j.data||j;}
+function poCard(d){
+ const h=d.header,lines=d.lines||[],chain=d.chain||[];
+ const rows=lines.map(l=>`<tr><td>${esc(l.item_code||'')}</td><td>${esc(l.description||'')}</td><td class="num">${esc(l.ordered_qty)}</td><td class="num">${money(l.unit_cost)}</td><td class="num">${money(l.line_amount)}</td></tr>`).join('');
+ const chainRows=chain.map(s=>`<tr><td>${esc(s.role)}</td><td>${esc(s.approver_name||s.approver_email||'')}</td><td><span class="badge b-${esc(s.status)}">${esc(s.status)}</span></td><td>${s.signature?(s.signature_type==='DRAW'?`<img class="sig-view" src="${esc(s.signature)}">`:('<i>'+esc(s.signature)+'</i>')):''}</td><td class="muted">${esc((s.decided_at||'').slice(0,16))}</td></tr>`).join('');
+ return `<div class="card"><div class="po-head"><div class="brand">E88 VENTURES INC.<small>Purchase Order Approval</small></div>
+   <div style="text-align:right"><h1>${esc(h.purchase_order_no)}</h1><div class="muted">Status: <b>${esc(d.poStatus)}</b></div></div></div>
+   <div class="row"><div><b>Vendor:</b> ${esc(h.vendor_name)}</div><div><b>Order date:</b> ${esc(h.order_date||'')}</div><div><b>Currency:</b> ${esc(h.currency||'PHP')}</div></div>
+   <table><thead><tr><th>Item</th><th>Description</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Amount</th></tr></thead><tbody>${rows}
+     <tr class="tot"><td colspan="4" class="num">Subtotal</td><td class="num">${money(h.subtotal)}</td></tr>
+     <tr class="tot"><td colspan="4" class="num">Tax</td><td class="num">${money(h.tax_amount)}</td></tr>
+     <tr class="tot"><td colspan="4" class="num">Total</td><td class="num">${money(h.total_amount)}</td></tr></tbody></table>
+   <h3 style="margin:14px 0 6px;font-size:13px">Approval chain</h3>
+   <table class="chain"><thead><tr><th>Role</th><th>Approver</th><th>Status</th><th>Signature</th><th>When</th></tr></thead><tbody>${chainRows}</tbody></table></div>`;
+}
+function signatureBlock(d){
+ return `<div class="card"><h3 style="margin:0 0 6px">Your decision — ${esc(d.step.role)} (${esc(d.step.approver_name||'')})</h3>
+  <div class="tabs"><button class="primary" id="tabDraw">Draw</button><button class="ghost" id="tabType">Type</button></div>
+  <div id="drawWrap"><canvas class="sigpad" id="pad" width="420" height="150"></canvas><div class="row"><button class="ghost" id="clearPad" type="button">Clear</button><span class="muted">Sign with mouse or finger</span></div></div>
+  <div id="typeWrap" style="display:none"><div class="row"><input type="text" id="typedName" placeholder="Type your full name" style="min-width:260px"></div></div>
+  <div class="row"><input type="text" id="comment" placeholder="Comment (optional)" style="flex:1;min-width:260px"></div>
+  <div class="row"><button class="primary" id="approveBtn">Approve &amp; Sign</button><button class="danger" id="rejectBtn">Reject</button></div></div>`;
+}
+let mode='DRAW',pad,ctx,drawing=false,hasInk=false;
+function initPad(){pad=document.getElementById('pad');if(!pad)return;ctx=pad.getContext('2d');ctx.lineWidth=2.2;ctx.lineCap='round';ctx.strokeStyle='#12305f';
+ const pos=e=>{const r=pad.getBoundingClientRect();const t=e.touches?e.touches[0]:e;return[(t.clientX-r.left)*(pad.width/r.width),(t.clientY-r.top)*(pad.height/r.height)];};
+ const down=e=>{e.preventDefault();drawing=true;const[x,y]=pos(e);ctx.beginPath();ctx.moveTo(x,y);};
+ const move=e=>{if(!drawing)return;e.preventDefault();const[x,y]=pos(e);ctx.lineTo(x,y);ctx.stroke();hasInk=true;};
+ const up=()=>{drawing=false;};
+ pad.addEventListener('mousedown',down);pad.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+ pad.addEventListener('touchstart',down);pad.addEventListener('touchmove',move);pad.addEventListener('touchend',up);
+ document.getElementById('clearPad').onclick=()=>{ctx.clearRect(0,0,pad.width,pad.height);hasInk=false;};
+}
+function getSignature(){if(mode==='DRAW'){return hasInk?{signature:pad.toDataURL('image/png'),signatureType:'DRAW'}:null;}const n=(document.getElementById('typedName').value||'').trim();return n?{signature:n,signatureType:'TYPE'}:null;}
+async function render(){
+ if(!token){app.innerHTML='<div class="card">Missing approval token.</div>';return;}
+ let d;try{d=await api('GET');}catch(e){app.innerHTML='<div class="card">'+esc(e.message)+'</div>';return;}
+ let html=poCard(d);
+ if(d.actionable){html+=signatureBlock(d);}else if(d.poStatus==='APPROVED'){html+='<div class="card done"><h2>Fully approved</h2><p class="muted">This purchase order has completed its approval chain.</p></div>';}
+ else if(d.poStatus==='REJECTED'){html+='<div class="card done"><h2>Rejected</h2></div>';}
+ else{html+='<div class="card done"><p class="muted">This is not your step yet, or your decision is already recorded. Earlier approvers must sign first.</p></div>';}
+ app.innerHTML=html;
+ if(d.actionable){
+  initPad();
+  document.getElementById('tabDraw').onclick=()=>{mode='DRAW';document.getElementById('drawWrap').style.display='';document.getElementById('typeWrap').style.display='none';document.getElementById('tabDraw').className='primary';document.getElementById('tabType').className='ghost';};
+  document.getElementById('tabType').onclick=()=>{mode='TYPE';document.getElementById('drawWrap').style.display='none';document.getElementById('typeWrap').style.display='';document.getElementById('tabType').className='primary';document.getElementById('tabDraw').className='ghost';};
+  document.getElementById('approveBtn').onclick=async()=>{const sig=getSignature();if(!sig){alert('Please sign (draw or type your name) before approving.');return;}
+    try{const r=await api('POST',{decision:'APPROVE',...sig,comment:document.getElementById('comment').value});
+      app.innerHTML='<div class="card done"><h2>Approved</h2>'+(r.done?('<p class="muted">The purchase order is now '+esc(r.poStatus)+'.</p>'):('<p class="muted">Forwarded to the next approver: <b>'+esc(r.next.role)+'</b> ('+esc(r.next.approver_name||'')+').</p><p class="muted">Their link: <br><code>'+location.origin+'/approve.html?token='+esc(r.next.token)+'</code></p>'))+'</div>';
+    }catch(e){alert(e.message);}};
+  document.getElementById('rejectBtn').onclick=async()=>{if(!confirm('Reject this purchase order?'))return;const sig=getSignature()||{signature:'',signatureType:'TYPE'};
+    try{await api('POST',{decision:'REJECT',...sig,comment:document.getElementById('comment').value});app.innerHTML='<div class="card done"><h2>Rejected</h2></div>';}catch(e){alert(e.message);}};
+ }
+}
+render();
+</script></body></html>

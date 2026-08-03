@@ -1327,6 +1327,21 @@ async function renderPurchaseOrderForm(){
       <div class="record-tabs"><button type="button" class="active">Items</button></div>
       <section class="record-sublist"><div class="line-editor-head"><b>Purchase Order Lines</b><button type="button" id="addPOLine">Add Line</button></div>
         <div id="poLines" class="line-editor"></div></section>
+      <section class="record-sublist"><div class="line-editor-head"><b>Approval routing (no login needed — approvers act from a link)</b></div>
+        <div class="record-fields">
+          <label class="record-field"><span>Department Head name</span><input id="apDeptName"></label>
+          <label class="record-field"><span>Department Head email</span><input id="apDeptEmail" type="email" placeholder="name@nrdev.ph"></label>
+          <label class="record-field"><span>Finance name</span><input id="apFinName" value="Finance"></label>
+          <label class="record-field"><span>Finance email (embedded)</span><input id="apFinEmail" value="mmungcal@nrdev.ph" readonly></label>
+          <label class="record-field"><span>CEO name</span><input id="apCeoName"></label>
+          <label class="record-field"><span>CEO email</span><input id="apCeoEmail" type="email" placeholder="name@nrdev.ph"></label>
+        </div>
+        <div class="line-editor-head" style="margin-top:8px"><b>Your signature (creator)</b></div>
+        <div class="sig-tabs"><button type="button" class="table-action active" id="poTabDraw">Draw</button><button type="button" class="table-action" id="poTabType">Type</button></div>
+        <div id="poDrawWrap"><canvas id="poPad" class="po-sigpad" width="420" height="140"></canvas> <button type="button" class="table-action" id="poClearPad">Clear</button></div>
+        <div id="poTypeWrap" style="display:none"><input id="poTypedName" placeholder="Type your full name" style="min-width:260px"></div>
+        <p class="muted" style="font-size:12px;color:#66788c;margin:6px 0 0">Fill approver emails and sign to route for approval. Leave approvers blank to save as a plain draft.</p>
+      </section>
     </form>`;
   content.innerHTML=workbenchShell(body,'records');
   bindOperationalShell();
@@ -1368,6 +1383,20 @@ async function renderPurchaseOrderForm(){
     $('#poLines').append(row);
   };
   addLine();$('#addPOLine').onclick=addLine;$('#cancelPO').onclick=renderPurchaseOrders;
+  // creator signature pad
+  let poSigMode='DRAW',poPad,poCtx,poDrawing=false,poInk=false;
+  const initPoPad=()=>{poPad=$('#poPad');if(!poPad)return;poCtx=poPad.getContext('2d');poCtx.lineWidth=2.2;poCtx.lineCap='round';poCtx.strokeStyle='#12305f';
+    const pos=e=>{const r=poPad.getBoundingClientRect();const t=e.touches?e.touches[0]:e;return[(t.clientX-r.left)*(poPad.width/r.width),(t.clientY-r.top)*(poPad.height/r.height)];};
+    const down=e=>{e.preventDefault();poDrawing=true;const[x,y]=pos(e);poCtx.beginPath();poCtx.moveTo(x,y);};
+    const move=e=>{if(!poDrawing)return;e.preventDefault();const[x,y]=pos(e);poCtx.lineTo(x,y);poCtx.stroke();poInk=true;};
+    const up=()=>{poDrawing=false;};
+    poPad.addEventListener('mousedown',down);poPad.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+    poPad.addEventListener('touchstart',down);poPad.addEventListener('touchmove',move);poPad.addEventListener('touchend',up);
+    $('#poClearPad').onclick=()=>{poCtx.clearRect(0,0,poPad.width,poPad.height);poInk=false;};};
+  initPoPad();
+  $('#poTabDraw')&&($('#poTabDraw').onclick=()=>{poSigMode='DRAW';$('#poDrawWrap').style.display='';$('#poTypeWrap').style.display='none';$('#poTabDraw').classList.add('active');$('#poTabType').classList.remove('active');});
+  $('#poTabType')&&($('#poTabType').onclick=()=>{poSigMode='TYPE';$('#poDrawWrap').style.display='none';$('#poTypeWrap').style.display='';$('#poTabType').classList.add('active');$('#poTabDraw').classList.remove('active');});
+  const poGetSig=()=>{if(poSigMode==='DRAW'){return poInk?{signature:poPad.toDataURL('image/png'),signatureType:'DRAW'}:null;}const n=($('#poTypedName').value||'').trim();return n?{signature:n,signatureType:'TYPE'}:null;};
   $('#savePO').onclick=()=>$('#poForm').requestSubmit();
   $('#poForm').onsubmit=async event=>{
     event.preventDefault();
@@ -1379,8 +1408,20 @@ async function renderPurchaseOrderForm(){
         description:row.querySelector('[data-line="description"]').value,
         qty:Number(row.querySelector('[data-line="qty"]').value),unitCost:Number(row.querySelector('[data-line="unitCost"]').value),serialized:true};
     });
-    try{const result=await api('/procurement/purchase-orders',{method:'POST',body:JSON.stringify(payload)});toast(`Purchase order ${result.purchaseOrderNo} created`);await renderPurchaseOrders();}
-    catch(error){toast(error.message,'error');}
+    const approvers=[];
+    const add=(role,name,email)=>{if((email||'').trim())approvers.push({role,name:(name||'').trim(),email:email.trim()});};
+    add('DEPT_HEAD',$('#apDeptName').value,$('#apDeptEmail').value);
+    add('FINANCE',$('#apFinName').value||'Finance',$('#apFinEmail').value||'mmungcal@nrdev.ph');
+    add('CEO',$('#apCeoName').value,$('#apCeoEmail').value);
+    if(approvers.length){const sig=poGetSig();if(!sig){toast('Please sign (draw or type) before routing for approval.','error');return;}
+      payload.approvers=approvers;payload.creatorSignature=sig.signature;payload.creatorSignatureType=sig.signatureType;payload.creatorName=(state.session&&state.session.user&&(state.session.user.displayName||state.session.user.email))||'';}
+    try{const result=await api('/procurement/purchase-orders',{method:'POST',body:JSON.stringify(payload)});
+      if(result.chainBuilt&&result.firstToken){const link=location.origin+'/approve.html?token='+result.firstToken;
+        modal('Purchase order routed for approval',`<div class="operational-form"><p><b>${esc(result.purchaseOrderNo)}</b> is now FOR APPROVAL.</p><p style="color:#556;font-size:12px">Send this link to the first approver (Department Head). Each approver gets the next link automatically after they sign — no login needed.</p><label><span>Approval link</span><input id="poShareLink" readonly value="${esc(link)}"></label><div class="modal-actions"><button type="button" class="command primary" id="poCopyLink">Copy link</button><button type="button" class="command" id="poDoneLink">Done</button></div></div>`);
+        const mb=$('#modalBody');mb.querySelector('#poCopyLink').onclick=()=>{const i=mb.querySelector('#poShareLink');i.select();try{document.execCommand('copy');}catch(e){}try{navigator.clipboard&&navigator.clipboard.writeText(link);}catch(e){}toast('Link copied');};
+        mb.querySelector('#poDoneLink').onclick=async()=>{closeModal();await renderPurchaseOrders();};
+      } else {toast(`Purchase order ${result.purchaseOrderNo} created`);await renderPurchaseOrders();}
+    }catch(error){toast(error.message,'error');}
   };
 }
 
