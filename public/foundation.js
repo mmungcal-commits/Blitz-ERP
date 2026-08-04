@@ -1782,7 +1782,8 @@ async function renderOutboundOverview(){
 async function renderOutboundRequisitions(){
   content.innerHTML='<div class="workspace-loading">Loading requisitions…</div>';
   try{
-    const [lookups,data]=await Promise.all([api('/requisitions/lookups'),api('/requisitions/outbound-workbench')]);
+    const [lookups,data,deptData]=await Promise.all([api('/requisitions/lookups'),api('/requisitions/outbound-workbench'),api('/admin/records/departments').catch(()=>({rows:[]}))]);
+    const departments=(deptData&&deptData.rows)||[];
     const rows=data.requisitions.map(row=>`<tr><td><b>${esc(row.requisition_no)}</b></td><td>${date(row.request_date)}</td>
       <td>${esc(row.request_type||'-')}</td><td>${esc(row.holder_type||'-')}</td><td>${esc(row.holder_name||'-')}</td>
       <td>${esc(row.serial_count||0)}</td><td>${esc(row.total_qty||0)}</td><td>${date(row.required_date)}</td><td>${statusBadge(row.status)}</td>
@@ -1795,7 +1796,7 @@ async function renderOutboundRequisitions(){
           <label><span>Existing Customer / Employee</span><select name="holderPartnerId" id="holderPartner"><option value="">Enter a holder below…</option>${lookups.holders.map(row=>`<option value="${row.id}" data-name="${esc(row.name)}" data-email="${esc(row.email||'')}">${esc(row.partner_type)} · ${esc(row.name)}</option>`).join('')}</select></label>
           <label><span>Holder / Department / Demo / Project Name</span><input name="holderName" id="holderName" required></label>
           <label><span>Holder Email</span><input name="holderEmail" id="holderEmail" type="email"></label>
-          <label><span>Department</span><input name="department" value="${esc(state.session.user.department||'')}"></label>
+          <label><span>Department</span><select name="department"><option value="">Select department…</option>${departments.map(d=>`<option${d.name===(state.session.user.department||'')?' selected':''}>${esc(d.name)}</option>`).join('')}</select></label>
           <label><span>Required Date</span><input name="requiredDate" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
           <label><span>Expected Return Date</span><input name="expectedReturnDate" type="date"></label>
           <label><span>Source Sales / Lease Order</span><select name="sourceOrderId" id="sourceOrder"><option value="">Not order-related</option>${lookups.orders.map(order=>`<option value="${order.id}" data-no="${esc(order.sales_order_no)}" data-customer="${esc(order.customer_name)}" data-customer-id="${order.customer_id}" data-destination="${esc(order.delivery_address||'')}">${esc(order.sales_order_no)} · ${esc(order.transaction_type)} · ${esc(order.customer_name)}</option>`).join('')}</select></label>
@@ -2496,7 +2497,7 @@ async function renderRecordConsole(entityKey,search,includeInactive){
     }).join('');
     content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>Master Reference</h1><p>'+(cfg.financeAccess?'You have finance-level access - edits apply directly.':'Enter the edit passcode when prompted to save changes.')+' Delete deactivates a record (reversible via Restore). Every change is audited.</p></div><button class="command" id="recBack">&larr; Enterprise Modules</button></div>'+
       '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">'+tabHtml+'</div>'+
-      '<div class="workspace-commandbar"><input id="recSearch" placeholder="Search '+esc(ent.label)+'" value="'+esc(search||'')+'"><button class="command primary" id="recApply">Search</button><label class="inline-control" style="margin-left:10px"><input type="checkbox" id="recInactive" '+(includeInactive?'checked':'')+'> Include deactivated</label></div>'+
+      '<div class="workspace-commandbar"><input id="recSearch" placeholder="Search '+esc(ent.label)+'" value="'+esc(search||'')+'"><button class="command primary" id="recApply">Search</button><label class="inline-control" style="margin-left:10px"><input type="checkbox" id="recInactive" '+(includeInactive?'checked':'')+'> Include deactivated</label>'+(ent.create?'<button class="command" id="recAdd" style="margin-left:auto">+ Add '+esc(ent.label)+'</button>':'')+'</div>'+
       '<section class="workspace-card"><div class="record-table-wrap"><table class="record-table"><thead><tr>'+head+'</tr></thead><tbody>'+(body||'<tr><td colspan="'+(cols.length+1)+'" style="text-align:center;padding:20px;color:#64748b">No records.</td></tr>')+'</tbody></table></div></section></div>';
     $('#recBack').onclick=renderLaunchpad;
     $$('[data-rec-entity]').forEach(function(b){b.onclick=function(){__recEntity=b.dataset.recEntity;renderRecordConsole(b.dataset.recEntity,'',false);};});
@@ -2506,7 +2507,21 @@ async function renderRecordConsole(entityKey,search,includeInactive){
     $$('[data-rec-edit]').forEach(function(b){b.onclick=function(){recordEdit(ent.key,b.dataset.recEdit);};});
     $$('[data-rec-del]').forEach(function(b){b.onclick=function(){recordDelete(ent.key,b.dataset.recDel,false);};});
     $$('[data-rec-restore]').forEach(function(b){b.onclick=function(){recordDelete(ent.key,b.dataset.recRestore,true);};});
+    if($('#recAdd'))$('#recAdd').onclick=function(){recordCreate(ent);};
   }catch(error){showWorkspaceError(error);}
+}
+async function recordCreate(ent){
+  var form='<form id="recNewForm" class="operational-form">'+ent.editable.map(function(f){return '<label><span>'+esc(recPrettyCol(f))+'</span><input name="'+esc(f)+'"></label>';}).join('')+'<div class="modal-actions"><button type="submit" class="command primary">Add record</button></div></form>';
+  modal('Add '+esc(ent.label),form,'Fill the fields and save');
+  var fm=$('#modalBody').querySelector('#recNewForm');
+  fm.onsubmit=async function(e){e.preventDefault();
+    var auth=await recordAuthPass();if(!auth.ok)return;
+    var data={};ent.editable.forEach(function(f){var v=fm.querySelector('[name="'+f+'"]').value;if(v!=='')data[f]=v;});
+    if(!Object.keys(data).length)return toast('Fill at least one field.','error');
+    try{await api('/admin/records/'+ent.key+'/new',{method:'POST',body:JSON.stringify({data:data,passcode:auth.passcode})});
+      toast('Record added');closeModal();renderRecordConsole(ent.key,'',false);
+    }catch(err){if(/passcode/i.test(err.message||''))__recPass='';toast(err.message||'Add failed','error');}
+  };
 }
 async function recordAuthPass(){
   if(__recCfg&&__recCfg.financeAccess)return {ok:true};
