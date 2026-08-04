@@ -24,6 +24,7 @@ import { financeRoutes } from './routes/finance.js';
 import { enterpriseRoutes } from './routes/enterprise.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { poApprovalPublicRoutes } from './routes/po-approval-public.js';
+import { assemblyRoutes } from './routes/assemblies.js';
 
 const app = new Hono();
 
@@ -54,6 +55,7 @@ app.route('/api/receiving',receivingRoutes);
 app.route('/api/inventory',inventoryRoutes);
 app.route('/api/returns',returnRoutes);
 app.route('/api/procurement',procurementRoutes);
+app.route('/api/assemblies',assemblyRoutes);
 app.route('/api/requisitions',requisitionRoutes);
 app.route('/api/sales',salesRoutes);
 app.route('/api/deliveries',deliveryRoutes);
