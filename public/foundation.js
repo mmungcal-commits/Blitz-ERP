@@ -1291,7 +1291,7 @@ async function renderPurchaseOrders(){
     const rows=data.rows.map(row=>`<tr data-po="${row.id}"><td><b>${esc(row.purchase_order_no)}</b></td><td>${date(row.order_date)}</td>
       <td>${esc(row.vendor_name||'-')}</td><td>${date(row.expected_delivery_date)}</td><td>${esc(row.currency)}</td>
       <td class="num">${money(row.total_amount)}</td><td>${esc(row.line_count)}</td><td>${statusBadge(row.status)}</td>
-      <td>${row.status==='DRAFT'&&can('PROCUREMENT','APPROVE')?`<button class="table-action" data-approve-po="${row.id}">Approve</button>`:''}</td></tr>`);
+      <td><button class="table-action" data-print-po="${row.id}">Print PO</button>${row.status==='DRAFT'&&can('PROCUREMENT','APPROVE')?`<button class="table-action" data-approve-po="${row.id}">Approve</button>`:''}</td></tr>`);
     const body=`${workflowStrip(['Purchase Order','ATLAS Expected Shipment','Goods Receipt','Warehouse Visibility'],0)}
       <div class="workspace-commandbar"><button class="command primary" id="createPO">New Purchase Order</button>
         <span class="command-spacer"></span><span class="workspace-mode">PURCHASE ORDER REGISTER</span></div>
@@ -1324,6 +1324,21 @@ async function renderPurchaseOrderForm(){
         ${recordField('Payment Terms','paymentTerms','text','')}
         ${recordField('Tax Amount','taxAmount','number','0','min="0" step="0.01"')}
       </div></section>
+      <section class="record-sublist"><div class="line-editor-head"><b>Vendor & document details (printed on the PO)</b></div>
+        <div class="record-fields">
+          <label class="record-field"><span>Vendor contact person</span><input id="poVcp"></label>
+          <label class="record-field"><span>Vendor contact number</span><input id="poVcn"></label>
+          <label class="record-field"><span>Vendor email</span><input id="poVemail"></label>
+          <label class="record-field"><span>Vendor address</span><input id="poVaddr"></label>
+          <label class="record-field"><span>Vendor Tax ID</span><input id="poVtax"></label>
+          <label class="record-field"><span>Activity / Purpose</span><input id="poActivity"></label>
+          <label class="record-field"><span>Invoice number</span><input id="poInvoice"></label>
+          <label class="record-field"><span>Delivery terms</span><input id="poDelivery" value="FOB"></label>
+          <label class="record-field"><span>Other remarks</span><input id="poOther"></label>
+          <label class="record-field"><span>Requested by (name)</span><input id="poReqName"></label>
+          <label class="record-field"><span>Requested by (title)</span><input id="poReqTitle" value="Requestor"></label>
+          <label class="record-field"><span>Department</span><input id="poDept"></label>
+        </div></section>
       <div class="record-tabs"><button type="button" class="active">Items</button></div>
       <section class="record-sublist"><div class="line-editor-head"><b>Purchase Order Lines</b><button type="button" id="addPOLine">Add Line</button></div>
         <div id="poLines" class="line-editor"></div></section>
@@ -1372,7 +1387,7 @@ async function renderPurchaseOrderForm(){
     const row=document.createElement('div');
     row.className='line-editor-row po-line';
     row.innerHTML=`<div class="po-item-cell"><select data-line="itemId" required><option value="">Item…</option>${lookups.items.map(itemOptionHtml).join('')}</select><button type="button" class="table-action po-newitem" title="Create a new item not in the master">+ New</button></div>
-      <input data-line="description" placeholder="Description"><input data-line="qty" type="number" min="0.01" step="0.01" value="1" aria-label="Quantity">
+      <input data-line="description" placeholder="Description"><input data-line="remarks" placeholder="Remarks"><input data-line="unit" placeholder="Unit" value="pcs"><input data-line="qty" type="number" min="0.01" step="0.01" value="1" aria-label="Quantity">
       <input data-line="unitCost" type="number" min="0" step="0.01" value="0" aria-label="Unit cost"><button type="button" class="remove-line">×</button>`;
     row.querySelector('select').onchange=()=>{
       const option=row.querySelector('select').selectedOptions[0];
@@ -1401,11 +1416,14 @@ async function renderPurchaseOrderForm(){
   $('#poForm').onsubmit=async event=>{
     event.preventDefault();
     const payload=formDataObject(event.currentTarget);
+    const gv=id=>{const el=$(id);return el?el.value:'';};
+    payload.vendorContactPerson=gv('#poVcp');payload.vendorContactNumber=gv('#poVcn');payload.vendorEmail=gv('#poVemail');payload.vendorAddress=gv('#poVaddr');payload.vendorTaxId=gv('#poVtax');payload.activityPurpose=gv('#poActivity');payload.invoiceNumber=gv('#poInvoice');payload.deliveryTerms=gv('#poDelivery');payload.otherRemarks=gv('#poOther');payload.requestedByName=gv('#poReqName');payload.requestedByTitle=gv('#poReqTitle');payload.customerDepartment=gv('#poDept');
     payload.lines=$$('.po-line').map(row=>{
       const option=row.querySelector('select').selectedOptions[0];
       return {itemId:Number(row.querySelector('select').value),itemCode:option?.dataset.code||'',
         itemName:option?.dataset.name||'',category:option?.dataset.category||'OTH',
         description:row.querySelector('[data-line="description"]').value,
+        remarks:row.querySelector('[data-line="remarks"]')?row.querySelector('[data-line="remarks"]').value:'',unit:row.querySelector('[data-line="unit"]')?row.querySelector('[data-line="unit"]').value:'pcs',
         qty:Number(row.querySelector('[data-line="qty"]').value),unitCost:Number(row.querySelector('[data-line="unitCost"]').value),serialized:true};
     });
     const approvers=[];
@@ -3834,11 +3852,54 @@ init();
       czOpenDoc({title:'Delivery Note',meta:[['Delivery No',h.delivery_no],['Requisition',h.requisition_no],['Sales Order',h.sales_order_no],['Type',h.transaction_type],['Destination',h.destination],['Recipient',h.recipient_name],['Origin',h.origin_location_name],['Scheduled',czd(h.scheduled_date)],['Delivered',czd(h.actual_delivery_date)],['Status',h.status]],lineHead:['Item','Class','Serial No','Status'],lineRows:assets.map(function(a){return [a.item_name||a.item_code||'',a.category||'',a.serial_no||'',a.current_status||''];}),signatures:['Released by / Date','Delivered by / Date','Received by / Date']});
     }catch(e){if(typeof toast==='function')toast(e.message||'Unable to print delivery note','error');}
   }
+  function czPoDocHtml(d,chain){
+    var h=d.header||{},doc=h.doc||{},lines=d.lines||[];
+    var cur=h.currency||'PHP';var sym=cur==='USD'?'$':(cur+' ');
+    function m(v){return sym+money(v);}
+    var rows=lines.map(function(l,i){return '<tr><td class="c">'+(i+1)+'</td><td>'+esc2(l.description||l.item_name||l.item_code||'')+'</td><td>'+esc2(l.remarks||'')+'</td><td class="c">'+esc2(l.unit||'pcs')+'</td><td class="r">'+m(l.unit_cost)+'</td><td class="r">'+esc2(l.ordered_qty)+'</td><td class="r">'+m(l.line_amount)+'</td></tr>';}).join('');
+    function sig(role,label,name,title){var img='<div class="sigline"></div>';
+      if(chain){var st=null;for(var i=0;i<chain.length;i++){if((chain[i].role||'')===role){st=chain[i];break;}}if(st){if(st.signature){img=st.signature_type==='DRAW'?('<img src="'+st.signature+'">'):('<div class="typed">'+esc2(st.signature)+'</div>');}name=name||st.approver_name;}}
+      return '<div class="sg"><div class="sgv">'+img+'</div><div class="sgb"><b>'+esc2(label)+'</b><div>'+esc2(name||'')+'</div><small>'+esc2(title||'')+'</small></div></div>';}
+    return '<!doctype html><html><head><meta charset="utf-8"><title>Purchase Order '+esc2(h.purchase_order_no)+'</title><style>'+
+      '*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#12305f;padding:26px;max-width:900px;margin:0 auto}'+
+      '.top{display:flex;align-items:center;gap:12px;border-bottom:2px solid #0a2239;padding-bottom:8px}.top img{height:40px}.top h1{font-size:20px;margin:0;letter-spacing:1px}'+
+      '.ponum{display:flex;justify-content:space-between;margin:8px 0;font-weight:700}'+
+      '.sec{border:1px solid #b8cbd7;margin:8px 0}.sec .hd{background:#0a2239;color:#fff;padding:4px 8px;font-weight:700;font-size:10.5px;letter-spacing:.5px}'+
+      '.grid2{display:grid;grid-template-columns:1fr 1fr}.fld{padding:4px 8px;border-top:1px solid #e3e9f0}.fld b{color:#334}'+
+      'table.po{width:100%;border-collapse:collapse;margin:8px 0}table.po th,table.po td{border:1px solid #9fb4c8;padding:5px 7px}table.po th{background:#eef2f6}td.c{text-align:center}td.r,th.r{text-align:right}'+
+      '.tot{display:flex;justify-content:flex-end;font-weight:700;margin-top:2px}.tot div{border:1px solid #9fb4c8;padding:5px 12px}'+
+      '.rem{margin:8px 0;font-size:10.5px}.rem b{display:block}'+
+      '.sigs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-top:34px}.sg{text-align:center}.sgv{height:50px;display:flex;align-items:flex-end;justify-content:center}.sgv img{max-height:48px}.sgv .typed{font-family:cursive;font-size:18px}.sigline{width:100%;border-bottom:1px solid #333}.sgb b{display:block;font-size:10px;color:#556}.sgb div{font-weight:700;border-top:1px solid #333;padding-top:2px}.sgb small{color:#667}'+
+      '.foot{margin-top:24px;text-align:center;color:#667;font-size:10px;border-top:1px solid #cbd5e1;padding-top:6px}'+
+      '.bar{margin-top:16px}.bar button{padding:8px 16px;background:#0a2239;color:#fff;border:0;border-radius:4px;cursor:pointer}@media print{.bar{display:none}}'+
+      '</style></head><body>'+
+      '<div class="top"><img src="'+location.origin+'/logo.png" alt="E88"><h1>PURCHASE ORDER</h1></div>'+
+      '<div class="ponum"><span>PURCHASE ORDER NO: '+esc2(h.purchase_order_no)+'</span><span>DATE: '+esc2(czd(h.order_date))+'</span></div>'+
+      '<div class="sec"><div class="hd">VENDOR INFORMATION</div><div class="grid2">'+
+        '<div class="fld"><b>Vendor Name:</b> '+esc2(h.vendor_name)+'</div><div class="fld"><b>Contact Person:</b> '+esc2(doc.vendorContactPerson)+'</div>'+
+        '<div class="fld"><b>Address:</b> '+esc2(doc.vendorAddress)+'</div><div class="fld"><b>Contact Number:</b> '+esc2(doc.vendorContactNumber)+'</div>'+
+        '<div class="fld"><b>Tax ID No.:</b> '+esc2(doc.vendorTaxId)+'</div><div class="fld"><b>Email Address:</b> '+esc2(doc.vendorEmail)+'</div></div></div>'+
+      '<div class="sec"><div class="hd">CUSTOMER INFORMATION</div><div class="grid2">'+
+        '<div class="fld"><b>Company Name:</b> E88 VENTURES, INC.</div><div class="fld"><b>Contact Person:</b> '+esc2(doc.requestedByName)+'</div>'+
+        '<div class="fld"><b>Company Address:</b> 15 BRIXTON ST KAPITOLYO SECOND DISTRICT, CITY OF PASIG 1603 PH</div><div class="fld"><b>Department:</b> '+esc2(doc.customerDepartment)+'</div>'+
+        '<div class="fld"><b>Shipping Address:</b> 174 Acacia St, Octagon Village, Brgy Dela Paz, Rosario, Pasig City, Metro Manila, Philippines 1610</div><div class="fld"><b>Contact Number:</b> </div>'+
+        '<div class="fld"><b>TAX ID No.:</b> 637-589-418-0000</div><div class="fld"><b>Email Address:</b> </div></div></div>'+
+      '<div class="ponum" style="font-weight:400"><span><b>Activity/Purpose:</b> '+esc2(doc.activityPurpose)+'</span><span><b>Invoice number:</b> '+esc2(doc.invoiceNumber)+'</span></div>'+
+      '<table class="po"><thead><tr><th>Number</th><th>Particulars/Item Description</th><th>Remarks</th><th>Unit</th><th class="r">Unit Cost</th><th class="r">QTY</th><th class="r">Amount</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+      '<div class="tot"><div>Total Cost&nbsp;&nbsp;'+m(h.total_amount)+'</div></div>'+
+      '<div class="rem"><b>Additional Remarks:</b><div>PAYMENT TERMS: '+esc2(doc.paymentTerms||h.payment_terms)+'</div><div>DELIVERY TERMS: '+esc2(doc.deliveryTerms||h.incoterm)+'</div>'+(doc.otherRemarks?('<div>OTHER REMARKS: '+esc2(doc.otherRemarks)+'</div>'):'')+'</div>'+
+      '<div class="sigs">'+sig('CREATOR','Requested by',doc.requestedByName,doc.requestedByTitle)+sig('FINANCE','Reviewed by',doc.financeName||'Mark Alexis Mungcal','Finance & Accounting Manager')+sig('CEO','Approved By',doc.ceoName,'Chief Executive Officer')+'</div>'+
+      '<div class="foot">E88 Ventures, Inc. | 15 Brixton St., Kapitolyo, Pasig City 1603 Philippines</div>'+
+      '<div class="bar"><button onclick="window.print()">Print this document</button></div></body></html>';
+  }
+  async function czPrintPO(id){try{var d=await api('/procurement/purchase-orders/'+id);var w=window.open('','_blank','width=900,height=1000');if(!w){alert('Please allow pop-ups to print.');return;}w.document.write(czPoDocHtml(d,null));w.document.close();}catch(e){if(typeof toast==='function')toast(e.message||'Unable to print PO','error');}}
+  window.czPrintPO=czPrintPO;
   window.czPrintRequisition=czPrintRequisition;window.czPrintPickSlip=czPrintPickSlip;window.czPrintGRN=czPrintGRN;window.czPrintDelivery=czPrintDelivery;
   document.addEventListener('click',function(ev){
     var t=ev.target;if(!t||!t.closest)return;
     var pr=t.closest('[data-print-req]');if(pr){ev.preventDefault();ev.stopPropagation();czPrintRequisition(pr.getAttribute('data-print-req'));return;}
     var pp=t.closest('[data-print-pickslip]');if(pp){ev.preventDefault();ev.stopPropagation();czPrintPickSlip(pp.getAttribute('data-print-pickslip'));return;}
+    var ppo=t.closest('[data-print-po]');if(ppo){ev.preventDefault();ev.stopPropagation();czPrintPO(ppo.getAttribute('data-print-po'));return;}
     var pg=t.closest('[data-print-grn]');if(pg){ev.preventDefault();ev.stopPropagation();czPrintGRN(pg.getAttribute('data-print-grn'));return;}
     var pd=t.closest('[data-print-dlv]');if(pd){ev.preventDefault();ev.stopPropagation();czPrintDelivery(pd.getAttribute('data-print-dlv'));return;}
   },true);
