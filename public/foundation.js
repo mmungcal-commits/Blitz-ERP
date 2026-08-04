@@ -126,12 +126,15 @@ function moduleList(){
   ];
 }
 function moduleByCode(code){return moduleList().find(module=>module.code===code);}
+function isDemoMode(){try{return localStorage.getItem('e88-live')!=='1';}catch(e){return true;}}
 function can(permission,action='VIEW'){
+  if(isDemoMode())return true;
   if(state.session?.user?.role==='ADMIN')return true;
   const row=(state.session?.permissions||[]).find(value=>value.module===permission);
   return !!row?.[`can_${action.toLowerCase()}`];
 }
 function canWorkspace(code){
+  if(isDemoMode())return true;
   return state.session?.user?.role==='ADMIN'||state.workspaceAccess.includes(code);
 }
 function workspaceTabs(code=state.module?.code){
@@ -281,6 +284,7 @@ async function init(){
     state.catalog=state.session.workspaceCatalog||{groups:[],tools:[],addons:[]};
     var __hiddenModules=['sd-crm','sd-demand-planning','sd-warranty-management','sd-pim','sd-customer-portal','sd-lease-contract-management','ip-inventory-analysis','ip-subcontracting'];
     if(state.catalog&&state.catalog.groups)state.catalog.groups.forEach(function(g){if(g.items)g.items=g.items.filter(function(it){return __hiddenModules.indexOf(it.code)<0;});});
+    if(state.catalog&&state.catalog.groups)state.catalog.groups.forEach(function(g){if(g.items)g.items.forEach(function(it){if(it.code==='fa-receivables-payables')it.label='Payables Management';});});
     state.workspaceAccess=state.session.workspaceAccess||[];
     $('#userBadge').innerHTML=`<b>${esc(state.session.user.displayName||state.session.user.email)}</b><small>${esc(state.session.user.role)} · ${esc(state.session.user.email)}</small>`;
     $('#accessBtn').classList.toggle('hidden',state.session.user.role!=='ADMIN');
@@ -892,7 +896,7 @@ async function renderPaymentRequests(){
           row.status==='APPROVED'?'MARK_PAID':row.status==='PAYMENT_PREPARED'?'CONFIRM_PAID':'';
       return `<tr><td><b>${esc(row.request_no)}</b></td><td>${date(row.request_date)}</td><td>${esc(row.payee_name)}</td>
         <td>${esc(row.department)}</td><td>${esc(row.purchase_order_no||'-')}</td><td class="num">${money(row.net_payable)}</td>
-        <td>${financeStatus(row.status)}</td><td>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(action.replaceAll('_',' '))}</button>`:'-'}</td></tr>`;
+        <td>${financeStatus(row.status)}</td><td><button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(action.replaceAll('_',' '))}</button>`:''}</td></tr>`;
     });
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newRfp">New Request for Payment</button>
       <span class="command-spacer"></span><span class="workspace-mode">CONTROLLED PAYMENT WORKFLOW</span></div>
@@ -900,6 +904,8 @@ async function renderPaymentRequests(){
       <section class="workspace-card"><header><h2>Request for Payment Worklist</h2><span>${data.rows.length} requests</span></header>
         ${financeTable(['RFP','Date','Payee','Department','PO','Net Payable','Status','Action'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'approvals');bindWorkbench();
+    window.__rfpRows={};data.rows.forEach(function(x){window.__rfpRows[x.id]=x;});
+    $$('[data-print-rfp]').forEach(function(b){b.onclick=function(){if(window.czPrintRfp)window.czPrintRfp(window.__rfpRows[b.dataset.printRfp]);};});
     $('#newRfp').onclick=()=>openRfpForm(data.purchaseOrders,master);
     $$('[data-rfp-action]').forEach(button=>button.onclick=async()=>{
       const body={action:button.dataset.rfpAction};
@@ -3894,6 +3900,63 @@ init();
   }
   async function czPrintPO(id){try{var d=await api('/procurement/purchase-orders/'+id);var w=window.open('','_blank','width=900,height=1000');if(!w){alert('Please allow pop-ups to print.');return;}w.document.write(czPoDocHtml(d,null));w.document.close();}catch(e){if(typeof toast==='function')toast(e.message||'Unable to print PO','error');}}
   window.czPrintPO=czPrintPO;
+  function czRfpDocHtml(r){
+    r=r||{};var esc=esc2;var cur=r.currency||'PHP';
+    function money2(n){return Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
+    var bd='border:1px solid #b9c0cf;padding:4px 8px;font-size:11px';
+    var bar=function(t){return '<tr><td colspan="2" style="background:#d9dde4;border:1px solid #b9c0cf;padding:3px 8px;font-size:11px;font-weight:bold">'+t+'</td></tr>';};
+    var kv=function(k,v){return '<span style="color:#333">'+k+':</span> <b>'+esc(v||'')+'</b>';};
+    var ck=function(on){return '<span style="display:inline-block;width:12px;height:12px;border:1px solid #555;text-align:center;line-height:11px;margin-right:5px;font-size:10px;vertical-align:middle">'+(on?'X':'')+'</span>';};
+    var rt=String(r.request_type||'').toLowerCase(),pt=String(r.payment_type||'').toLowerCase(),mop=String(r.mode_of_payment||'').toLowerCase();
+    var gross=Number(r.gross_amount||r.amount||0),ewt=Number(r.withholding_amount||0),net=Number(r.net_payable||(gross-ewt));
+    var line='<tr>'+['<td style="'+bd+'">'+esc(czd(r.invoice_date||r.request_date))+'</td>','<td style="'+bd+'">'+esc(r.supplier_invoice_no||'')+'</td>','<td style="'+bd+'">'+esc(r.cost_center||'')+'</td>','<td style="'+bd+'">'+esc(r.purpose||'')+'</td>','<td style="'+bd+'">'+esc(r.gl_account||'')+'</td>','<td style="'+bd+';text-align:center">'+esc(r.uom||'-')+'</td>','<td style="'+bd+';text-align:center">1</td>','<td style="'+bd+';text-align:right">'+money2(net)+'</td>','<td style="'+bd+';text-align:right">'+money2(net)+'</td>'].join('')+'</tr>';
+    var sigCol=function(label,name,ts,title){return '<td style="border:1px solid #b9c0cf;padding:8px 6px;vertical-align:top;width:25%;text-align:center"><div style="font-size:10px;color:#333;margin-bottom:2px">'+label+'</div><div style="height:34px"></div><div style="font-size:16px;font-weight:bold;letter-spacing:1px;color:#15294B">'+esc(ts||'')+'</div><div style="border-top:1px solid #15294B;margin-top:2px;padding-top:3px;font-weight:bold;font-size:11px">'+esc(name||' ')+'</div><div style="font-size:10px;color:#445;font-style:italic">'+esc(title)+'</div></td>';};
+    var reqName=r.requestor_name||r.requested_by||r.payee_name||'';
+    return '<!doctype html><html><head><meta charset="utf-8"><title>Request for Payment '+esc(r.request_no||'')+'</title></head>'
+     +'<body style="font-family:Arial,Helvetica,sans-serif;background:#eef1f5;margin:0;color:#222"><div style="max-width:1000px;margin:16px auto;background:#fff;padding:30px">'
+     +'<table style="width:100%;border-collapse:collapse;margin-bottom:10px"><tr><td style="width:30%;vertical-align:middle"><img src="'+location.origin+'/logo.png" style="height:42px"></td>'
+     +'<td style="width:70%;text-align:center;vertical-align:middle"><div style="font-size:17px;font-weight:bold;letter-spacing:1px;color:#15294B">REQUEST FOR PAYMENT FORM</div></td></tr></table>'
+     +'<table style="width:100%;border-collapse:collapse">'
+     +'<tr><td style="'+bd+';width:50%">'+kv('RFP Code',r.request_no)+'</td><td style="'+bd+';width:50%">'+kv('Request Date',czd(r.request_date))+'</td></tr>'
+     +bar('REQUESTING PARTY')
+     +'<tr><td style="'+bd+'">'+kv('Name',reqName)+'</td><td style="'+bd+'">'+kv('Email Address',r.requestor_email||'')+'</td></tr>'
+     +'<tr><td style="'+bd+'">'+kv('Department',r.department)+'</td><td style="'+bd+'">'+kv('Contact No.',r.contact_no||'')+'</td></tr>'
+     +bar('REQUEST FOR PAYMENT DETAILS')
+     +'<tr><td style="'+bd+'" colspan="2">'+kv('Activity/Purpose',r.purpose)+'</td></tr>'
+     +'<tr><td style="'+bd+'" colspan="2">'+kv('Purchase Order No',r.purchase_order_no||'N/A')+'</td></tr>'
+     +'<tr><td style="'+bd+';vertical-align:top"><div style="color:#333;font-size:10px;margin-bottom:3px">Request Type: <i>(select all that applies)</i></div>'
+     +ck(rt.indexOf('cash')>-1)+'Cash Advance<br>'+ck(rt.indexOf('reimb')>-1)+'Reimbursement<br>'+ck(rt.indexOf('per diem')>-1)+'Per Diem Request<br>'+ck(rt.indexOf('vendor')>-1)+'Payment to Vendor</td>'
+     +'<td style="'+bd+';vertical-align:top"><div style="color:#333;font-size:10px;margin-bottom:3px">Attachments: <i>(click all that apply)</i></div>'
+     +ck(false)+'Billing/Statement of Account<br>'+ck(false)+'Sales/Service Invoice/Official Receipts<br>'+ck(false)+'Quotation/Proposal<br>'+ck(false)+'Workplan<br>'+ck(false)+'Travel Details'
+     +'<div style="margin-top:8px;text-align:right"><div style="font-size:10px;color:#333">Checked and noted by</div></div></td></tr>'
+     +'<tr><td style="'+bd+';vertical-align:top"><div style="color:#333;font-size:10px;margin-bottom:3px">Payment Type: <i>(select all that applies)</i></div>'
+     +ck(pt.indexOf('partial')>-1)+'Partial<br>'+ck(pt.indexOf('full')>-1)+'Full<br>'+ck(pt.indexOf('subscription')>-1)+'Subscription</td>'
+     +'<td style="'+bd+';vertical-align:top">'+kv('Payment Due',czd(r.due_date))+'</td></tr>'
+     +bar('PAYEE INFORMATION')
+     +'<tr><td style="'+bd+';vertical-align:top">'+kv('Name',r.payee_name)+'<br>'+kv('Address',r.payee_address||'')+'<br><br><span style="color:#333">Mode of Payment:</span><br>'
+     +ck(mop.indexOf('check')>-1)+'Check<br>'+ck(mop.indexOf('bank')>-1||mop.indexOf('deposit')>-1||mop.indexOf('transfer')>-1)+'Bank Deposit/Transfer<br><span style="font-size:10px;color:#555;margin-left:18px">Bank Name: '+esc(r.bank_name||'')+'<br><span style="margin-left:18px">Account Name: '+esc(r.account_name||'')+'</span><br><span style="margin-left:18px">Account No.: '+esc(r.account_no||'')+'</span></span><br>'
+     +ck(mop.indexOf('online')>-1)+'Online Payment<br>'+ck(mop.indexOf('credit')>-1)+'Credit Card</td>'
+     +'<td style="'+bd+';vertical-align:top">'+kv('Contact Person',r.payee_name)+'<br>'+kv('Contact Number',r.payee_contact||'')+'<br>'+kv('Email Address',r.payee_email||'')+'<br>'+kv('TIN',r.payee_tin||'')+'<br>'+kv('Vendor Code',r.vendor_code||'')+'<br>'+kv('Payment Currency',cur)+'</td></tr>'
+     +bar('PARTICULARS')+'</table>'
+     +'<table style="width:100%;border-collapse:collapse;font-size:10.5px"><tr style="background:#eef1f5">'
+     +['Date','Invoice #','Cost Center','Particulars','GL Account','UoM','QTY','Unit Cost','Amount ('+esc(cur)+')'].map(function(h){return '<th style="'+bd+'">'+h+'</th>';}).join('')+'</tr>'+line
+     +'<tr><td colspan="8" style="'+bd+';text-align:right;color:#333">Total</td><td style="'+bd+';text-align:right;font-weight:bold">'+money2(gross)+'</td></tr>'
+     +'<tr><td colspan="8" style="'+bd+';text-align:right;color:#333">Less EWT</td><td style="'+bd+';text-align:right">'+money2(ewt)+'</td></tr>'
+     +'<tr><td colspan="8" style="'+bd+';text-align:right;color:#333">NEW Total</td><td style="'+bd+';text-align:right;font-weight:bold">'+money2(net)+'</td></tr></table>'
+     +'<div style="padding:4px 0;font-size:10px;color:#7a8194">for Accounting Only</div>'
+     +'<div style="padding:2px 0;font-size:11px"><span style="color:#333">Additional Remarks:</span> '+esc(r.remarks||'')+'</div>'
+     +'<table style="width:100%;border-collapse:collapse;margin-top:6px"><tr>'
+     +sigCol('Requested by',reqName,czd(r.request_date),'Requestor')
+     +sigCol('Reviewed By',r.department_approved_by||r.dept_head_by||'',czd(r.department_approved_at),'Operations & Product Director')
+     +sigCol('Approved By',r.finance_validated_by||r.finance_by||'Mark Alexis Mungcal',czd(r.finance_validated_at),'Finance & Accounting Manager')
+     +sigCol('Approved By',r.final_approved_by||r.ceo_by||'',czd(r.final_approved_at),'Chief Executive Officer')
+     +'</tr></table>'
+     +'<div style="text-align:center;font-size:9.5px;color:#7a8194;padding:8px 5px;margin-top:6px">E88 VENTURES INC. | 15 Brixton St., Kapitolyo, Pasig City 1603 Philippines</div>'
+     +'<div style="margin-top:14px"><button onclick="window.print()" style="padding:8px 16px;background:#0a2239;color:#fff;border:0;border-radius:4px;cursor:pointer">Print this document</button></div>'
+     +'<style>@media print{button{display:none}}</style></div></body></html>';
+  }
+  function czPrintRfp(r){try{var w=window.open('','_blank','width=1040,height=1000');if(!w){alert('Please allow pop-ups to print.');return;}w.document.write(czRfpDocHtml(r));w.document.close();}catch(e){if(typeof toast==='function')toast('Unable to print RFP','error');}}
+  window.czPrintRfp=czPrintRfp;
   window.czPrintRequisition=czPrintRequisition;window.czPrintPickSlip=czPrintPickSlip;window.czPrintGRN=czPrintGRN;window.czPrintDelivery=czPrintDelivery;
   document.addEventListener('click',function(ev){
     var t=ev.target;if(!t||!t.closest)return;
