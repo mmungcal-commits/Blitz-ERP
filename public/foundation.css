@@ -1,6 +1,3 @@
-/* E88 logo: bigger + transparent background (wordmark stays white in the image) */
-img[src*="logo.png"]{ background:transparent !important; border-radius:0 !important; box-shadow:none !important; height:48px !important; width:auto !important; }
-
 /* E88 clean enterprise foundation — no legacy ERP screens */
 :root{
   --navy:#0a2239;--navy-2:#102f4a;--blue:#267cbe;--blue-dark:#1669a7;
@@ -275,3 +272,5 @@ button{cursor:pointer}
 /* logo polish: soften the hard black box + keep aspect */
 .loading-screen img,.auth-brand img,.sidebar .brand img,.launchpad-controls img{border-radius:7px;object-fit:contain;background:#ffffff;padding:4px 6px;box-shadow:0 0 0 1px rgba(0,0,0,.08)}
 .launchpad-controls img{height:34px;width:auto}
+
+.form-note{color:#657586;font-size:12px;line-height:1.4;margin:2px 0 0}

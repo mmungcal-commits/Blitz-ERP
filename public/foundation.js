@@ -911,11 +911,12 @@ async function renderPaymentRequests(){
           row.status==='APPROVED'?'MARK_PAID':row.status==='PAYMENT_PREPARED'?'CONFIRM_PAID':'';
       return `<tr><td><b>${esc(row.request_no)}</b></td><td>${date(row.request_date)}</td><td>${esc(row.payee_name)}</td>
         <td>${esc(row.department)}</td><td>${esc(row.purchase_order_no||'-')}</td><td class="num">${money(row.net_payable)}</td>
-        <td>${financeStatus(row.status)}</td><td><button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(action.replaceAll('_',' '))}</button>`:''}</td></tr>`;
+        <td>${financeStatus(row.status)}</td><td><button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(rfpActionLabel(action))}</button>`:''}</td></tr>`;
     });
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newRfp">New Request for Payment</button>
       <span class="command-spacer"></span><span class="workspace-mode">CONTROLLED PAYMENT WORKFLOW</span></div>
-      ${workflowStrip(['Request','Department Approval','Finance Validation','Final Approval','Payment'],2)}
+      ${workflowStrip(['Requestor','Dept Head','Finance Review','CEO Approval','Instruct Bank (MNC)','Proof & Close'],2)}
+      <p class="form-note" style="margin:0 0 12px">Controlled payment flow: Requestor raises the request, the Department Head approves, Finance reviews, the CEO gives final approval, then Finance instructs the disbursing bank (MNC), uploads proof of payment, and the requestor is notified on completion.</p>
       <section class="workspace-card"><header><h2>Request for Payment Worklist</h2><span>${data.rows.length} requests</span></header>
         ${financeTable(['RFP','Date','Payee','Department','PO','Net Payable','Status','Action'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'approvals');bindWorkbench();
@@ -940,15 +941,28 @@ function runRfpAction(action,id,master){
   }
   if(action==='MARK_PAID'){
     const banks=(master&&master.bankAccounts)||[];if(!banks.length)return toast('Create a bank account first.','error');
-    modal('Record Payment',`<form id="rfpPayForm" class="operational-form grid">
+    modal('Prepare Payment — Instruct Bank (MNC)',`<form id="rfpPayForm" class="operational-form grid">
+      <label class="wide"><span>Disbursing bank / partner email (MNC)</span><input name="bankInstructionEmail" type="email" placeholder="treasury@bank.com"></label>
       <label class="wide"><span>Bank account</span><select name="bankAccountId">${banks.map(b=>`<option value="${b.id}">${esc(b.bank_name||b.account_name||b.bank_account_code||('Bank '+b.id))}</option>`).join('')}</select></label>
       <label class="wide"><span>Bank payment reference</span><input name="paymentReference" required placeholder="e.g. BT-2026-0102"></label>
+      <p class="form-note">A payment instruction email is issued to the bank (MNC) at this step once the mail relay is connected.</p>
+      <button class="command primary">Prepare payment</button></form>`);
+    $('#rfpPayForm').onsubmit=event=>{event.preventDefault();const f=formDataObject(event.currentTarget);if(!f.paymentReference)return;closeModal();submitRfpAction(id,{action:action,bankAccountId:f.bankAccountId||banks[0].id,paymentReference:f.paymentReference,bankInstructionEmail:f.bankInstructionEmail});};
+    return;
+  }
+  if(action==='CONFIRM_PAID'){
+    modal('Confirm Payment — Attach Proof',`<form id="rfpProofForm" class="operational-form grid">
+      <label class="wide"><span>Proof of payment reference / link</span><input name="proofReference" required placeholder="Bank receipt no. or document URL"></label>
+      <label class="wide"><span>Attach receipt file</span><input name="proofFile" type="file" disabled>
+        <small class="form-note">File upload activates once Cloudflare R2 storage is enabled; use the reference/link field for now.</small></label>
+      <p class="form-note">On confirm, the requestor is notified that payment is complete (once the mail relay is connected).</p>
       <button class="command primary">Confirm payment</button></form>`);
-    $('#rfpPayForm').onsubmit=event=>{event.preventDefault();const f=formDataObject(event.currentTarget);if(!f.paymentReference)return;closeModal();submitRfpAction(id,{action:action,bankAccountId:f.bankAccountId||banks[0].id,paymentReference:f.paymentReference});};
+    $('#rfpProofForm').onsubmit=event=>{event.preventDefault();const f=formDataObject(event.currentTarget);if(!f.proofReference)return;closeModal();submitRfpAction(id,{action:action,proofReference:f.proofReference});};
     return;
   }
   submitRfpAction(id,{action:action});
 }
+function rfpActionLabel(a){return ({SUBMIT:'Submit',DEPARTMENT_APPROVE:'Dept Head Approve',FINANCE_VALIDATE:'Finance Validate',FINAL_APPROVE:'CEO Approve',MARK_PAID:'Prepare Payment',CONFIRM_PAID:'Confirm & Attach Proof'})[a]||String(a).replaceAll('_',' ');}
 function openRfpForm(purchaseOrders,master){
   modal('New Request for Payment',`<form id="rfpForm" class="operational-form grid">
     <label><span>Entity</span><select name="entityCode">${master.entities.map(x=>`<option>${esc(x.entity_code)}</option>`).join('')}</select></label>
