@@ -109,6 +109,7 @@ jobs:
           npx wrangler d1 execute DB --remote --file=migrations/0033_rfp_alignment.sql
           npx wrangler d1 execute DB --remote --file=migrations/0034_supply_chain_master.sql
           npx wrangler d1 execute DB --remote --file=migrations/0033_demo_rfp_requestors.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0035_master_skus.sql
 
       # ---------- Empty-database bootstrap (unchanged) ----------
       - name: Confirm D1 is empty before bootstrap
