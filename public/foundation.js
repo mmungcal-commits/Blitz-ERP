@@ -2124,6 +2124,47 @@ async function openInventoryDetail(serial){
   }catch(error){$('#modalBody').innerHTML=`<div class="workspace-error"><b>Unable to load serial details</b><span>${esc(error.message)}</span></div>`;}
 }
 
+async function renderAssemblyWorkbench(){
+  content.innerHTML='<div class="workspace-loading">Loading assembly workbench…</div>';
+  try{
+    const [lookups,data]=await Promise.all([api('/masters/lookups'),api('/assemblies')]);
+    const itemOpt=(lookups.items||[]).map(i=>`<option value="${i.id}" data-code="${esc(i.item_code)}" data-name="${esc(i.item_name)}" data-cost="${esc(i.standard_cost||0)}">${esc(i.item_code)} · ${esc(i.item_name)}</option>`).join('');
+    const locOpt=(lookups.locations||[]).map(l=>`<option value="${l.id}" data-code="${esc(l.code)}">${esc(l.code)} · ${esc(l.name)}</option>`).join('');
+    const rows=(data.rows||[]).map(a=>`<tr><td><b>${esc(a.assembly_no)}</b></td><td>${esc(a.output_item_name)}</td><td class="num">${esc(a.component_count)}</td><td class="num">${money(a.total_cost)}</td><td>${esc(a.location_code||'-')}</td><td>${statusBadge(a.status)}</td><td>${a.status==='BUILT'?`<button class="table-action" data-disasm="${a.id}">Disassemble</button>`:'-'}</td></tr>`);
+    const body=`<div class="ramco-layout"><div class="ramco-main">
+      <section class="workspace-card"><header><div><h2>Build Assembly</h2><span>Combine parts into one bundled unit. Serialized parts become unusable (In Assembly) until you disassemble.</span></div></header>
+        <form id="asmForm" class="operational-form grid">
+          <label><span>Assembly / output name</span><input name="outputItemName" required placeholder="e.g. Swap Station Cabinet (built)"></label>
+          <label><span>Location</span><select name="locationId" id="asmLoc"><option value="">Select…</option>${locOpt}</select></label>
+          <div class="wide line-editor-head"><b>Components</b><button type="button" id="asmAddLine">Add component</button></div>
+          <div id="asmLines" class="wide line-editor"></div>
+          <label class="wide"><span>Notes</span><input name="notes"></label>
+          <div class="wide" style="display:flex;justify-content:space-between;align-items:center;margin-top:6px"><b>Total assembled cost: <span id="asmTotal">0.00</span></b><button class="command primary">Build Assembly</button></div>
+        </form></section>
+      <section class="workspace-card"><header><div><h2>Assembly Register</h2><span>${(data.rows||[]).length} assemblies</span></div></header>
+        ${operationalTable(['Assembly','Output','Parts','Rolled Cost','Location','Status','Action'],rows)}</section>
+      </div><aside class="ramco-rail"><section><header>Assembly / BOM</header><div class="control-note"><b>Cost roll-up</b><p>The assembled unit's cost is the sum of its parts. Disassembling returns each serialized part to Available.</p></div></section>
+      <section><header>Go to</header><div class="ramco-action-links"><button type="button" id="asmBackMove">Stock Movement</button></div></section></aside></div>`;
+    content.innerHTML=workbenchShell(body,'approvals');bindOperationalShell();
+    const recalc=()=>{let t=0;$$('.asm-line').forEach(r=>{const q=Number(r.querySelector('[data-a="qty"]').value||0),c=Number(r.querySelector('[data-a="cost"]').value||0);t+=q*c;});const el=$('#asmTotal');if(el)el.textContent=money(t);};
+    const addLine=()=>{const row=document.createElement('div');row.className='line-editor-row asm-line';
+      row.innerHTML=`<select data-a="item"><option value="">Item…</option>${itemOpt}</select><input data-a="serial" placeholder="Serial (optional)"><input data-a="qty" type="number" min="0.01" step="0.01" value="1"><input data-a="cost" type="number" min="0" step="0.01" value="0"><button type="button" class="remove-line">×</button>`;
+      row.querySelector('[data-a="item"]').onchange=e=>{const o=e.target.selectedOptions[0];if(o&&o.dataset.cost)row.querySelector('[data-a="cost"]').value=o.dataset.cost;recalc();};
+      row.querySelector('[data-a="qty"]').oninput=recalc;row.querySelector('[data-a="cost"]').oninput=recalc;
+      row.querySelector('.remove-line').onclick=()=>{row.remove();recalc();};
+      $('#asmLines').append(row);};
+    addLine();$('#asmAddLine').onclick=addLine;
+    $('#asmBackMove')&&($('#asmBackMove').onclick=()=>renderStockMovement());
+    $('#asmForm').onsubmit=async e=>{e.preventDefault();
+      const fd=formDataObject($('#asmForm'));const loc=$('#asmLoc').selectedOptions[0];
+      const components=$$('.asm-line').map(r=>{const o=r.querySelector('[data-a="item"]').selectedOptions[0];return {itemId:Number(r.querySelector('[data-a="item"]').value)||null,itemCode:o?o.dataset.code:'',itemName:o?o.dataset.name:'',serialNo:r.querySelector('[data-a="serial"]').value,qty:Number(r.querySelector('[data-a="qty"]').value||0),unitCost:Number(r.querySelector('[data-a="cost"]').value||0)};}).filter(x=>x.itemName&&x.qty>0);
+      if(!components.length){toast('Add at least one component.','error');return;}
+      const payload={outputItemName:fd.outputItemName,locationId:$('#asmLoc').value||null,locationCode:loc?loc.dataset.code:'',notes:fd.notes,components};
+      try{const r=await api('/assemblies/build',{method:'POST',body:JSON.stringify(payload)});toast(`${r.assemblyNo} built · cost ${money(r.totalCost)}`);await renderAssemblyWorkbench();}catch(err){toast(err.message,'error');}};
+    $$('[data-disasm]').forEach(b=>b.onclick=async()=>{if(!confirm('Disassemble this assembly? Serialized parts return to Available.'))return;try{await api('/assemblies/'+b.dataset.disasm+'/disassemble',{method:'POST',body:'{}'});toast('Disassembled');await renderAssemblyWorkbench();}catch(err){toast(err.message,'error');}});
+  }catch(error){showWorkspaceError(error);}
+}
+
 async function renderStockMovement(){
   content.innerHTML='<div class="workspace-loading">Loading movement workbench…</div>';
   try{
@@ -2145,12 +2186,13 @@ async function renderStockMovement(){
       <section class="workspace-card"><header><h2>Movement Register</h2><span>${movements.total} entries</span></header>
         ${operationalTable(['Movement','Date','Type','Serial','Item','From','To','Status','Posted By'],rows)}</section>
       </div><aside class="ramco-rail"><section><header>Stock Control</header><div class="control-note"><b>One serial, one position</b><p>Every movement updates current location and writes an immutable stock-ledger entry. Click any register row to move that serial.</p></div></section>
-      <section><header>Master Data</header><div class="ramco-action-links"><button type="button" id="openItemMaster">Item Master (Products)</button></div></section></aside></div>`;
+      <section><header>Master Data</header><div class="ramco-action-links"><button type="button" id="openItemMaster">Item Master (Products)</button><button type="button" id="openAssembly">Assembly / BOM</button></div></section></aside></div>`;
     content.innerHTML=workbenchShell(body,'approvals');
     bindOperationalShell();
     var __ms=$('#moveScan');if(__ms)__ms.onclick=()=>scanQrWithCamera(value=>{var el=$('#moveSerial');if(el)el.value=value;});
     $$('[data-move-serial]').forEach(function(tr){tr.onclick=function(){var s=tr.getAttribute('data-move-serial');var el=$('#moveSerial');if(el){el.value=s;el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});toast('Serial '+s+' loaded into Post Stock Movement');}};});
     var __im=$('#openItemMaster');if(__im)__im.onclick=function(){renderProductRegistration();};
+    var __ab=$('#openAssembly');if(__ab)__ab.onclick=function(){renderAssemblyWorkbench();};
     $('#movementForm').onsubmit=async event=>{
       event.preventDefault();
       const payload=formDataObject(event.currentTarget);
