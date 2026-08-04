@@ -3144,8 +3144,8 @@ function openSalesOrderForm(lookups){
       ${[...lookups.customers,...lookups.employees].map(row=>`<option value="${row.id}">${esc(row.partner_code)} · ${esc(row.name)}${row.credit_status?` · ${esc(row.credit_status)}`:''}</option>`).join('')}</select></label>
     <label><span>Contract Start</span><input name="contractStart" type="date"></label><label><span>Contract End / Expected Return</span><input name="contractEnd" type="date"></label>
     <label class="wide"><span>Delivery / Deployment Address</span><input name="deliveryAddress" required></label>
-    <div class="wide line-editor-head"><b>Items and Serial Numbers</b><button type="button" id="addSalesLine">Add Line</button></div>
-    <div id="salesLines" class="wide line-editor"></div><button class="command primary">Create Sales Order</button>
+    <p class="form-note wide">Items and serial numbers are allocated later on the linked requisition, which drives the actual stock movement. This keeps the sales order as the commercial header.</p>
+    <button class="command primary">Create Sales Order</button>
   </form>`);
   const addLine=()=>{
     const row=document.createElement('div');row.className='line-editor-row sales-line';
@@ -3159,16 +3159,10 @@ function openSalesOrderForm(lookups){
     };
     row.querySelector('.remove-line').onclick=()=>row.remove();$('#salesLines').append(row);
   };
-  addLine();$('#addSalesLine').onclick=addLine;
   $('#salesOrderForm').onsubmit=async event=>{
     event.preventDefault();const body=formDataObject(event.currentTarget);
     body.customerId=Number(body.customerId);
-    body.lines=$$('.sales-line').map(row=>{
-      const item=lookups.items.find(value=>value.id===Number(row.querySelector('[data-sales="itemId"]').value));
-      return {itemCode:item?.item_code,itemName:item?.item_name,category:item?.category,
-        serialNo:row.querySelector('[data-sales="serialNo"]').value,qty:Number(row.querySelector('[data-sales="qty"]').value||0),
-        unitPrice:Number(row.querySelector('[data-sales="unitPrice"]').value||0),description:row.querySelector('[data-sales="description"]').value||item?.item_name};
-    }).filter(line=>line.itemCode||line.serialNo);
+    body.lines=[];
     try{const result=await api('/sales',{method:'POST',body:JSON.stringify(body)});closeModal();toast(`${result.salesOrderNo} created`);await renderSalesOrderWorkspace('records');}
     catch(error){toast(error.message,'error');}
   };
