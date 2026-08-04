@@ -269,3 +269,6 @@ button{cursor:pointer}
 .po-item-cell{display:flex;gap:4px;min-width:0;align-items:center}.po-item-cell select{min-width:0;flex:1}.po-newitem{flex:none;white-space:nowrap;font-size:11px;padding:4px 7px}
 .po-sigpad{border:1px dashed #9fb4c8;border-radius:6px;background:#fbfdff;touch-action:none;width:100%;max-width:420px;height:140px;display:block;margin-bottom:6px}.sig-tabs{display:flex;gap:6px;margin:4px 0}.sig-tabs .table-action.active{background:#12305f;color:#fff}
 .po-line{grid-template-columns:1.4fr 1.5fr 1.1fr .5fr .5fr .7fr 30px}
+/* logo polish: soften the hard black box + keep aspect */
+.loading-screen img,.auth-brand img,.sidebar .brand img,.launchpad-controls img{border-radius:7px;object-fit:contain;background:#0b1b2e;padding:3px;box-shadow:0 0 0 1px rgba(255,255,255,.06)}
+.launchpad-controls img{height:34px;width:auto}

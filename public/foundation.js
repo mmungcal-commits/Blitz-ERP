@@ -143,7 +143,7 @@ function workspaceTabs(code=state.module?.code){
     ['reports','Financial Reports'],['setup','Accounts & Periods'],
   ];
   if(code==='fa-receivables-payables')return [
-    ['center','AR/AP Center'],['records','Subledgers'],['approvals','RFP & Payments'],
+    ['center','AP Center'],['records','Subledgers'],['approvals','RFP & Payments'],
     ['reports','Aging & Tax'],['setup','Controls'],
   ];
   if(code==='fa-fixed-assets')return [
@@ -818,13 +818,12 @@ async function renderAccountingSetup(){
 }
 
 async function renderReceivablesPayables(section){
-  if(section==='center')return renderFinanceCenter('Receivables and Payables Work Summary','Invoices, supplier bills, collections and controlled payments');
+  if(section==='center')return renderFinanceCenter('Payables Work Summary','Supplier bills and controlled payments');
   if(section==='records')return renderSubledger();
   if(section==='approvals')return renderPaymentRequests();
   if(section==='reports')return renderAgingTax();
-  return renderFinanceControlNotes('AR/AP Controls',[
+  return renderFinanceControlNotes('AP Controls',[
     ['Three-way match','Supplier bills should reference the approved PO and actual goods receipt.'],
-    ['Collections','Customer receipts are applied to exact invoices and update open balances.'],
     ['Payments','RFP follows requester, department approval, finance validation, final approval and payment.'],
   ]);
 }
@@ -837,14 +836,13 @@ async function renderSubledger(){
       <td>${esc(row.document_type.replaceAll('_',' '))}</td><td>${esc(row.partner_name)}</td>
       <td class="num">${money(row.gross_amount)}</td><td class="num">${money(row.open_balance)}</td>
       <td>${financeStatus(row.status)}</td><td>${row.status==='DRAFT'?`<button class="table-action" data-post-subledger="${row.id}" data-document-type="${esc(row.document_type)}">Prepare Journal</button>`:esc(row.journal_no||'-')}</td></tr>`);
-    const body=`<div class="workspace-commandbar"><button class="command primary" id="newSubledger">New Invoice / Bill / Receipt</button>
-      <button class="command" id="generateLeaseBilling">Generate Lease Billing</button><span class="command-spacer"></span>
+    const body=`<div class="workspace-commandbar"><button class="command primary" id="newSubledger">New Supplier Bill / Payment</button>
+      <span class="command-spacer"></span>
       <span class="workspace-mode">${data.rows.length} DOCUMENTS</span></div>
-      <section class="workspace-card"><header><h2>AR/AP Document Register</h2></header>
-        ${financeTable(['Document','Date','Type','Customer / Supplier','Gross','Open','Status','Journal'],rows)}</section>`;
+      <section class="workspace-card"><header><h2>AP Document Register</h2></header>
+        ${financeTable(['Document','Date','Type','Supplier','Gross','Open','Status','Journal'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'records');bindWorkbench();
     $('#newSubledger').onclick=()=>openSubledgerForm(master);
-    $('#generateLeaseBilling').onclick=()=>openLeaseBillingForm(leases.contracts);
     $$('[data-post-subledger]').forEach(button=>button.onclick=async()=>{
       const defaultAccount=button.dataset.documentType.includes('RECEIPT')||button.dataset.documentType.includes('PAYMENT')?'1010':
         button.dataset.documentType.includes('INVOICE')||button.dataset.documentType.includes('LEASE')?'4000':'6990';
@@ -854,12 +852,11 @@ async function renderSubledger(){
   }catch(error){showWorkspaceError(error);}
 }
 function openSubledgerForm(master){
-  modal('New AR/AP Document',`<form id="subledgerForm" class="operational-form grid">
-    <label><span>Type</span><select name="documentType"><option>CUSTOMER_INVOICE</option><option>SUPPLIER_BILL</option>
-      <option>CUSTOMER_RECEIPT</option><option>SUPPLIER_PAYMENT</option><option>LEASE_BILLING</option></select></label>
+  modal('New AP Document',`<form id="subledgerForm" class="operational-form grid">
+    <label><span>Type</span><select name="documentType"><option>SUPPLIER_BILL</option><option>SUPPLIER_PAYMENT</option></select></label>
     <label><span>Entity</span><select name="entityCode">${master.entities.map(x=>`<option>${esc(x.entity_code)}</option>`).join('')}</select></label>
-    <label class="wide"><span>Customer / Supplier</span><select name="partnerId" required><option value="">Select…</option>
-      ${master.partners.map(x=>`<option value="${x.id}">${esc(x.partner_type)} · ${esc(x.partner_code)} · ${esc(x.name)}</option>`).join('')}</select></label>
+    <label class="wide"><span>Supplier</span><select name="partnerId" required><option value="">Select…</option>
+      ${master.partners.filter(x=>x.partner_type==='VENDOR').map(x=>`<option value="${x.id}">${esc(x.partner_code)} · ${esc(x.name)}</option>`).join('')}</select></label>
     <label><span>Document Date</span><input name="documentDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></label>
     <label><span>Due Date</span><input name="dueDate" type="date"></label>
     <label><span>Gross Amount</span><input name="grossAmount" type="number" min="0" step="0.01" required></label>
@@ -947,12 +944,9 @@ async function renderAgingTax(){
     const [ar,ap,tax]=await Promise.all([api('/finance/aging/AR'),api('/finance/aging/AP'),api(`/finance/reports/tax-summary?${financeQuery()}`)]);
     const aging=(data)=>data.rows.map(row=>`<tr><td><b>${esc(row.document_no)}</b></td><td>${esc(row.partner_name)}</td>
       <td>${date(row.document_date)}</td><td>${date(row.due_date)}</td><td>${esc(row.aging_bucket)}</td><td class="num">${money(row.open_balance)}</td></tr>`);
-    const body=`${financeFilters()}<div class="workspace-kpis">${kpi('Total AR',money(ar.totals.total))}${kpi('AR Over 90',money(ar.totals.OVER_90))}
-      ${kpi('Total AP',money(ap.totals.total))}${kpi('AP Over 90',money(ap.totals.OVER_90))}</div>
-      <div class="two-column"><section class="workspace-card"><header><h2>Accounts Receivable Aging</h2></header>
-        ${financeTable(['Document','Customer','Date','Due','Bucket','Open Balance'],aging(ar))}</section>
+    const body=`${financeFilters()}<div class="workspace-kpis">${kpi('Total AP',money(ap.totals.total))}${kpi('AP Over 90',money(ap.totals.OVER_90))}</div>
       <section class="workspace-card"><header><h2>Accounts Payable Aging</h2></header>
-        ${financeTable(['Document','Supplier','Date','Due','Bucket','Open Balance'],aging(ap))}</section></div>
+        ${financeTable(['Document','Supplier','Date','Due','Bucket','Open Balance'],aging(ap))}</section>
       <section class="workspace-card"><header><h2>VAT and Withholding Tax Control Accounts</h2></header>
         ${financeTable(['Account','Name','Debit','Credit','Net'],tax.rows.map(row=>`<tr><td><b>${esc(row.account_code)}</b></td>
           <td>${esc(row.account_name)}</td><td class="num">${money(row.debit)}</td><td class="num">${money(row.credit)}</td>
