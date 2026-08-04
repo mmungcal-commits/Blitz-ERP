@@ -922,18 +922,32 @@ async function renderPaymentRequests(){
     window.__rfpRows={};data.rows.forEach(function(x){window.__rfpRows[x.id]=x;});
     $$('[data-print-rfp]').forEach(function(b){b.onclick=function(){if(window.czPrintRfp)window.czPrintRfp(window.__rfpRows[b.dataset.printRfp]);};});
     $('#newRfp').onclick=()=>openRfpForm(data.purchaseOrders,master);
-    $$('[data-rfp-action]').forEach(button=>button.onclick=async()=>{
-      const body={action:button.dataset.rfpAction};
-      if(body.action==='FINAL_APPROVE')body.accountCode=prompt('Expense or inventory account code:','6990')||'6990';
-      if(body.action==='MARK_PAID'){
-        const bank=master.bankAccounts[0];if(!bank)return toast('Create a bank account first.','error');
-        body.bankAccountId=bank.id;body.paymentReference=prompt('Bank payment reference:','');
-        if(!body.paymentReference)return;
-      }
-      try{await api(`/finance/payment-requests/${button.dataset.rfpId}/action`,{method:'POST',body:JSON.stringify(body)});
-        toast('Payment request updated');await renderPaymentRequests();}catch(error){toast(error.message,'error');}
-    });
+    $$('[data-rfp-action]').forEach(button=>button.onclick=()=>runRfpAction(button.dataset.rfpAction,button.dataset.rfpId,master));
   }catch(error){showWorkspaceError(error);}
+}
+async function submitRfpAction(id,body){
+  try{await api(`/finance/payment-requests/${id}/action`,{method:'POST',body:JSON.stringify(body)});
+    toast('Payment request updated');await renderPaymentRequests();}catch(error){toast(error.message,'error');}
+}
+function runRfpAction(action,id,master){
+  if(action==='FINAL_APPROVE'){
+    modal('Final Approval — Release for Payment',`<form id="rfpFinalForm" class="operational-form grid">
+      <label class="wide"><span>Expense or inventory account code</span><input name="accountCode" value="6990" required></label>
+      <p class="form-note">This account is debited when the supplier bill is recognized on final approval.</p>
+      <button class="command primary">Approve payment</button></form>`);
+    $('#rfpFinalForm').onsubmit=event=>{event.preventDefault();const f=formDataObject(event.currentTarget);closeModal();submitRfpAction(id,{action:action,accountCode:f.accountCode||'6990'});};
+    return;
+  }
+  if(action==='MARK_PAID'){
+    const banks=(master&&master.bankAccounts)||[];if(!banks.length)return toast('Create a bank account first.','error');
+    modal('Record Payment',`<form id="rfpPayForm" class="operational-form grid">
+      <label class="wide"><span>Bank account</span><select name="bankAccountId">${banks.map(b=>`<option value="${b.id}">${esc(b.bank_name||b.account_name||b.bank_account_code||('Bank '+b.id))}</option>`).join('')}</select></label>
+      <label class="wide"><span>Bank payment reference</span><input name="paymentReference" required placeholder="e.g. BT-2026-0102"></label>
+      <button class="command primary">Confirm payment</button></form>`);
+    $('#rfpPayForm').onsubmit=event=>{event.preventDefault();const f=formDataObject(event.currentTarget);if(!f.paymentReference)return;closeModal();submitRfpAction(id,{action:action,bankAccountId:f.bankAccountId||banks[0].id,paymentReference:f.paymentReference});};
+    return;
+  }
+  submitRfpAction(id,{action:action});
 }
 function openRfpForm(purchaseOrders,master){
   modal('New Request for Payment',`<form id="rfpForm" class="operational-form grid">
