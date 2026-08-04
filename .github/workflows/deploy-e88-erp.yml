@@ -106,6 +106,7 @@ jobs:
           npx wrangler d1 execute DB --remote --file=migrations/0030_assemblies.sql
           npx wrangler d1 execute DB --remote --file=migrations/0031_po_doc.sql
           npx wrangler d1 execute DB --remote --file=migrations/0032_demo_seed.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0033_rfp_alignment.sql
 
       # ---------- Empty-database bootstrap (unchanged) ----------
       - name: Confirm D1 is empty before bootstrap
