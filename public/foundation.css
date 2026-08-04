@@ -1,3 +1,6 @@
+/* E88 logo: bigger + transparent background (wordmark stays white in the image) */
+img[src*="logo.png"]{ background:transparent !important; border-radius:0 !important; box-shadow:none !important; height:48px !important; width:auto !important; }
+
 /* E88 clean enterprise foundation — no legacy ERP screens */
 :root{
   --navy:#0a2239;--navy-2:#102f4a;--blue:#267cbe;--blue-dark:#1669a7;
