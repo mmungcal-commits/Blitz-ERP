@@ -560,18 +560,36 @@ async function renderFinanceWorkspace(section){
   }
 }
 
-async function renderFinanceCenter(title,subtitle){
+async function renderFinanceCenter(title,subtitle,payablesMode){
   content.innerHTML='<div class="workspace-loading">Loading connected finance…</div>';
   try{
     const query=financeQuery();
-    const [dashboard,journals]=await Promise.all([
-      api(`/finance/dashboard?${query}`),api('/finance/journals?entity=E88'),
-    ]);
+    const calls=[api(`/finance/dashboard?${query}`),api('/finance/journals?entity=E88')];
+    if(payablesMode){calls.push(api('/finance/aging/AP').catch(()=>({rows:[],totals:{}})));
+      calls.push(api('/finance/payment-requests').catch(()=>({rows:[]})));}
+    const results=await Promise.all(calls);
+    const dashboard=results[0],journals=results[1];
     const balances=dashboard.balances||{};
+    let kpiRow;
+    if(payablesMode){
+      const ap=results[2]||{rows:[],totals:{}};const rfp=results[3]||{rows:[]};
+      const apRows=ap.rows||[];const apTotals=ap.totals||{};const rfpRows=rfp.rows||[];
+      const today=new Date().toISOString().slice(0,10);
+      const totalPayables=(apTotals.total!=null?apTotals.total:balances.payables)||0;
+      const overdue=apRows.filter(r=>r.due_date&&r.due_date<today).reduce((s,r)=>s+(Number(r.open_balance)||0),0);
+      const pendingRows=rfpRows.filter(r=>r.status!=='PAID');
+      const pendingAmt=pendingRows.reduce((s,r)=>s+(Number(r.net_payable)||0),0);
+      const paidAmt=rfpRows.filter(r=>r.status==='PAID').reduce((s,r)=>s+(Number(r.net_payable)||0),0);
+      kpiRow=`${kpi('Total Payables',money(totalPayables))}${kpi('Overdue Payables',money(overdue))}`
+        +`${kpi('RFPs Awaiting Action',String(pendingRows.length))}${kpi('RFP Pending Value',money(pendingAmt))}`
+        +`${kpi('RFP Paid to Date',money(paidAmt))}`;
+    }else{
+      kpiRow=`${kpi('Cash',money(balances.cash))}${kpi('Receivables',money(balances.receivables))}`
+        +`${kpi('Payables',money(balances.payables))}${kpi('Revenue',money(balances.revenue))}`
+        +`${kpi('Net Income',money(balances.profit))}`;
+    }
     const body=`${financeFilters('<span class="command-spacer"></span><span class="workspace-mode">CONNECTED LEDGER</span>')}
-      <div class="workspace-kpis">${kpi('Cash',money(balances.cash))}${kpi('Receivables',money(balances.receivables))}
-        ${kpi('Payables',money(balances.payables))}${kpi('Revenue',money(balances.revenue))}
-        ${kpi('Net Income',money(balances.profit))}</div>
+      <div class="workspace-kpis">${kpiRow}</div>
       <div class="ramco-layout"><div class="ramco-main">
         <section class="workspace-card"><header><div><h2>${esc(title)}</h2><span>${esc(subtitle)}</span></div>
           <span>${journals.rows.length} journal entries</span></header>
@@ -589,7 +607,7 @@ async function renderFinanceCenter(title,subtitle){
           <p>Every posted journal balances, is linked to its source, and cannot post into a closed period.</p></div></section>
       </aside></div>`;
     content.innerHTML=workbenchShell(body,'center');bindWorkbench();
-    bindFinanceFilters(()=>renderFinanceCenter(title,subtitle));
+    bindFinanceFilters(()=>renderFinanceCenter(title,subtitle,payablesMode));
     $$('[data-finance-journal]').forEach(row=>row.onclick=()=>openFinanceJournal(row.dataset.financeJournal));
   }catch(error){showWorkspaceError(error);}
 }
@@ -818,7 +836,7 @@ async function renderAccountingSetup(){
 }
 
 async function renderReceivablesPayables(section){
-  if(section==='center')return renderFinanceCenter('Payables Work Summary','Supplier bills and controlled payments');
+  if(section==='center')return renderFinanceCenter('Payables Work Summary','Supplier bills and controlled payments',true);
   if(section==='records')return renderSubledger();
   if(section==='approvals')return renderPaymentRequests();
   if(section==='reports')return renderAgingTax();
