@@ -30,8 +30,26 @@ procurementRoutes.post('/purchase-orders', requirePermission('PROCUREMENT','CREA
   const r=await run(c.env.DB,`INSERT INTO erp_purchase_orders(purchase_order_no,vendor_id,vendor_name,order_date,expected_delivery_date,currency,exchange_rate,incoterm,payment_terms,status,subtotal,tax_amount,total_amount,source_system,source_key,created_by) VALUES(?,?,?,?,?,?,?,?,?,'DRAFT',?,?,?,?,?,?)`,[no,vendor.id,vendor.name,b.orderDate||'',b.expectedDeliveryDate||'',b.currency||'PHP',numberValue(b.exchangeRate,1),normalizeText(b.incoterm),normalizeText(b.paymentTerms),subtotal,tax,total,normalizeText(b.sourceSystem||'E88_FINSYS'),normalizeText(b.sourceKey),c.get('erpUser').email]);
   let lineNo=0;
   for(const line of lines){lineNo+=1;const item=await ensureItem(c.env.DB,{itemCode:line.itemCode,itemName:line.itemName||line.description,category:line.category,manufacturer:line.manufacturer,model:line.model,color:line.color,serialized:!!line.serialized,standardCost:numberValue(line.unitCost),sourceSystem:'PO',sourceKey:`${no}|${lineNo}`});const qty=numberValue(line.qty);const cost=numberValue(line.unitCost);await run(c.env.DB,`INSERT INTO erp_purchase_order_lines(purchase_order_id,line_no,item_id,item_code,description,category,ordered_qty,unit_cost,line_amount) VALUES(?,?,?,?,?,?,?,?,?)`,[r.meta.last_row_id,lineNo,item.id,item.item_code,line.description||item.item_name,item.category,qty,cost,qty*cost]);}
+  // Optional approval chain with creator e-signature and no-login token links
+  let firstToken=null, chainBuilt=false;
+  const approvers=Array.isArray(b.approvers)?b.approvers.filter(a=>normalizeText(a&&a.email)):[];
+  if(approvers.length && normalizeText(b.creatorSignature)){
+    const poId=r.meta.last_row_id;
+    await run(c.env.DB,`INSERT INTO erp_po_approvals(purchase_order_id,purchase_order_no,step_no,role,approver_name,approver_email,token,status,signature,signature_type,decided_at) VALUES(?,?,?,?,?,?,?, 'APPROVED', ?, ?, datetime('now'))`,
+      [poId,no,0,'CREATOR',normalizeText(b.creatorName)||c.get('erpUser').email,c.get('erpUser').email,null,normalizeText(b.creatorSignature),(normalizeText(b.creatorSignatureType)||'TYPE')]);
+    let step=0;
+    for(const a of approvers){
+      step+=1;
+      const token=(crypto.randomUUID?crypto.randomUUID():('t'+Date.now()+Math.random().toString(36).slice(2)))+'-'+step;
+      if(!firstToken)firstToken=token;
+      await run(c.env.DB,`INSERT INTO erp_po_approvals(purchase_order_id,purchase_order_no,step_no,role,approver_name,approver_email,token,status) VALUES(?,?,?,?,?,?,?,'PENDING')`,
+        [poId,no,step,normalizeText(a.role)||('STEP_'+step),normalizeText(a.name),normalizeText(a.email),token]);
+    }
+    await run(c.env.DB,`UPDATE erp_purchase_orders SET status='FOR_APPROVAL', updated_at=datetime('now') WHERE id=?`,[poId]);
+    chainBuilt=true;
+  }
   await audit(c,{action:'CREATE',module:'PROCUREMENT',recordType:'PURCHASE_ORDER',recordId:r.meta.last_row_id,recordNo:no,after:{...b,total}});
-  return ok(c,{id:r.meta.last_row_id,purchaseOrderNo:no,total},201);
+  return ok(c,{id:r.meta.last_row_id,purchaseOrderNo:no,total,chainBuilt,firstToken},201);
 });
 
 procurementRoutes.get('/purchase-orders/:id', requirePermission('PROCUREMENT','VIEW'), async c => {
