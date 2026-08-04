@@ -48,6 +48,8 @@ procurementRoutes.post('/purchase-orders', requirePermission('PROCUREMENT','CREA
     await run(c.env.DB,`UPDATE erp_purchase_orders SET status='FOR_APPROVAL', updated_at=datetime('now') WHERE id=?`,[poId]);
     chainBuilt=true;
   }
+  const __docMeta={vendorContactPerson:normalizeText(b.vendorContactPerson),vendorContactNumber:normalizeText(b.vendorContactNumber),vendorEmail:normalizeText(b.vendorEmail),vendorAddress:normalizeText(b.vendorAddress),vendorTaxId:normalizeText(b.vendorTaxId),activityPurpose:normalizeText(b.activityPurpose),invoiceNumber:normalizeText(b.invoiceNumber),paymentTerms:normalizeText(b.paymentTerms),deliveryTerms:normalizeText(b.deliveryTerms),otherRemarks:normalizeText(b.otherRemarks),customerDepartment:normalizeText(b.customerDepartment),requestedByName:normalizeText(b.requestedByName)||normalizeText(b.creatorName),requestedByTitle:normalizeText(b.requestedByTitle)||'Requestor',deptHeadName:(approvers.find(x=>(x.role||'').toUpperCase()==='DEPT_HEAD')||{}).name||'',financeName:(approvers.find(x=>(x.role||'').toUpperCase()==='FINANCE')||{}).name||'Mark Alexis Mungcal',ceoName:(approvers.find(x=>(x.role||'').toUpperCase()==='CEO')||{}).name||'',lineMeta:lines.map((x,i)=>({no:i+1,unit:normalizeText(x.unit)||'pcs',remarks:normalizeText(x.remarks)}))};
+  try{await run(c.env.DB,`INSERT INTO erp_po_doc(purchase_order_id,meta) VALUES(?,?)`,[r.meta.last_row_id,JSON.stringify(__docMeta)]);}catch(e){}
   await audit(c,{action:'CREATE',module:'PROCUREMENT',recordType:'PURCHASE_ORDER',recordId:r.meta.last_row_id,recordNo:no,after:{...b,total}});
   return ok(c,{id:r.meta.last_row_id,purchaseOrderNo:no,total,chainBuilt,firstToken},201);
 });
@@ -56,7 +58,11 @@ procurementRoutes.get('/purchase-orders/:id', requirePermission('PROCUREMENT','V
   const id=Number(c.req.param('id')); const header=await first(c.env.DB,`SELECT * FROM erp_purchase_orders WHERE id=?`,[id]); if(!header)return fail(c,'Purchase order not found',404);
   const lines=await all(c.env.DB,`SELECT * FROM erp_purchase_order_lines WHERE purchase_order_id=? ORDER BY line_no`,[id]);
   const shipments=await all(c.env.DB,`SELECT * FROM erp_shipments WHERE purchase_order_ref=? ORDER BY created_at DESC`,[header.purchase_order_no]);
-  return ok(c,{header,lines,shipments});
+  const __d=await first(c.env.DB,`SELECT meta FROM erp_po_doc WHERE purchase_order_id=?`,[id]);
+  let doc={};try{doc=(__d&&__d.meta)?JSON.parse(__d.meta):{};}catch(e){doc={};}
+  const __lm={};(doc.lineMeta||[]).forEach(m=>{__lm[m.no]=m;});
+  const linesX=lines.map(l=>({...l,unit:(__lm[l.line_no]||{}).unit||'pcs',remarks:(__lm[l.line_no]||{}).remarks||''}));
+  return ok(c,{header:{...header,doc},lines:linesX,shipments});
 });
 
 procurementRoutes.post('/purchase-orders/:id/approve', requirePermission('PROCUREMENT','APPROVE'), async c => {

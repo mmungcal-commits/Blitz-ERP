@@ -24,8 +24,12 @@ poApprovalPublicRoutes.get('/:token', async c => {
   const chain = await loadChain(c.env.DB, step.purchase_order_id);
   const cur = currentStep(chain);
   const actionable = !!cur && cur.token === token && step.status === 'PENDING';
+  const __d = await first(c.env.DB, `SELECT meta FROM erp_po_doc WHERE purchase_order_id=?`, [step.purchase_order_id]);
+  let doc={};try{doc=(__d&&__d.meta)?JSON.parse(__d.meta):{};}catch(e){doc={};}
+  const __lm={};(doc.lineMeta||[]).forEach(m=>{__lm[m.no]=m;});
+  const linesD=lines.map(l=>({...l,unit:(__lm[l.line_no]||{}).unit||'pcs',remarks:(__lm[l.line_no]||{}).remarks||''}));
   const safeChain = chain.map(s => ({ step_no:s.step_no, role:s.role, approver_name:s.approver_name, approver_email:s.approver_email, status:s.status, signature:s.signature, signature_type:s.signature_type, decided_at:s.decided_at, comment:s.comment }));
-  return ok(c, { header, lines, chain: safeChain, step: { role:step.role, approver_name:step.approver_name, status:step.status }, actionable, poStatus: header.status });
+  return ok(c, { header, doc, lines: linesD, chain: safeChain, step: { role:step.role, approver_name:step.approver_name, status:step.status }, actionable, poStatus: header.status });
 });
 
 // Approve or reject with an e-signature
