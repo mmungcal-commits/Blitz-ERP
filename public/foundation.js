@@ -1841,7 +1841,7 @@ async function openRequisitionDetail(id,lookups){
       <section class="record-sublist"><header><div><h3>Allocated Serials</h3><p>${usedSerials.size} reserved</p></div></header>
         ${operationalTable(['Serial','Item','Description','Class','Status'],allocRows?[allocRows]:[])}</section>
       ${allocateBlock}
-      <div class="modal-actions">${approveBtn}<button type="button" class="table-action" data-print-req="${id}">Print Requisition Slip</button></div>`;
+      <div class="modal-actions">${approveBtn}<button type="button" class="table-action" data-print-req="${id}">Print Requisition Slip</button><button type="button" class="table-action" data-print-pickslip="${id}">Print Pick Slip</button></div>`;
     modal('Requisition '+esc(h.requisition_no||id),body,esc(h.holder_name||''));
     const mb=$('#modalBody');
     serialChipify(mb.querySelector('#reqAllocPicker'));
@@ -3804,20 +3804,26 @@ init();
       'table.lines{width:100%;border-collapse:collapse;margin:12px 0}table.lines th,table.lines td{border:1px solid #c9d3db;padding:6px 9px;text-align:left;font-size:11.5px}table.lines th{background:#eef2f6;color:#334}'+
       '.sign{display:flex;gap:34px;margin-top:56px}.sign>div{flex:1;border-top:1px solid #333;padding-top:6px;font-size:11px;color:#555;text-align:center}'+
       '.bar{margin-top:22px}.bar button{padding:9px 18px;border:1px solid #0a2239;background:#0a2239;color:#fff;border-radius:4px;cursor:pointer;font-size:12px}@media print{.bar{display:none}}'+
-      '</style></head><body><header><div class="brand"><h1>'+esc2(brand)+'</h1><small>VENTURES, INC.</small></div>'+
+      '</style></head><body><header><div class="brand" style="display:flex;align-items:center;gap:10px"><img src="'+location.origin+'/logo.png" alt="E88 Ventures" style="height:38px;width:auto"><div><h1>E88 Ventures Inc.</h1><small>'+esc2(opts.subtitle||'Enterprise System')+'</small></div></div>'+
       '<div class="title"><h2>'+esc2(opts.title)+'</h2><small>Printed '+new Date().toLocaleString()+'</small></div></header>'+
       '<div class="meta">'+meta+'</div>'+purpose+lines+'<div class="sign">'+signs+'</div>'+
       '<div class="bar"><button onclick="window.print()">Print this document</button></div></body></html>';
   }
   function czOpenDoc(opts){var w=window.open('','_blank','width=880,height=980');if(!w){alert('Please allow pop-ups to print.');return;}w.document.write(czDocHtml(opts));w.document.close();}
   function czd(v){try{return v?date(v):'';}catch(e){return v||'';}}
-  async function czPrintRequisition(id){
-    try{var d=await api('/requisitions/'+id);var h=d.header||{};var allocs=(d.allocations||[]);var lines=(d.lines||[]);var lh,lr;
-      if(allocs.length){lh=['Item','Class','Serial No','Location'];lr=allocs.map(function(a){return [a.item_name||a.item_code||'',a.category||'',a.serial_no||'',a.current_location_code||''];});}
-      else{lh=['Item','Description','Qty'];lr=lines.map(function(l){return [l.item_code||'',l.item_name||l.description||'',l.qty||l.quantity||''];});}
-      czOpenDoc({title:'Requisition Slip',meta:[['Requisition No',h.requisition_no],['Date',czd(h.request_date||h.created_at)],['Status',h.status],['Request Type',h.request_type],['Requestor',h.requestor_name],['Holder Type',h.holder_type],['Holder',h.holder_name||h.partner_name],['Destination',h.destination],['Expected Return',czd(h.expected_return_date)]],purpose:h.purpose||h.custody_purpose,lineHead:lh,lineRows:lr,signatures:['Requested by / Date','Approved by / Date','Released by / Date','Received by / Date']});
+  async function czPrintRequisition(id,titleOverride){
+    try{var d=await api('/requisitions/'+id);var h=d.header||{};var allocs=(d.allocations||[]);var lines=(d.lines||[]);
+      var serialsByItem={};allocs.forEach(function(a){var k=a.item_code||a.item_name||'';(serialsByItem[k]=serialsByItem[k]||[]).push(a.serial_no);});
+      var lr;
+      if(lines.length){lr=lines.map(function(l,i){var k=l.item_code||l.item_name||'';var alloc=(serialsByItem[k]||[]).join(', ');return [(i+1)+'.',l.item_code||'',l.item_name||l.description||'',l.qty||l.quantity||'',l.uom||l.base_uom||'PCS','',alloc,''];});}
+      else{lr=allocs.map(function(a,i){return [(i+1)+'.',a.item_code||'',a.item_name||'',1,'PCS','',a.serial_no||'',''];});}
+      czOpenDoc({title:titleOverride||'Requisition Slip',subtitle:'Supply Chain Management',
+        meta:[['RS #',h.requisition_no],['Date Requested',czd(h.request_date||h.created_at)],['Requesting Dept',h.department||h.requesting_dept],['Requestor Name',h.requestor_name||h.holder_name||h.partner_name],['Requestor Email',h.requestor_email||h.holder_email],['Purpose',h.purpose||h.custody_purpose]],
+        lineHead:['No.','E88-SKU','Description','Qty','UoM','Stock','Allocation','Remarks'],lineRows:lr,
+        signatures:['Prepared by / Date','Approved by / Date']});
     }catch(e){if(typeof toast==='function')toast(e.message||'Unable to print requisition','error');}
   }
+  async function czPrintPickSlip(id){return czPrintRequisition(id,'Pick Slip');}
   async function czPrintGRN(id){
     try{var d=await api('/receiving/'+id);var h=d.header||{};var lines=(d.lines||[]);
       czOpenDoc({title:'Goods Receipt Note',meta:[['Receipt No',h.receipt_no],['Shipment No',h.shipment_no],['Batch',h.batch_code],['Supplier',h.supplier_name],['Receiving Location',(h.location_code?h.location_code+' - ':'')+(h.location_name||'')],['Date',czd(h.received_at||h.receipt_date||h.created_at)],['Status',h.status],['Document Ref',h.document_ref]],lineHead:['Item','Expected Serial','Actual Serial','Match'],lineRows:lines.map(function(l){return [l.item_name||l.item_code||'',l.expected_serial_no||'',l.actual_serial_no||l.serial_no||'',l.match_status||l.acceptance_status||''];}),signatures:['Received by / Date','Checked by / Date','Approved by / Date']});
@@ -3828,10 +3834,11 @@ init();
       czOpenDoc({title:'Delivery Note',meta:[['Delivery No',h.delivery_no],['Requisition',h.requisition_no],['Sales Order',h.sales_order_no],['Type',h.transaction_type],['Destination',h.destination],['Recipient',h.recipient_name],['Origin',h.origin_location_name],['Scheduled',czd(h.scheduled_date)],['Delivered',czd(h.actual_delivery_date)],['Status',h.status]],lineHead:['Item','Class','Serial No','Status'],lineRows:assets.map(function(a){return [a.item_name||a.item_code||'',a.category||'',a.serial_no||'',a.current_status||''];}),signatures:['Released by / Date','Delivered by / Date','Received by / Date']});
     }catch(e){if(typeof toast==='function')toast(e.message||'Unable to print delivery note','error');}
   }
-  window.czPrintRequisition=czPrintRequisition;window.czPrintGRN=czPrintGRN;window.czPrintDelivery=czPrintDelivery;
+  window.czPrintRequisition=czPrintRequisition;window.czPrintPickSlip=czPrintPickSlip;window.czPrintGRN=czPrintGRN;window.czPrintDelivery=czPrintDelivery;
   document.addEventListener('click',function(ev){
     var t=ev.target;if(!t||!t.closest)return;
     var pr=t.closest('[data-print-req]');if(pr){ev.preventDefault();ev.stopPropagation();czPrintRequisition(pr.getAttribute('data-print-req'));return;}
+    var pp=t.closest('[data-print-pickslip]');if(pp){ev.preventDefault();ev.stopPropagation();czPrintPickSlip(pp.getAttribute('data-print-pickslip'));return;}
     var pg=t.closest('[data-print-grn]');if(pg){ev.preventDefault();ev.stopPropagation();czPrintGRN(pg.getAttribute('data-print-grn'));return;}
     var pd=t.closest('[data-print-dlv]');if(pd){ev.preventDefault();ev.stopPropagation();czPrintDelivery(pd.getAttribute('data-print-dlv'));return;}
   },true);
