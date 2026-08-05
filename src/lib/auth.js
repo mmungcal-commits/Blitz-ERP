@@ -48,7 +48,7 @@ async function userFromSession(c) {
   if (!token) return null;
   const tokenHash = await sha256(token);
   const user = await first(c.env.DB,
-    `SELECT u.*
+    `SELECT u.*, s.session_scope AS session_scope
        FROM erp_sessions s
        JOIN erp_users u ON u.id=s.user_id
       WHERE s.token_hash=? AND julianday(s.expires_at)>julianday('now')`,
@@ -73,7 +73,9 @@ export async function loadUser(c) {
 }
 
 export async function permissionFor(db, user, module) {
-  if (user.role_code === 'ADMIN') return { module, ...FULL_PERMISSION };
+  if (user.session_scope === 'ADMIN') {
+    return module === 'ADMIN' ? { module, ...FULL_PERMISSION } : { module, ...NO_PERMISSION };
+  }
 
   const explicitMode = await first(db, `SELECT 1 configured FROM erp_user_module_access WHERE user_id=? LIMIT 1`, [user.id]);
   if (explicitMode) {
@@ -87,7 +89,9 @@ export async function permissionFor(db, user, module) {
 }
 
 export async function effectivePermissions(db, user) {
-  if (user.role_code === 'ADMIN') return ERP_MODULES.map(module => ({ module, ...FULL_PERMISSION }));
+  if (user.session_scope === 'ADMIN') {
+    return ERP_MODULES.map(module => ({ module, ...(module === 'ADMIN' ? FULL_PERMISSION : NO_PERMISSION) }));
+  }
 
   const [roleRows, accessRows] = await Promise.all([
     all(db, `SELECT * FROM erp_role_permissions WHERE role_code=?`, [user.role_code]),
@@ -126,7 +130,6 @@ export function requirePermission(module, action = 'VIEW') {
     const user = c.get('erpUser') || await loadUser(c);
     if (!user) return c.json({ ok: false, error: 'Authentication required.' }, 401);
     c.set('erpUser', user);
-    if (user.role_code === 'ADMIN') return next();
     const permission = await permissionFor(c.env.DB, user, module);
     const column = ACTION_COLUMN[action] || 'can_view';
     if (!permission[column]) return c.json({ ok: false, error: `You do not have ${action.toLowerCase()} access to ${module}.` }, 403);
@@ -139,7 +142,6 @@ export function requireAnyPermission(modules, action = 'VIEW') {
     const user = c.get('erpUser') || await loadUser(c);
     if (!user) return c.json({ ok: false, error: 'Authentication required.' }, 401);
     c.set('erpUser', user);
-    if (user.role_code === 'ADMIN') return next();
     const column = ACTION_COLUMN[action] || 'can_view';
     for (const module of modules) {
       const permission = await permissionFor(c.env.DB, user, module);
