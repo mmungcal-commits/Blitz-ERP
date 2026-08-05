@@ -1,4 +1,6 @@
-/* E88 clean enterprise foundation — no legacy ERP screens */
+
+/* E88 logo override: transparent, bigger, wordmark stays white in the PNG */
+img[src*="logo"]{background:transparent !important;border-radius:0 !important;box-shadow:none !important;padding:0 !important;height:48px !important;width:auto !important;}/* E88 clean enterprise foundation — no legacy ERP screens */
 :root{
   --navy:#0a2239;--navy-2:#102f4a;--blue:#267cbe;--blue-dark:#1669a7;
   --bg:#eef2f6;--panel:#fff;--panel-2:#f7f9fb;--text:#17212b;--muted:#657586;
