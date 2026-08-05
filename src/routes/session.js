@@ -13,7 +13,7 @@ sessionRoutes.get('/', async (c) => {
   const permissions = await effectivePermissions(c.env.DB, user);
   const workspaceAccess = await effectiveWorkspaceAccess(c.env.DB, user, permissions);
   return ok(c, {
-    user: { id:user.id,email:user.email,displayName:user.display_name,role:user.role_code,department:user.department,liveAccess:!!user.live_access },
+    user: { id:user.id,email:user.email,displayName:user.display_name,role:user.role_code,department:user.department,liveAccess:!!user.live_access,scope:user.session_scope||'OPERATIONS',canUseAdminScope:!!user.admin_access },
     permissions,
     workspaceAccess,
     workspaceCatalog:{ groups:WORKSPACE_GROUPS, tools:WORKSPACE_TOOLS, addons:WORKSPACE_ADDONS },
