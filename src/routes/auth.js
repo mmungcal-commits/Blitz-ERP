@@ -32,6 +32,7 @@ function publicUser(user) {
     role: user.role_code,
     department: user.department,
     liveAccess: !!user.live_access,
+    canUseAdminScope: !!user.admin_access,
   };
 }
 
@@ -43,16 +44,22 @@ async function recordAuthEvent(c, email, eventType, success, detail = '') {
     [email, eventType, success ? 1 : 0, detail, meta.ipAddress, meta.userAgent]);
 }
 
-async function createSession(c, user) {
+async function createSession(c, user, requestedScope) {
   const token = randomToken(32);
   const tokenHash = await sha256(token);
   const expiresAt = new Date(Date.now() + SESSION_SECONDS * 1000).toISOString();
   const meta = requestMeta(c);
+  // ADMIN scope can only ever be granted to accounts explicitly flagged
+  // admin_access=1, and only when the user asked for it at login. Every
+  // other case (including a mistyped/omitted scope) falls back to
+  // OPERATIONS, which is governed purely by the account's role_code.
+  const scope = (requestedScope === 'ADMIN' && user.admin_access) ? 'ADMIN' : 'OPERATIONS';
   await run(c.env.DB,
-    `INSERT INTO erp_sessions(user_id,token_hash,expires_at,ip_address,user_agent)
-     VALUES(?,?,?,?,?)`,
-    [user.id, tokenHash, expiresAt, meta.ipAddress, meta.userAgent]);
+    `INSERT INTO erp_sessions(user_id,token_hash,expires_at,ip_address,user_agent,session_scope)
+     VALUES(?,?,?,?,?,?)`,
+    [user.id, tokenHash, expiresAt, meta.ipAddress, meta.userAgent, scope]);
   c.header('Set-Cookie', sessionCookie(token, SESSION_SECONDS));
+  return scope;
 }
 
 authRoutes.post('/login', async c => {
@@ -123,9 +130,10 @@ authRoutes.post('/login', async c => {
     `UPDATE erp_user_credentials SET failed_login_count=0,locked_until=NULL,updated_at=datetime('now') WHERE user_id=?`,
     [user.id]);
   await run(c.env.DB, `UPDATE erp_users SET last_login_at=datetime('now') WHERE id=?`, [user.id]);
-  await createSession(c, user);
-  await recordAuthEvent(c, email, 'LOGIN', true);
-  return ok(c, { user: publicUser(user) });
+  const requestedScope = normalizedEmail(body.scope) === 'admin' || String(body.scope || '').toUpperCase() === 'ADMIN' ? 'ADMIN' : 'OPERATIONS';
+  const grantedScope = await createSession(c, user, requestedScope);
+  await recordAuthEvent(c, email, 'LOGIN', true, `SCOPE_${grantedScope}`);
+  return ok(c, { user: publicUser(user), scope: grantedScope, canUseAdminScope: !!user.admin_access });
 });
 
 authRoutes.post('/activate', async c => {
