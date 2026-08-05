@@ -127,7 +127,7 @@ export function workspaceModule(code) {
 }
 
 export async function effectiveWorkspaceAccess(db, user, permissions) {
-  if (user.role_code === 'ADMIN') return WORKSPACE_MODULES.map(module => module.code);
+  if (user.session_scope === 'ADMIN') return [];
   const rows = await all(db, `SELECT module_code,allowed FROM erp_user_workspace_access WHERE user_id=?`, [user.id]);
   if (rows.length) return rows.filter(row => row.allowed).map(row => row.module_code);
   const viewable = new Set((permissions || []).filter(row => row.can_view).map(row => row.module));
