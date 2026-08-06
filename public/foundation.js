@@ -234,7 +234,7 @@ function showAuth(mode='login'){
     const startScope=state.scope==='ADMIN'?'ADMIN':'OPERATIONS';
     host.innerHTML=`<div class="blitz-auth">
       <div class="blitz-auth-brand">
-        <img class="blitz-mark" src="/logo.png" alt="E88 Ventures Inc.">
+        <img class="blitz-mark" src="/logo-white.png" alt="E88 Ventures Inc.">
         <h1 class="blitz-wordmark">Blitz <i>-</i> ERP</h1>
         <p class="blitz-tagline">E88 Ventures Inc.</p>
         <div class="blitz-charge" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
@@ -5424,7 +5424,8 @@ init();
   .scope-chip{border:1px solid var(--blitz-3)!important;color:var(--blitz-3)!important;font-weight:700}
 
   /* ---------- Freeze the module rail ---------- */
-  .enterprise-columns{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(228px,1fr))!important;align-items:start!important;gap:14px}
+  /* one row of 11 categories, as before; align-items:start is what freezes them */
+  .enterprise-columns{display:grid!important;grid-template-columns:repeat(11,minmax(0,1fr))!important;align-items:start!important;gap:4px}
   .enterprise-column{align-self:start}
   .launchpad-controls{position:sticky;top:0;z-index:30;backdrop-filter:blur(6px)}
   .workbench-headwrap{position:sticky;top:0;z-index:25;background:var(--panel,#fff);box-shadow:0 2px 10px rgba(10,34,57,.07)}
