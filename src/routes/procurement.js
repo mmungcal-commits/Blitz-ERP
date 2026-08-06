@@ -6,8 +6,13 @@ import { audit } from '../lib/audit.js';
 import { ensurePartner, ensureItem, nextCode, normalizeText } from '../lib/codes.js';
 import { captureFinanceEvent, entityByCode, ensureAccountingPeriod } from '../lib/finance.js';
 import { decideCoreWorkflowApproval } from '../lib/specialist-engine.js';
+import { saveAttachments, attachmentsFor } from '../lib/attachments.js';
+import { sendMailQuiet, mailLayout, mailButton, mailFacts, mailAttachments } from '../lib/mailer.js';
 
 export const procurementRoutes = new Hono();
+
+const escapeHtml = (value) => String(value == null ? '' : value)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
 procurementRoutes.get('/purchase-orders', requirePermission('PROCUREMENT','VIEW'), async c => {
   const {page,size,offset}=pageParams(c); const q=`%${normalizeText(c.req.query('q'))}%`; const status=normalizeText(c.req.query('status'));
@@ -48,10 +53,33 @@ procurementRoutes.post('/purchase-orders', requirePermission('PROCUREMENT','CREA
     await run(c.env.DB,`UPDATE erp_purchase_orders SET status='FOR_APPROVAL', updated_at=datetime('now') WHERE id=?`,[poId]);
     chainBuilt=true;
   }
-  const __docMeta={vendorContactPerson:normalizeText(b.vendorContactPerson),vendorContactNumber:normalizeText(b.vendorContactNumber),vendorEmail:normalizeText(b.vendorEmail),vendorAddress:normalizeText(b.vendorAddress),vendorTaxId:normalizeText(b.vendorTaxId),activityPurpose:normalizeText(b.activityPurpose),invoiceNumber:normalizeText(b.invoiceNumber),paymentTerms:normalizeText(b.paymentTerms),deliveryTerms:normalizeText(b.deliveryTerms),otherRemarks:normalizeText(b.otherRemarks),customerDepartment:normalizeText(b.customerDepartment),requestedByName:normalizeText(b.requestedByName)||normalizeText(b.creatorName),requestedByTitle:normalizeText(b.requestedByTitle)||'Requestor',deptHeadName:(approvers.find(x=>(x.role||'').toUpperCase()==='DEPT_HEAD')||{}).name||'',financeName:(approvers.find(x=>(x.role||'').toUpperCase()==='FINANCE')||{}).name||'Mark Alexis Mungcal',ceoName:(approvers.find(x=>(x.role||'').toUpperCase()==='CEO')||{}).name||'',lineMeta:lines.map((x,i)=>({no:i+1,unit:normalizeText(x.unit)||'pcs',remarks:normalizeText(x.remarks)}))};
+  // Supporting documents (approved quotation / invoice) -> Google Drive
+  const __attach=await saveAttachments(c.env,c.env.DB,{moduleCode:'PROCUREMENT',recordType:'PURCHASE_ORDER',
+    recordId:r.meta.last_row_id,recordNo:no,files:b.attachments,uploadedBy:c.get('erpUser').email});
+  const __docMeta={vendorContactPerson:normalizeText(b.vendorContactPerson),vendorContactNumber:normalizeText(b.vendorContactNumber),vendorEmail:normalizeText(b.vendorEmail),vendorAddress:normalizeText(b.vendorAddress),vendorTaxId:normalizeText(b.vendorTaxId),activityPurpose:normalizeText(b.activityPurpose),invoiceNumber:normalizeText(b.invoiceNumber),paymentTerms:normalizeText(b.paymentTerms),deliveryTerms:normalizeText(b.deliveryTerms),otherRemarks:normalizeText(b.otherRemarks),customerDepartment:normalizeText(b.customerDepartment),requestedByName:normalizeText(b.requestedByName)||normalizeText(b.creatorName),requestedByTitle:normalizeText(b.requestedByTitle)||'Requestor',deptManagerName:(approvers.find(x=>(x.role||'').toUpperCase()==='DEPT_MANAGER')||{}).name||'',deptHeadName:(approvers.find(x=>(x.role||'').toUpperCase()==='DEPT_HEAD')||{}).name||'',financeName:(approvers.find(x=>(x.role||'').toUpperCase()==='FINANCE')||{}).name||'Mark Alexis Mungcal',ceoName:(approvers.find(x=>(x.role||'').toUpperCase()==='CEO')||{}).name||'',lineMeta:lines.map((x,i)=>({no:i+1,unit:normalizeText(x.unit)||'pcs',remarks:normalizeText(x.remarks)}))};
   try{await run(c.env.DB,`INSERT INTO erp_po_doc(purchase_order_id,meta) VALUES(?,?)`,[r.meta.last_row_id,JSON.stringify(__docMeta)]);}catch(e){}
-  await audit(c,{action:'CREATE',module:'PROCUREMENT',recordType:'PURCHASE_ORDER',recordId:r.meta.last_row_id,recordNo:no,after:{...b,total}});
-  return ok(c,{id:r.meta.last_row_id,purchaseOrderNo:no,total,chainBuilt,firstToken},201);
+  // Email the first approver straight away so the chain starts without anyone chasing a link.
+  let mailed=null;
+  if(chainBuilt&&firstToken){
+    const firstApprover=approvers[0];
+    const link=new URL(c.req.url).origin+'/approve.html?token='+firstToken;
+    mailed=await sendMailQuiet(c.env,{
+      to:firstApprover.email,
+      subject:`Approval needed: Purchase Order ${no} (${(b.currency||'PHP')} ${Number(total).toLocaleString('en-US',{minimumFractionDigits:2})})`,
+      html:mailLayout('Purchase order awaiting your approval',
+        `<p>${escapeHtml(normalizeText(b.creatorName)||c.get('erpUser').email)} raised a purchase order that needs your approval.</p>`
+        +mailFacts([['Purchase Order',no],['Vendor',vendor.name],['Order date',b.orderDate||''],
+          ['Total',(b.currency||'PHP')+' '+Number(total).toLocaleString('en-US',{minimumFractionDigits:2})],
+          ['Lines',String(lines.length)],['Your step',(firstApprover.role||'').replace(/_/g,' ')]])
+        +mailButton(link,'Review and sign')
+        +mailAttachments(__attach.saved)
+        +`<p style="font-size:12px;color:#657586">No login is required. Each later approver is emailed automatically once you sign.</p>`,
+        'Purchase order approval routing'),
+    });
+  }
+  await audit(c,{action:'CREATE',module:'PROCUREMENT',recordType:'PURCHASE_ORDER',recordId:r.meta.last_row_id,recordNo:no,after:{...b,total,attachments:__attach.saved.length}});
+  return ok(c,{id:r.meta.last_row_id,purchaseOrderNo:no,total,chainBuilt,firstToken,
+    attachments:__attach.saved,attachmentErrors:__attach.failed,notified:mailed&&mailed.ok?firstToken?approvers[0].email:null:null},201);
 });
 
 procurementRoutes.get('/purchase-orders/:id', requirePermission('PROCUREMENT','VIEW'), async c => {
@@ -62,7 +90,9 @@ procurementRoutes.get('/purchase-orders/:id', requirePermission('PROCUREMENT','V
   let doc={};try{doc=(__d&&__d.meta)?JSON.parse(__d.meta):{};}catch(e){doc={};}
   const __lm={};(doc.lineMeta||[]).forEach(m=>{__lm[m.no]=m;});
   const linesX=lines.map(l=>({...l,unit:(__lm[l.line_no]||{}).unit||'pcs',remarks:(__lm[l.line_no]||{}).remarks||''}));
-  return ok(c,{header:{...header,doc},lines:linesX,shipments});
+  const attachments=await attachmentsFor(c.env.DB,'PURCHASE_ORDER',id,header.purchase_order_no);
+  const approvals=await all(c.env.DB,`SELECT step_no,role,approver_name,approver_email,status,signature,signature_type,decided_at,comment FROM erp_po_approvals WHERE purchase_order_id=? ORDER BY step_no`,[id]);
+  return ok(c,{header:{...header,doc},lines:linesX,shipments,attachments,approvals});
 });
 
 procurementRoutes.post('/purchase-orders/:id/approve', requirePermission('PROCUREMENT','APPROVE'), async c => {

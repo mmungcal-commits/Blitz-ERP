@@ -6,6 +6,7 @@ import { audit } from '../lib/audit.js';
 import { ensurePartner, ensureItem, nextCode, normalizeText, normalizeSerial } from '../lib/codes.js';
 import { getAsset, isAvailable } from '../lib/inventory.js';
 import { decideCoreWorkflowApproval } from '../lib/specialist-engine.js';
+import { saveAttachments, attachmentsFor } from '../lib/attachments.js';
 
 export const salesRoutes = new Hono();
 
@@ -36,6 +37,24 @@ salesRoutes.get('/lookups', requirePermission('SALES','VIEW'), async c => {
   return ok(c,{customers,employees,items,assets});
 });
 
+// Add-new customer card on the sales order form.
+salesRoutes.post('/customers', requirePermission('SALES','CREATE'), async c => {
+  const b=await jsonBody(c);
+  const name=normalizeText(b.name);
+  if(!name)return fail(c,'Customer name is required');
+  const existing=await first(c.env.DB,`SELECT * FROM erp_partners WHERE partner_type='CUSTOMER' AND lower(name)=lower(?) AND active=1`,[name]);
+  if(existing)return ok(c,{customer:existing,reused:true});
+  const customer=await ensurePartner(c.env.DB,{name,type:'CUSTOMER',address:normalizeText(b.address),
+    email:normalizeText(b.email),phone:normalizeText(b.contactNumber),sourceSystem:'SALES_QUICK_ADD'});
+  const extra=[['contact_person',normalizeText(b.contactPerson)],['tax_id',normalizeText(b.tin)],['payment_terms',normalizeText(b.paymentTerms)]];
+  for(const [col,val] of extra){
+    if(!val)continue;
+    try{await run(c.env.DB,`UPDATE erp_partners SET ${col}=? WHERE id=?`,[val,customer.id]);}catch(e){/* column may not exist */}
+  }
+  await audit(c,{action:'CREATE',module:'SALES',recordType:'CUSTOMER',recordId:customer.id,recordNo:customer.partner_code,after:{name}});
+  return ok(c,{customer},201);
+});
+
 salesRoutes.get('/reports/units-by-month', requirePermission('SALES','VIEW'), async c => {
   const from=(c.req.query('from')||'').trim();const to=(c.req.query('to')||'').trim();
   const args=[];let dateWhere='';
@@ -64,16 +83,72 @@ salesRoutes.post('/', requirePermission('SALES','CREATE'), async c => {
   const b=await jsonBody(c); const tx=normalizeText(b.transactionType).toUpperCase(); if(!['SALE','LEASE','DEMO','PILOT','EMPLOYEE_ASSIGNMENT'].includes(tx))return fail(c,'Invalid transaction type'); if(!b.customerName&&!b.customerId)return fail(c,'Customer or holder is required');
   let customer=b.customerId?await first(c.env.DB,`SELECT * FROM erp_partners WHERE id=?`,[Number(b.customerId)]):null; if(!customer)customer=await ensurePartner(c.env.DB,{name:b.customerName,type:tx==='EMPLOYEE_ASSIGNMENT'?'EMPLOYEE':'CUSTOMER',address:b.deliveryAddress||'',email:b.customerEmail||'',phone:b.customerPhone||'',sourceSystem:b.sourceSystem||'E88_FINSYS'});
   if(customer.credit_status==='BLOCKED'&&!b.overrideCreditHold)return fail(c,`Customer ${customer.name} is blocked: ${customer.hold_reason||'overdue account'}`,409);
-  const requested=(Array.isArray(b.lines)?b.lines:[]).filter(x=>normalizeText(x.serialNo||x.description||x.itemName));if(!requested.length)return fail(c,'At least one item or serial is required');
+  const requested=(Array.isArray(b.lines)?b.lines:[]).filter(x=>normalizeText(x.serialNo||x.description||x.itemName));
+  // The sales order is the commercial header: items and serials are allocated
+  // later on the linked requisition, so an order with no lines is valid.
   const no=normalizeText(b.salesOrderNo)||await nextCode(c.env.DB,'SALES_ORDER','SO',6); let gross=0;const prepared=[];
   for(const line of requested){let asset=null; if(line.serialNo){asset=await getAsset(c.env.DB,normalizeSerial(line.serialNo));if(!asset)return fail(c,`Serial ${line.serialNo} is not registered`);if(!isAvailable(asset))return fail(c,`Serial ${asset.serial_no} is not available (${asset.current_status}/${asset.reconciliation_status})`,409);}const item=asset?await first(c.env.DB,`SELECT * FROM erp_items WHERE id=?`,[asset.item_id]):await ensureItem(c.env.DB,{itemCode:line.itemCode,itemName:line.itemName||line.description,category:line.category,serialized:!!line.serialNo,sourceSystem:'SALES',sourceKey:`${no}|${line.serialNo||line.description}`});const qty=numberValue(line.qty,1);const price=numberValue(line.unitPrice);gross+=qty*price;prepared.push({asset,item,qty,price,description:line.description||asset?.item_name||item.item_name,lineRole:line.lineRole||asset?.category||item.category});}
   const r=await run(c.env.DB,`INSERT INTO erp_sales_orders(sales_order_no,transaction_type,customer_id,order_date,contract_start,contract_end,status,gross_amount,delivery_address,source_system,source_key,created_by) VALUES(?,?,?,?,?,?,'DRAFT',?,?,?,?,?)`,[no,tx,customer.id,b.orderDate||new Date().toISOString().slice(0,10),b.contractStart||'',b.contractEnd||'',gross,normalizeText(b.deliveryAddress||customer.address),normalizeText(b.sourceSystem||'E88_FINSYS'),normalizeText(b.sourceKey),c.get('erpUser').email]);
   let ln=0;for(const line of prepared){ln+=1;await run(c.env.DB,`INSERT INTO erp_sales_lines(sales_order_id,line_no,item_id,item_code,description,qty,unit_price,asset_id,serial_no,line_role) VALUES(?,?,?,?,?,?,?,?,?,?)`,[r.meta.last_row_id,ln,line.item.id,line.item.item_code,line.description,line.qty,line.price,line.asset?.id||null,line.asset?.serial_no||'',line.lineRole]);}
-  await audit(c,{action:'CREATE',module:'SALES',recordType:'SALES_ORDER',recordId:r.meta.last_row_id,recordNo:no,after:{...b,gross}});return ok(c,{id:r.meta.last_row_id,salesOrderNo:no,gross},201);
+  const soId=r.meta.last_row_id;
+  // Commercial terms that have no dedicated column live alongside the order.
+  const terms={ratePerDay:numberValue(b.ratePerDay),rateCurrency:normalizeText(b.rateCurrency)||'PHP',
+    contractStart:normalizeText(b.contractStart),contractEnd:normalizeText(b.contractEnd)};
+  try{await run(c.env.DB,`INSERT OR REPLACE INTO erp_settings(key,value,updated_at) VALUES(?,?,datetime('now'))`,['so_terms:'+no,JSON.stringify(terms)]);}catch(e){}
+  const attach=await saveAttachments(c.env,c.env.DB,{moduleCode:'SALES',recordType:'SALES_ORDER',
+    recordId:soId,recordNo:no,files:b.attachments,uploadedBy:c.get('erpUser').email});
+  await audit(c,{action:'CREATE',module:'SALES',recordType:'SALES_ORDER',recordId:soId,recordNo:no,after:{...b,gross}});
+  return ok(c,{id:soId,salesOrderNo:no,gross,ratePerDay:terms.ratePerDay,attachments:attach.saved,attachmentErrors:attach.failed},201);
 });
 
 salesRoutes.get('/:id', requirePermission('SALES','VIEW'), async c => {
-  const id=Number(c.req.param('id'));const header=await first(c.env.DB,`SELECT s.*,p.name customer_name,p.credit_status,p.hold_reason FROM erp_sales_orders s JOIN erp_partners p ON p.id=s.customer_id WHERE s.id=?`,[id]);if(!header)return fail(c,'Sales order not found',404);const lines=await all(c.env.DB,`SELECT l.*,a.current_status,a.current_location_code,a.reconciliation_status FROM erp_sales_lines l LEFT JOIN erp_assets a ON a.id=l.asset_id WHERE l.sales_order_id=? ORDER BY l.line_no`,[id]);const assignments=await all(c.env.DB,`SELECT * FROM erp_assignments WHERE source_request_no=?`,[header.sales_order_no]);const deliveries=await all(c.env.DB,`SELECT * FROM erp_deliveries WHERE sales_order_id=? ORDER BY created_at DESC`,[id]);return ok(c,{header,lines,assignments,deliveries});
+  const id=Number(c.req.param('id'));const header=await first(c.env.DB,`SELECT s.*,p.name customer_name,p.credit_status,p.hold_reason FROM erp_sales_orders s JOIN erp_partners p ON p.id=s.customer_id WHERE s.id=?`,[id]);if(!header)return fail(c,'Sales order not found',404);const lines=await all(c.env.DB,`SELECT l.*,a.current_status,a.current_location_code,a.reconciliation_status FROM erp_sales_lines l LEFT JOIN erp_assets a ON a.id=l.asset_id WHERE l.sales_order_id=? ORDER BY l.line_no`,[id]);const assignments=await all(c.env.DB,`SELECT * FROM erp_assignments WHERE source_request_no=?`,[header.sales_order_no]);const deliveries=await all(c.env.DB,`SELECT * FROM erp_deliveries WHERE sales_order_id=? ORDER BY created_at DESC`,[id]);
+  const attachments=await attachmentsFor(c.env.DB,'SALES_ORDER',id,header.sales_order_no);
+  let terms={};try{const t=await first(c.env.DB,`SELECT value FROM erp_settings WHERE key=?`,['so_terms:'+header.sales_order_no]);terms=t&&t.value?JSON.parse(t.value):{};}catch(e){terms={};}
+  return ok(c,{header:{...header,rate_per_day:terms.ratePerDay||0,rate_currency:terms.rateCurrency||'PHP'},lines,assignments,deliveries,attachments,terms});
+});
+
+// Draft sales orders stay editable until they are approved. Finance can override.
+salesRoutes.patch('/:id', requirePermission('SALES','EDIT'), async c => {
+  const id=Number(c.req.param('id'));const b=await jsonBody(c);
+  const header=await first(c.env.DB,`SELECT * FROM erp_sales_orders WHERE id=?`,[id]);
+  if(!header)return fail(c,'Sales order not found',404);
+  const role=String(c.get('erpUser').role_code||'').toUpperCase();
+  if(header.status!=='DRAFT'&&role!=='FINANCE')return fail(c,'Only a draft order can be edited. Finance can override.',409);
+  const tx=normalizeText(b.transactionType).toUpperCase();
+  if(tx&&!['SALE','LEASE','DEMO','PILOT','EMPLOYEE_ASSIGNMENT'].includes(tx))return fail(c,'Invalid transaction type');
+  await run(c.env.DB,`UPDATE erp_sales_orders SET
+      transaction_type=COALESCE(NULLIF(?,''),transaction_type),
+      order_date=COALESCE(NULLIF(?,''),order_date),
+      contract_start=COALESCE(NULLIF(?,''),contract_start),
+      contract_end=COALESCE(NULLIF(?,''),contract_end),
+      delivery_address=COALESCE(NULLIF(?,''),delivery_address)
+    WHERE id=?`,[tx,normalizeText(b.orderDate),normalizeText(b.contractStart),
+      normalizeText(b.contractEnd),normalizeText(b.deliveryAddress),id]);
+  if(b.ratePerDay!==undefined){
+    let terms={};try{const t=await first(c.env.DB,`SELECT value FROM erp_settings WHERE key=?`,['so_terms:'+header.sales_order_no]);terms=t&&t.value?JSON.parse(t.value):{};}catch(e){terms={};}
+    terms.ratePerDay=numberValue(b.ratePerDay);
+    try{await run(c.env.DB,`INSERT OR REPLACE INTO erp_settings(key,value,updated_at) VALUES(?,?,datetime('now'))`,['so_terms:'+header.sales_order_no,JSON.stringify(terms)]);}catch(e){}
+  }
+  if(Array.isArray(b.attachments)&&b.attachments.length){
+    await saveAttachments(c.env,c.env.DB,{moduleCode:'SALES',recordType:'SALES_ORDER',
+      recordId:id,recordNo:header.sales_order_no,files:b.attachments,uploadedBy:c.get('erpUser').email});
+  }
+  const after=await first(c.env.DB,`SELECT * FROM erp_sales_orders WHERE id=?`,[id]);
+  await audit(c,{action:'EDIT',module:'SALES',recordType:'SALES_ORDER',recordId:id,recordNo:header.sales_order_no,before:header,after});
+  return ok(c,{salesOrder:after});
+});
+
+// Void a draft order.
+salesRoutes.post('/:id/void', requirePermission('SALES','EDIT'), async c => {
+  const id=Number(c.req.param('id'));
+  const header=await first(c.env.DB,`SELECT * FROM erp_sales_orders WHERE id=?`,[id]);
+  if(!header)return fail(c,'Sales order not found',404);
+  const role=String(c.get('erpUser').role_code||'').toUpperCase();
+  if(header.status!=='DRAFT'&&role!=='FINANCE')return fail(c,'Only a draft order can be voided. Finance can override.',409);
+  await run(c.env.DB,`UPDATE erp_sales_orders SET status='CANCELLED' WHERE id=?`,[id]);
+  await audit(c,{action:'VOID',module:'SALES',recordType:'SALES_ORDER',recordId:id,recordNo:header.sales_order_no,before:header});
+  return ok(c,{voided:true});
 });
 
 salesRoutes.post('/:id/approve', requirePermission('SALES','APPROVE'), async c => {

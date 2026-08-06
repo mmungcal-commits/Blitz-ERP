@@ -3,6 +3,8 @@ import { all, first, run } from '../lib/db.js';
 import { ok, fail, jsonBody, numberValue } from '../lib/http.js';
 import { permissionFor, requirePermission } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
+import { saveAttachments, attachmentsFor } from '../lib/attachments.js';
+import { sendMailQuiet, mailLayout, mailFacts, mailAttachments } from '../lib/mailer.js';
 import { nextCode, normalizeText } from '../lib/codes.js';
 import { fixedAssetAccountsForCategory, inventoryAccountForCategory } from '../lib/transaction-rules.js';
 import {
@@ -551,20 +553,52 @@ financeRoutes.get('/aging/:ledger', requirePermission('FINANCE', 'VIEW'), async 
   return ok(c, { ledger, asOf, rows:enriched, totals });
 });
 
+// Row-level privacy. A requestor only ever sees their own RFPs; a department
+// manager/head sees their own department; only Finance and the CEO see everything.
+// Controlled by erp_settings.RFP_PRIVACY_ENFORCED so it can be switched off for audit.
+async function rfpVisibility(c){
+  const user=c.get('erpUser')||{};
+  const setting=await first(c.env.DB,`SELECT value FROM erp_settings WHERE key='RFP_PRIVACY_ENFORCED'`);
+  if(String(setting?.value??'1')!=='1')return {where:'',args:[],level:'ALL'};
+  const role=String(user.role_code||'').toUpperCase();
+  if(['FINANCE','CEO'].includes(role))return {where:'',args:[],level:'ALL'};
+  if(['DEPT_HEAD','DEPT_MANAGER','SCM_MANAGER'].includes(role)){
+    return {where:' AND (r.requestor_email=? OR r.department=?)',args:[user.email,user.department||''],level:'DEPARTMENT'};
+  }
+  return {where:' AND r.requestor_email=?',args:[user.email],level:'OWN'};
+}
+
 financeRoutes.get('/payment-requests', requirePermission('FINANCE', 'VIEW'), async c => {
   const status=normalizeText(c.req.query('status')).toUpperCase();
+  const vis=await rfpVisibility(c);
   const rows=await all(c.env.DB,`SELECT r.*,e.entity_code,p.partner_code,p.name partner_name,
-    po.purchase_order_no,b.bank_name,b.account_name
+    po.purchase_order_no,b.bank_name,b.account_name,
+    (SELECT COUNT(*) FROM erp_attachments a WHERE a.record_type='PAYMENT_REQUEST' AND a.record_id=r.id AND a.active=1) attachment_count
     FROM erp_payment_requests r JOIN erp_legal_entities e ON e.id=r.entity_id
     LEFT JOIN erp_partners p ON p.id=r.payee_partner_id
     LEFT JOIN erp_purchase_orders po ON po.id=r.purchase_order_id
     LEFT JOIN erp_bank_accounts b ON b.id=r.bank_account_id
-    WHERE (?='' OR r.status=?) ORDER BY r.request_date DESC,r.id DESC`,[status,status]);
+    WHERE (?='' OR r.status=?)${vis.where} ORDER BY r.request_date DESC,r.id DESC`,[status,status,...vis.args]);
   const purchaseOrders=await all(c.env.DB,`SELECT p.id,p.purchase_order_no,p.vendor_id,p.vendor_name,
     p.total_amount,p.tax_amount,p.payment_terms,p.status
     FROM erp_purchase_orders p WHERE p.status IN ('APPROVED','PARTIALLY_RECEIVED','RECEIVED')
     ORDER BY p.order_date DESC,p.id DESC LIMIT 1000`);
-  return ok(c,{rows,purchaseOrders});
+  return ok(c,{rows,purchaseOrders,visibility:vis.level});
+});
+
+// One RFP with its Drive attachments and approval trail.
+financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), async c=>{
+  const id=Number(c.req.param('id'));
+  const vis=await rfpVisibility(c);
+  const row=await first(c.env.DB,`SELECT r.*,e.entity_code,p.name partner_name,po.purchase_order_no
+    FROM erp_payment_requests r JOIN erp_legal_entities e ON e.id=r.entity_id
+    LEFT JOIN erp_partners p ON p.id=r.payee_partner_id
+    LEFT JOIN erp_purchase_orders po ON po.id=r.purchase_order_id
+    WHERE r.id=?${vis.where}`,[id,...vis.args]);
+  if(!row)return fail(c,'Payment request not found.',404);
+  const attachments=await attachmentsFor(c.env.DB,'PAYMENT_REQUEST',id,row.request_no);
+  const liquidation=await first(c.env.DB,`SELECT * FROM erp_rfp_liquidations WHERE payment_request_id=?`,[id]);
+  return ok(c,{request:row,attachments,liquidation:liquidation||null});
 });
 
 financeRoutes.post('/payment-requests', requirePermission('FINANCE','CREATE'), async c=>{
@@ -582,6 +616,8 @@ financeRoutes.post('/payment-requests', requirePermission('FINANCE','CREATE'), a
   const withholding=numberValue(b.withholdingAmount);
   const net=round(gross-withholding);
   if(gross<=0)return fail(c,'Gross amount must be greater than zero.');
+  const rawType=normalizeText(b.requestType||'Payment to Vendor');
+  const isCashAdvance=/cash\s*advance/i.test(rawType);
   const requestNo=await nextCode(c.env.DB,'PAYMENT_REQUEST','RFP',8);
   const inserted=await run(c.env.DB,`INSERT INTO erp_payment_requests(
     request_no,entity_id,request_date,requestor_email,payee_partner_id,payee_name,department,
@@ -594,12 +630,61 @@ financeRoutes.post('/payment-requests', requirePermission('FINANCE','CREATE'), a
     normalizeText(b.projectCode),normalizeText(b.purpose),normalizeText(b.requestType||'SUPPLIER_PAYMENT'),
     po?.id||null,po?.purchase_order_no||normalizeText(b.purchaseOrderNo),landedCost?.id||null,
     normalizeText(b.supplierInvoiceNo),b.invoiceDate||'',gross,vat,withholding,net,
-    b.dueDate||'',normalizeText(b.paymentMethod),
+    b.dueDate||'',normalizeText(b.modeOfPayment||b.paymentMethod),
   ]);
+  const rfpId=inserted.meta.last_row_id;
+  // Extra fields captured on the redesigned form live in the RFP settings-style
+  // side table so no ALTER of erp_payment_requests is needed.
+  const extras={requestorName:normalizeText(b.requestorName),requestorEmail:normalizeText(b.requestorEmail)||c.get('erpUser').email,
+    contactNo:normalizeText(b.contactNo),paymentType:normalizeText(b.paymentType),modeOfPayment:normalizeText(b.modeOfPayment),
+    bankName:normalizeText(b.bankName),accountName:normalizeText(b.accountName),accountNo:normalizeText(b.accountNo),
+    payeeTin:normalizeText(b.payeeTin),payeeContact:normalizeText(b.payeeContact),payeeEmail:normalizeText(b.payeeEmail),
+    glAccount:normalizeText(b.glAccount),currency:normalizeText(b.currency)||'PHP',remarks:normalizeText(b.remarks),
+    requestType:rawType,cashAdvance:isCashAdvance?1:0,
+    signature:normalizeText(b.requestorSignature),signatureType:normalizeText(b.signatureType)||'TYPE'};
+  try{await run(c.env.DB,`INSERT OR REPLACE INTO erp_rfp_settings(key,value) VALUES(?,?)`,['rfp_doc:'+requestNo,JSON.stringify(extras)]);}catch(e){}
+  // Supporting documents -> Google Drive / Payables Management / <RFP no>
+  const attach=await saveAttachments(c.env,c.env.DB,{moduleCode:'FINANCE',recordType:'PAYMENT_REQUEST',
+    recordId:rfpId,recordNo:requestNo,files:b.attachments,uploadedBy:c.get('erpUser').email});
   await audit(c,{action:'CREATE',module:'FINANCE',recordType:'PAYMENT_REQUEST',
-    recordId:inserted.meta.last_row_id,recordNo:requestNo,after:{gross,vat,withholding,net}});
-  return ok(c,{id:inserted.meta.last_row_id,requestNo,netPayable:net},201);
+    recordId:rfpId,recordNo:requestNo,after:{gross,vat,withholding,net,cashAdvance:isCashAdvance}});
+  return ok(c,{id:rfpId,requestNo,netPayable:net,cashAdvance:isCashAdvance,
+    attachments:attach.saved,attachmentErrors:attach.failed},201);
 });
+
+// Who to email at each stage. Roles are resolved from erp_users so no addresses
+// are hard-coded; APP_ADMIN_EMAIL is the safety net.
+async function roleEmails(db,env,roles,department){
+  const list=[];
+  for(const role of roles){
+    const rows=await all(db,`SELECT email FROM erp_users WHERE active=1 AND upper(role_code)=? AND (?='' OR department=? OR ?='ANY')`,
+      [String(role).toUpperCase(),department||'',department||'',department?'':'ANY']);
+    rows.forEach(r=>{if(r.email)list.push(String(r.email).toLowerCase());});
+  }
+  if(!list.length&&env.APP_ADMIN_EMAIL)list.push(String(env.APP_ADMIN_EMAIL).toLowerCase());
+  return [...new Set(list)];
+}
+
+const rfpMoney=(v,cur)=>`${cur||'PHP'} ${Number(v||0).toLocaleString('en-US',{minimumFractionDigits:2})}`;
+
+async function notifyRfp(c,request,{to,cc,title,subject,intro,extraFacts,footer}){
+  const recipients=(to||[]).filter(Boolean);
+  if(!recipients.length)return {ok:false,skipped:true};
+  const attachments=await attachmentsFor(c.env.DB,'PAYMENT_REQUEST',request.id,request.request_no);
+  const facts=[['RFP',request.request_no],['Requestor',request.requestor_email],
+    ['Department',request.department],['Payee',request.payee_name],
+    ['Purpose',request.purpose],['Net payable',rfpMoney(request.net_payable)],
+    ['Status',String(request.status||'').replace(/_/g,' ')]].concat(extraFacts||[]);
+  const origin=new URL(c.req.url).origin;
+  return await sendMailQuiet(c.env,{
+    to:recipients,cc:(cc||[]).filter(Boolean),
+    subject,
+    html:mailLayout(title,
+      `<p>${intro}</p>`+mailFacts(facts)+mailAttachments(attachments)
+      +`<p style="margin-top:16px"><a href="${origin}/" style="color:#1669a7">Open Payables Management in Blitz - ERP</a></p>`,
+      footer||'Request for payment workflow'),
+  });
+}
 
 financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','EDIT'), async c=>{
   const id=Number(c.req.param('id'));const b=await jsonBody(c);
@@ -707,13 +792,76 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
       if(!payment||payment.journal_status!=='POSTED'){
         throw new Error('Approve and post the supplier-payment journal before confirming payment.');
       }
+      // Proof of payment goes to Drive and is linked on the record before closing.
+      if(Array.isArray(b.attachments)&&b.attachments.length){
+        await saveAttachments(c.env,c.env.DB,{moduleCode:'FINANCE',recordType:'PAYMENT_REQUEST',
+          recordId:id,recordNo:request.request_no,files:b.attachments,uploadedBy:user});
+      }
+      await run(c.env.DB,`INSERT INTO erp_rfp_proof_of_payment(rfp_ref,reference,paid_at,actor)
+        VALUES(?,?,datetime('now'),?)`,[request.request_no,normalizeText(b.proofReference),user]);
       await run(c.env.DB,`UPDATE erp_payment_requests SET status='PAID',paid_by=?,
         paid_at=datetime('now'),updated_at=datetime('now') WHERE id=?`,[user,id]);
+    }else if(action==='RETURN'||action==='CANCEL'||action==='REJECT'){
+      if(['PAID','REJECTED'].includes(request.status))throw new Error('This request can no longer be returned.');
+      const reason=normalizeText(b.reason||b.notes)||'No reason given';
+      await run(c.env.DB,`UPDATE erp_payment_requests SET status='REJECTED',updated_at=datetime('now') WHERE id=?`,[id]);
+      await run(c.env.DB,`INSERT INTO erp_rfp_approvals(rfp_ref,stage,decision,actor,reason,amount)
+        VALUES(?,?,?,?,?,?)`,[request.request_no,String(request.status),'RETURNED',user,reason,request.net_payable]);
+      request.__returnReason=reason;
     }else return fail(c,'Unsupported payment-request action.');
     const after=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
+    // ---- notifications -------------------------------------------------
+    const dept=after.department||'';
+    const requestor=[after.requestor_email];
+    const deptHeads=await roleEmails(c.env.DB,c.env,['DEPT_HEAD','DEPT_MANAGER'],dept);
+    const finance=await roleEmails(c.env.DB,c.env,['FINANCE'],'');
+    const ceo=await roleEmails(c.env.DB,c.env,['CEO'],'');
+    let notified=null;
+    try{
+      if(action==='SUBMIT'){
+        notified=await notifyRfp(c,after,{to:normalizeText(b.departmentHeadEmail)?[normalizeText(b.departmentHeadEmail)]:deptHeads,cc:requestor,
+          title:'Request for payment awaiting your approval',
+          subject:`Approval needed: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
+          intro:`${after.requestor_email} submitted a request for payment for your approval as Department Head. The supporting documents are linked below.`});
+      }else if(action==='DEPARTMENT_APPROVE'){
+        notified=await notifyRfp(c,after,{to:finance,cc:requestor,
+          title:'Department approved - Finance review required',
+          subject:`Finance review: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
+          intro:`The Department Head approved this request. It is now with Finance for review.`});
+      }else if(action==='FINANCE_VALIDATE'){
+        notified=await notifyRfp(c,after,{to:ceo,cc:[...finance,...requestor],
+          title:'Finance validated - CEO approval required',
+          subject:`CEO approval: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
+          intro:`Finance validated this request. It now needs final CEO approval.`});
+      }else if(action==='FINAL_APPROVE'){
+        notified=await notifyRfp(c,after,{to:finance,cc:[...requestor,...deptHeads],
+          title:'CEO approved - ready for payment',
+          subject:`Approved for payment: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
+          intro:`The CEO gave final approval with all documents signed. Finance can now instruct the disbursing bank and upload the proof of payment.`});
+      }else if(action==='MARK_PAID'&&normalizeText(b.bankInstructionEmail)){
+        notified=await notifyRfp(c,after,{to:[normalizeText(b.bankInstructionEmail)],cc:finance,
+          title:'Payment instruction',
+          subject:`Payment instruction: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
+          intro:normalizeText(b.message)||`Please process the payment below in favour of ${after.payee_name}.`,
+          extraFacts:[['Payment reference',after.payment_reference]]});
+      }else if(action==='CONFIRM_PAID'){
+        notified=await notifyRfp(c,after,{to:requestor,cc:[...deptHeads,...finance],
+          title:'Payment completed',
+          subject:`Paid: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
+          intro:`Payment has been released and the proof of payment is attached below.`,
+          extraFacts:[['Payment reference',after.payment_reference],['Proof reference',normalizeText(b.proofReference)]]});
+      }else if(['RETURN','CANCEL','REJECT'].includes(action)){
+        const audience=[...new Set([...requestor,...deptHeads,...finance])];
+        notified=await notifyRfp(c,after,{to:audience,
+          title:'Request for payment returned',
+          subject:`Returned: ${after.request_no}`,
+          intro:`${user} returned this request for payment.`,
+          extraFacts:[['Reason',request.__returnReason||normalizeText(b.reason)]]});
+      }
+    }catch(mailError){notified={ok:false,error:String(mailError)};}
     await audit(c,{action,module:'FINANCE',recordType:'PAYMENT_REQUEST',recordId:id,
-      recordNo:request.request_no,before:request,after});
-    return ok(c,{request:after});
+      recordNo:request.request_no,before:request,after:{...after,notified}});
+    return ok(c,{request:after,notified});
   }catch(error){return fail(c,error.message,409);}
 });
 
@@ -1252,4 +1400,152 @@ financeRoutes.get('/reports/budget-actual', requirePermission('FINANCE', 'VIEW')
   })).sort((a, b) => String(a.department).localeCompare(String(b.department))
     || String(a.account_title).localeCompare(String(b.account_title)));
   return ok(c, { year, rows });
+});
+
+
+/* ===================================================================
+ * Cash advance liquidation
+ * A liquidation can only be opened against a Cash Advance RFP that is
+ * fully approved (APPROVED / PAYMENT_PREPARED / PAID). The requestor adds
+ * one line per expense with a receipt, the system totals them and shows the
+ * variance against the advance, then Finance reviews.
+ * =================================================================== */
+async function rfpExtras(db,requestNo){
+  const row=await first(db,`SELECT value FROM erp_rfp_settings WHERE key=?`,['rfp_doc:'+requestNo]);
+  try{return row&&row.value?JSON.parse(row.value):{};}catch(e){return {};}
+}
+function liquidatable(status){
+  return ['APPROVED','PAYMENT_PREPARED','PAID'].includes(String(status||'').toUpperCase());
+}
+
+// Cash-advance RFPs the signed-in user may liquidate.
+financeRoutes.get('/liquidations/eligible', requirePermission('FINANCE','VIEW'), async c=>{
+  const user=c.get('erpUser');
+  const rows=await all(c.env.DB,`SELECT r.* FROM erp_payment_requests r
+    WHERE r.requestor_email=? AND r.status IN ('APPROVED','PAYMENT_PREPARED','PAID')
+    ORDER BY r.request_date DESC LIMIT 200`,[user.email]);
+  const eligible=[];
+  for(const row of rows){
+    const extras=await rfpExtras(c.env.DB,row.request_no);
+    const isAdvance=Number(extras.cashAdvance||0)===1||/ADVANCE/i.test(String(row.request_type||''));
+    if(!isAdvance)continue;
+    const existing=await first(c.env.DB,`SELECT id,liquidation_no,status FROM erp_rfp_liquidations WHERE payment_request_id=?`,[row.id]);
+    eligible.push({id:row.id,requestNo:row.request_no,requestDate:row.request_date,purpose:row.purpose,
+      amount:row.net_payable,status:row.status,liquidation:existing||null});
+  }
+  return ok(c,{rows:eligible});
+});
+
+financeRoutes.get('/liquidations', requirePermission('FINANCE','VIEW'), async c=>{
+  const vis=await rfpVisibility(c);
+  const where=vis.level==='ALL'?'':' WHERE l.requestor_email=?';
+  const args=vis.level==='ALL'?[]:[c.get('erpUser').email];
+  const rows=await all(c.env.DB,`SELECT l.*,r.purpose,r.department FROM erp_rfp_liquidations l
+    LEFT JOIN erp_payment_requests r ON r.id=l.payment_request_id${where}
+    ORDER BY l.id DESC LIMIT 300`,args);
+  return ok(c,{rows});
+});
+
+financeRoutes.get('/liquidations/:id', requirePermission('FINANCE','VIEW'), async c=>{
+  const id=Number(c.req.param('id'));
+  const header=await first(c.env.DB,`SELECT * FROM erp_rfp_liquidations WHERE id=?`,[id]);
+  if(!header)return fail(c,'Liquidation not found.',404);
+  const user=c.get('erpUser');
+  const role=String(user.role_code||'').toUpperCase();
+  if(header.requestor_email!==user.email&&!['FINANCE','CEO'].includes(role))return fail(c,'You can only open your own liquidation.',403);
+  const items=await all(c.env.DB,`SELECT * FROM erp_rfp_liquidation_items WHERE liquidation_id=? ORDER BY line_no`,[id]);
+  const attachments=await attachmentsFor(c.env.DB,'LIQUIDATION',id,header.liquidation_no);
+  return ok(c,{header,items,attachments});
+});
+
+// Open (or reopen) a liquidation for an approved cash advance.
+financeRoutes.post('/liquidations', requirePermission('FINANCE','CREATE'), async c=>{
+  const b=await jsonBody(c);
+  const rfp=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[Number(b.paymentRequestId)]);
+  if(!rfp)return fail(c,'Select the cash-advance RFP to liquidate.',404);
+  const user=c.get('erpUser');
+  if(rfp.requestor_email!==user.email)return fail(c,'Only the requestor can liquidate their own cash advance.',403);
+  const extras=await rfpExtras(c.env.DB,rfp.request_no);
+  const isAdvance=Number(extras.cashAdvance||0)===1||/ADVANCE/i.test(String(rfp.request_type||''));
+  if(!isAdvance)return fail(c,'This request is not tagged as a Cash Advance.',409);
+  if(!liquidatable(rfp.status))return fail(c,'The cash advance must be fully approved before it can be liquidated.',409);
+  const existing=await first(c.env.DB,`SELECT * FROM erp_rfp_liquidations WHERE payment_request_id=?`,[rfp.id]);
+  if(existing)return ok(c,{id:existing.id,liquidationNo:existing.liquidation_no,reused:true});
+  const no=await nextCode(c.env.DB,'LIQUIDATION','LIQ',6);
+  const inserted=await run(c.env.DB,`INSERT INTO erp_rfp_liquidations(liquidation_no,payment_request_id,request_no,
+    requestor_email,advance_amount,spent_amount,variance,status) VALUES(?,?,?,?,?,0,?, 'DRAFT')`,
+    [no,rfp.id,rfp.request_no,user.email,rfp.net_payable,rfp.net_payable]);
+  await audit(c,{action:'CREATE',module:'FINANCE',recordType:'LIQUIDATION',recordId:inserted.meta.last_row_id,recordNo:no,after:{rfp:rfp.request_no}});
+  return ok(c,{id:inserted.meta.last_row_id,liquidationNo:no},201);
+});
+
+// Replace all lines and (optionally) attach receipts.
+financeRoutes.post('/liquidations/:id/lines', requirePermission('FINANCE','CREATE'), async c=>{
+  const id=Number(c.req.param('id'));const b=await jsonBody(c);
+  const header=await first(c.env.DB,`SELECT * FROM erp_rfp_liquidations WHERE id=?`,[id]);
+  if(!header)return fail(c,'Liquidation not found.',404);
+  const user=c.get('erpUser');
+  if(header.requestor_email!==user.email)return fail(c,'Only the requestor can edit this liquidation.',403);
+  if(header.status!=='DRAFT')return fail(c,'This liquidation has already been submitted.',409);
+  const lines=(Array.isArray(b.lines)?b.lines:[]).filter(x=>numberValue(x.amount)>0);
+  await run(c.env.DB,`DELETE FROM erp_rfp_liquidation_items WHERE liquidation_id=?`,[id]);
+  let lineNo=0,spent=0;
+  for(const line of lines){
+    lineNo+=1;spent+=numberValue(line.amount);
+    await run(c.env.DB,`INSERT INTO erp_rfp_liquidation_items(liquidation_id,line_no,expense_date,particulars,amount,receipt_no)
+      VALUES(?,?,?,?,?,?)`,[id,lineNo,normalizeText(line.expenseDate),normalizeText(line.particulars),numberValue(line.amount),normalizeText(line.receiptNo)]);
+  }
+  spent=round(spent);
+  const variance=round(Number(header.advance_amount||0)-spent);
+  await run(c.env.DB,`UPDATE erp_rfp_liquidations SET spent_amount=?,variance=?,updated_at=datetime('now') WHERE id=?`,[spent,variance,id]);
+  let attach={saved:[],failed:[]};
+  if(Array.isArray(b.attachments)&&b.attachments.length){
+    attach=await saveAttachments(c.env,c.env.DB,{moduleCode:'LIQUIDATION',recordType:'LIQUIDATION',
+      recordId:id,recordNo:header.liquidation_no,files:b.attachments,uploadedBy:user.email});
+  }
+  return ok(c,{lines:lineNo,spent,variance,advance:header.advance_amount,attachments:attach.saved,attachmentErrors:attach.failed});
+});
+
+financeRoutes.post('/liquidations/:id/submit', requirePermission('FINANCE','CREATE'), async c=>{
+  const id=Number(c.req.param('id'));
+  const header=await first(c.env.DB,`SELECT * FROM erp_rfp_liquidations WHERE id=?`,[id]);
+  if(!header)return fail(c,'Liquidation not found.',404);
+  const user=c.get('erpUser');
+  if(header.requestor_email!==user.email)return fail(c,'Only the requestor can submit this liquidation.',403);
+  if(header.status!=='DRAFT')return fail(c,'Already submitted.',409);
+  const items=await all(c.env.DB,`SELECT COUNT(*) n FROM erp_rfp_liquidation_items WHERE liquidation_id=?`,[id]);
+  if(!Number(items[0]?.n||0))return fail(c,'Add at least one liquidation line.',409);
+  await run(c.env.DB,`UPDATE erp_rfp_liquidations SET status='SUBMITTED',submitted_at=datetime('now'),updated_at=datetime('now') WHERE id=?`,[id]);
+  const finance=await roleEmails(c.env.DB,c.env,['FINANCE'],'');
+  const attachments=await attachmentsFor(c.env.DB,'LIQUIDATION',id,header.liquidation_no);
+  await sendMailQuiet(c.env,{to:finance,cc:[user.email],
+    subject:`Liquidation submitted: ${header.liquidation_no} (${header.request_no})`,
+    html:mailLayout('Cash advance liquidation submitted',
+      `<p>${user.email} submitted a liquidation for cash advance <b>${header.request_no}</b>.</p>`
+      +mailFacts([['Liquidation',header.liquidation_no],['Cash advance',header.request_no],
+        ['Advance amount',rfpMoney(header.advance_amount)],['Total spent',rfpMoney(header.spent_amount)],
+        ['Variance',rfpMoney(header.variance)]])
+      +mailAttachments(attachments),'Cash advance liquidation')});
+  await audit(c,{action:'SUBMIT',module:'FINANCE',recordType:'LIQUIDATION',recordId:id,recordNo:header.liquidation_no,after:{spent:header.spent_amount,variance:header.variance}});
+  return ok(c,{submitted:true});
+});
+
+financeRoutes.post('/liquidations/:id/review', requirePermission('FINANCE','APPROVE'), async c=>{
+  const id=Number(c.req.param('id'));const b=await jsonBody(c);
+  const header=await first(c.env.DB,`SELECT * FROM erp_rfp_liquidations WHERE id=?`,[id]);
+  if(!header)return fail(c,'Liquidation not found.',404);
+  if(header.status!=='SUBMITTED')return fail(c,'Only a submitted liquidation can be reviewed.',409);
+  const approve=String(b.decision||'APPROVE').toUpperCase()!=='REJECT';
+  const user=c.get('erpUser').email;
+  await run(c.env.DB,`UPDATE erp_rfp_liquidations SET status=?,reviewed_by=?,reviewed_at=datetime('now'),
+    remarks=?,updated_at=datetime('now') WHERE id=?`,[approve?'APPROVED':'REJECTED',user,normalizeText(b.remarks),id]);
+  await sendMailQuiet(c.env,{to:[header.requestor_email],
+    subject:`Liquidation ${approve?'approved':'returned'}: ${header.liquidation_no}`,
+    html:mailLayout(`Liquidation ${approve?'approved':'returned'}`,
+      `<p>Finance ${approve?'approved':'returned'} your liquidation for cash advance <b>${header.request_no}</b>.</p>`
+      +mailFacts([['Liquidation',header.liquidation_no],['Advance',rfpMoney(header.advance_amount)],
+        ['Spent',rfpMoney(header.spent_amount)],['Variance',rfpMoney(header.variance)],
+        ['Remarks',normalizeText(b.remarks)]]),'Cash advance liquidation')});
+  await audit(c,{action:approve?'APPROVE':'REJECT',module:'FINANCE',recordType:'LIQUIDATION',recordId:id,recordNo:header.liquidation_no,after:{decision:approve}});
+  return ok(c,{status:approve?'APPROVED':'REJECTED'});
 });

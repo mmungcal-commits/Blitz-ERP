@@ -352,3 +352,70 @@ returnRoutes.post('/reconciliation/:id/resolve', requirePermission('RETURNS','AP
   await audit(c,{action:'RESOLVE_RECONCILIATION',module:'RETURNS',recordType:'RECONCILIATION',recordId:id,recordNo:after.case_no,before,after});
   return ok(c,{case:after});
 });
+
+
+/* ===================================================================
+ * Draft goods returns stay editable and can be voided.
+ * Once posted the stock has already moved, so only Finance may reverse it
+ * and that is done through a new return, never by editing history.
+ * =================================================================== */
+returnRoutes.patch('/:id', requirePermission('RETURNS','EDIT'), async c => {
+  const id = Number(c.req.param('id'));
+  const b = await jsonBody(c);
+  const header = await first(c.env.DB, `SELECT * FROM erp_return_orders WHERE id=?`, [id]);
+  if (!header) return fail(c, 'Goods return not found', 404);
+  const role = String(c.get('erpUser').role_code || '').toUpperCase();
+  if (header.status !== 'DRAFT' && role !== 'FINANCE') {
+    return fail(c, 'Only a draft return can be edited. Finance can override.', 409);
+  }
+  let location = null;
+  if (normalizeText(b.returnLocationCode)) {
+    location = await ensureLocation(c.env.DB, normalizeText(b.returnLocationName || b.returnLocationCode),
+      normalizeText(b.returnLocationType) || 'WAREHOUSE', normalizeText(b.returnLocationCode));
+  }
+  await run(c.env.DB, `UPDATE erp_return_orders SET
+      return_date=COALESCE(NULLIF(?,''),return_date),
+      return_location_id=COALESCE(?,return_location_id),
+      reason_code=COALESCE(NULLIF(?,''),reason_code),
+      notes=COALESCE(NULLIF(?,''),notes)
+    WHERE id=?`,
+    [normalizeText(b.returnDate), location?.id || null,
+     normalizeText(b.reasonCode), normalizeText(b.notes), id]);
+
+  // Line-level condition corrections while the return is still a draft.
+  const lines = Array.isArray(b.lines) ? b.lines : [];
+  for (const line of lines) {
+    if (!line || !line.id) continue;
+    await run(c.env.DB, `UPDATE erp_return_lines SET
+        condition_code=COALESCE(NULLIF(?,''),condition_code),
+        actual_serial=COALESCE(NULLIF(?,''),actual_serial),
+        notes=COALESCE(NULLIF(?,''),notes)
+      WHERE id=? AND return_id=?`,
+      [normalizeText(line.conditionCode), normalizeSerial(line.actualSerialNo || ''), normalizeText(line.notes), Number(line.id), id]);
+  }
+  const after = await first(c.env.DB, `SELECT * FROM erp_return_orders WHERE id=?`, [id]);
+  await audit(c, { action: 'EDIT', module: 'RETURNS', recordType: 'GOODS_RETURN', recordId: id, recordNo: header.return_no, before: header, after });
+  return ok(c, { goodsReturn: after });
+});
+
+returnRoutes.post('/:id/void', requirePermission('RETURNS','EDIT'), async c => {
+  const id = Number(c.req.param('id'));
+  const b = await jsonBody(c).catch(() => ({}));
+  const header = await first(c.env.DB, `SELECT * FROM erp_return_orders WHERE id=?`, [id]);
+  if (!header) return fail(c, 'Goods return not found', 404);
+  if (header.status !== 'DRAFT') {
+    return fail(c, 'Only a draft return can be voided. A posted return has already moved stock; raise a correcting document instead.', 409);
+  }
+  await run(c.env.DB, `UPDATE erp_return_orders SET status='VOIDED',notes=COALESCE(notes,'')||' | Voided: '||? WHERE id=?`,
+    [normalizeText(b.reason) || 'no reason given', id]);
+  await audit(c, { action: 'VOID', module: 'RETURNS', recordType: 'GOODS_RETURN', recordId: id, recordNo: header.return_no, before: header, after: { status: 'VOIDED', reason: b.reason } });
+  return ok(c, { status: 'VOIDED' });
+});
+
+returnRoutes.get('/:id/detail', requirePermission('RETURNS','VIEW'), async c => {
+  const id = Number(c.req.param('id'));
+  const header = await first(c.env.DB, `SELECT * FROM erp_return_orders WHERE id=?`, [id]);
+  if (!header) return fail(c, 'Goods return not found', 404);
+  const lines = await all(c.env.DB, `SELECT * FROM erp_return_lines WHERE return_id=? ORDER BY id`, [id]);
+  return ok(c, { header, lines });
+});

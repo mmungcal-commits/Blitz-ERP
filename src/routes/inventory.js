@@ -620,3 +620,185 @@ inventoryRoutes.post('/move', requirePermission('INVENTORY','POST'), async(c)=>{
     return ok(c,{movement:result},201);
   }catch(e){return fail(c,e.message,409);}
 });
+
+
+/* ===================================================================
+ * Stock-movement requisition slips
+ * Users no longer post a movement directly. They raise a slip that runs the
+ * approval chain (Department Manager -> Department Head), and only an approved
+ * slip is posted to the stock ledger. A serial in a terminal status (SOLD)
+ * cannot be moved or requested at all.
+ * =================================================================== */
+
+async function movementStatus(db, code) {
+  return await first(db, `SELECT * FROM erp_movement_statuses WHERE code=? AND active=1`, [String(code || '').toUpperCase()]);
+}
+
+// Status registry, with the restricted / terminal rules the UI enforces.
+inventoryRoutes.get('/movement-statuses', requirePermission('INVENTORY','VIEW'), async c => {
+  const rows = await all(c.env.DB, `SELECT code,label,restricted,terminal,sort_order FROM erp_movement_statuses WHERE active=1 ORDER BY sort_order,code`);
+  return ok(c, { rows });
+});
+
+inventoryRoutes.post('/movement-statuses', requirePermission('INVENTORY','MANAGE'), async c => {
+  const b = await jsonBody(c);
+  const code = normalizeText(b.code).toUpperCase().replace(/\s+/g, '_');
+  if (!code) return fail(c, 'Status code is required');
+  await run(c.env.DB, `INSERT INTO erp_movement_statuses(code,label,restricted,terminal,sort_order,created_by)
+    VALUES(?,?,?,?,?,?)
+    ON CONFLICT(code) DO UPDATE SET label=excluded.label,restricted=excluded.restricted,
+      terminal=excluded.terminal,active=1`,
+    [code, normalizeText(b.label) || code.replace(/_/g, ' '), b.restricted ? 1 : 0, b.terminal ? 1 : 0,
+     numberValue(b.sortOrder, 500), c.get('erpUser').email]);
+  await audit(c, { action: 'CREATE', module: 'INVENTORY', recordType: 'MOVEMENT_STATUS', recordNo: code, after: b });
+  return ok(c, { code }, 201);
+});
+
+inventoryRoutes.get('/move-requests', requirePermission('INVENTORY','VIEW'), async c => {
+  const status = normalizeText(c.req.query('status')).toUpperCase();
+  const rows = await all(c.env.DB,
+    `SELECT * FROM erp_stock_move_requests WHERE (?='' OR status=?) ORDER BY id DESC LIMIT 300`, [status, status]);
+  return ok(c, { rows });
+});
+
+// Raise the slip. This is what the Post Stock Movement form now calls.
+inventoryRoutes.post('/move-requests', requirePermission('INVENTORY','CREATE'), async c => {
+  const b = await jsonBody(c);
+  const serial = normalizeSerial(b.serialNo);
+  if (!serial) return fail(c, 'Serial is required');
+  if (!b.toLocationCode && !b.toLocationId && !b.toLocationName) return fail(c, 'Destination location is required');
+  const asset = await first(c.env.DB, `SELECT * FROM erp_assets WHERE serial_no=? AND active=1`, [serial]);
+  if (!asset) return fail(c, `Serial ${serial} is not registered`, 404);
+
+  const currentStatus = await movementStatus(c.env.DB, asset.current_status);
+  if (currentStatus?.terminal) {
+    return fail(c, `Serial ${serial} is tagged ${asset.current_status} and can no longer be moved.`, 409);
+  }
+  const open = await first(c.env.DB,
+    `SELECT request_no FROM erp_stock_move_requests WHERE serial_no=? AND status IN ('SUBMITTED','DEPT_MANAGER_APPROVED','APPROVED')`, [serial]);
+  if (open) return fail(c, `Serial ${serial} already has an open movement slip (${open.request_no}).`, 409);
+
+  const target = await movementStatus(c.env.DB, b.toStatus);
+  if (normalizeText(b.toStatus) && !target) return fail(c, `Unknown movement status ${b.toStatus}.`, 400);
+
+  const no = await nextCode(c.env.DB, 'STOCK_MOVE_REQUEST', 'MRQ', 6);
+  const inserted = await run(c.env.DB,
+    `INSERT INTO erp_stock_move_requests(request_no,serial_no,item_code,item_name,movement_type,
+      from_location_code,to_location_id,to_location_code,to_location_name,to_location_type,to_status,
+      notes,department,status,requested_by)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'SUBMITTED',?)`,
+    [no, serial, asset.item_code, asset.item_name, normalizeText(b.movementType) || 'TRANSFER',
+     asset.current_location_code || '', b.toLocationId || null, normalizeText(b.toLocationCode),
+     normalizeText(b.toLocationName), normalizeText(b.toLocationType), normalizeText(b.toStatus),
+     normalizeText(b.notes), normalizeText(b.department) || c.get('erpUser').department || '',
+     c.get('erpUser').email]);
+  await audit(c, { action: 'CREATE', module: 'INVENTORY', recordType: 'STOCK_MOVE_REQUEST',
+    recordId: inserted.meta.last_row_id, recordNo: no, after: { serial, to: b.toLocationCode, toStatus: b.toStatus } });
+  return ok(c, { id: inserted.meta.last_row_id, requestNo: no, status: 'SUBMITTED' }, 201);
+});
+
+// Approve one step. Two steps by default; the second approval posts the movement.
+inventoryRoutes.post('/move-requests/:id/approve', requirePermission('INVENTORY','APPROVE'), async c => {
+  const id = Number(c.req.param('id'));
+  const b = await jsonBody(c).catch(() => ({}));
+  const slip = await first(c.env.DB, `SELECT * FROM erp_stock_move_requests WHERE id=?`, [id]);
+  if (!slip) return fail(c, 'Movement slip not found', 404);
+  const user = c.get('erpUser');
+  if (slip.requested_by === user.email) return fail(c, 'The requestor cannot approve their own movement slip.', 409);
+
+  if (slip.status === 'SUBMITTED') {
+    await run(c.env.DB, `UPDATE erp_stock_move_requests SET status='DEPT_MANAGER_APPROVED',
+      manager_approved_by=?,manager_approved_at=datetime('now'),updated_at=datetime('now') WHERE id=?`, [user.email, id]);
+    await audit(c, { action: 'APPROVAL_STEP', module: 'INVENTORY', recordType: 'STOCK_MOVE_REQUEST', recordId: id, recordNo: slip.request_no, after: { step: 1 } });
+    return ok(c, { status: 'DEPT_MANAGER_APPROVED', posted: false, pending: 'Department Head' });
+  }
+  if (slip.status !== 'DEPT_MANAGER_APPROVED') return fail(c, `This slip is ${slip.status} and cannot be approved.`, 409);
+  if (slip.manager_approved_by === user.email) return fail(c, 'The second approval must come from a different person.', 409);
+
+  // Final approval: post the movement to the ledger.
+  let location = null;
+  if (slip.to_location_name || slip.to_location_code) {
+    location = await ensureLocation(c.env.DB, slip.to_location_name || slip.to_location_code,
+      slip.to_location_type || 'OTHER', slip.to_location_code || '');
+  }
+  try {
+    const result = await postMovement(c.env.DB, {
+      serialNo: slip.serial_no, movementType: slip.movement_type,
+      toLocationId: location?.id, toLocationCode: location?.code, toStatus: slip.to_status,
+      notes: slip.notes, sourceDocType: 'STOCK_MOVE_REQUEST', sourceDocId: slip.id, sourceDocNo: slip.request_no,
+    }, user.email);
+    await run(c.env.DB, `UPDATE erp_stock_move_requests SET status='POSTED',head_approved_by=?,
+      head_approved_at=datetime('now'),posted_by=?,posted_at=datetime('now'),movement_id=?,updated_at=datetime('now')
+      WHERE id=?`, [user.email, user.email, result.movementId || null, id]);
+    await audit(c, { action: 'POST_MOVEMENT', module: 'INVENTORY', recordType: 'STOCK_MOVE_REQUEST', recordId: id, recordNo: slip.request_no, after: result });
+    return ok(c, { status: 'POSTED', posted: true, movement: result });
+  } catch (e) {
+    return fail(c, e.message, 409);
+  }
+});
+
+inventoryRoutes.post('/move-requests/:id/reject', requirePermission('INVENTORY','APPROVE'), async c => {
+  const id = Number(c.req.param('id'));
+  const b = await jsonBody(c).catch(() => ({}));
+  const slip = await first(c.env.DB, `SELECT * FROM erp_stock_move_requests WHERE id=?`, [id]);
+  if (!slip) return fail(c, 'Movement slip not found', 404);
+  if (['POSTED', 'REJECTED'].includes(slip.status)) return fail(c, `This slip is already ${slip.status}.`, 409);
+  await run(c.env.DB, `UPDATE erp_stock_move_requests SET status='REJECTED',rejected_by=?,rejected_at=datetime('now'),
+    reject_reason=?,updated_at=datetime('now') WHERE id=?`, [c.get('erpUser').email, normalizeText(b.reason), id]);
+  await audit(c, { action: 'REJECT', module: 'INVENTORY', recordType: 'STOCK_MOVE_REQUEST', recordId: id, recordNo: slip.request_no, after: { reason: b.reason } });
+  return ok(c, { status: 'REJECTED' });
+});
+
+
+/* ===================================================================
+ * Finance-only cycle-count override
+ * "Should there be discrepancies, only finance has the control to override
+ *  and provide remarks of discrepancies to correct the count."
+ * =================================================================== */
+inventoryRoutes.post('/cycle-counts/:id/override', requirePermission('INVENTORY','APPROVE'), async c => {
+  const id = Number(c.req.param('id'));
+  const b = await jsonBody(c);
+  const user = c.get('erpUser');
+  if (String(user.role_code || '').toUpperCase() !== 'FINANCE') {
+    return fail(c, 'Only Finance can override a physical count variance.', 403);
+  }
+  const count = await first(c.env.DB, `SELECT * FROM erp_cycle_counts WHERE id=?`, [id]);
+  if (!count) return fail(c, 'Cycle count not found', 404);
+  if (!['SUBMITTED','APPROVED'].includes(count.status)) {
+    return fail(c, 'A variance can only be overridden on a submitted or approved count.', 409);
+  }
+  const remarks = normalizeText(b.remarks);
+  if (!remarks) return fail(c, 'Remarks explaining the correction are required.');
+
+  const lines = (Array.isArray(b.lines) ? b.lines : [b]).filter(x => x && x.lineId);
+  if (!lines.length) return fail(c, 'Select the variance lines to correct.');
+  let corrected = 0;
+  for (const entry of lines) {
+    const line = await first(c.env.DB, `SELECT * FROM erp_cycle_count_lines WHERE id=? AND cycle_count_id=?`,
+      [Number(entry.lineId), id]);
+    if (!line) continue;
+    const resolution = String(entry.resolution || 'ACCEPT_SYSTEM').toUpperCase();
+    // ACCEPT_SYSTEM  : the system record was right, clear the variance
+    // ACCEPT_COUNT   : the physical count was right, keep the variance for posting
+    if (resolution === 'ACCEPT_SYSTEM') {
+      await run(c.env.DB, `UPDATE erp_cycle_count_lines
+        SET count_status='COUNTED',variance_type=NULL,
+            notes=COALESCE(notes,'')||' | Finance override ('||?||'): '||?
+        WHERE id=?`, [user.email, remarks, line.id]);
+    } else {
+      await run(c.env.DB, `UPDATE erp_cycle_count_lines
+        SET notes=COALESCE(notes,'')||' | Finance confirmed variance ('||?||'): '||?
+        WHERE id=?`, [user.email, remarks, line.id]);
+    }
+    corrected += 1;
+  }
+  const totals = await first(c.env.DB, `SELECT
+      COUNT(CASE WHEN actual_serial_no IS NOT NULL THEN 1 END) counted,
+      COUNT(CASE WHEN variance_type IS NOT NULL AND variance_type!='' THEN 1 END) variances
+    FROM erp_cycle_count_lines WHERE cycle_count_id=?`, [id]);
+  await run(c.env.DB, `UPDATE erp_cycle_counts SET counted_units=?,variance_units=? WHERE id=?`,
+    [totals?.counted || 0, totals?.variances || 0, id]);
+  await audit(c, { action: 'FINANCE_OVERRIDE', module: 'INVENTORY', recordType: 'CYCLE_COUNT',
+    recordId: id, recordNo: count.count_no, after: { corrected, remarks, totals } });
+  return ok(c, { corrected, totals });
+});
