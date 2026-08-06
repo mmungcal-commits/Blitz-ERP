@@ -27,6 +27,7 @@ import { analyticsRoutes } from './routes/analytics.js';
 import { poApprovalPublicRoutes } from './routes/po-approval-public.js';
 import { assemblyRoutes } from './routes/assemblies.js';
 import { mailRoutes } from './routes/mail.js';
+import { serviceRoutes } from './routes/service.js';
 
 const app = new Hono();
 
@@ -40,9 +41,12 @@ app.get('/api/health', async c=>{
 let d1Ready=false;let r2Ready=false;let r2Error='';
 try{await c.env.DB.prepare('SELECT 1 ready').first();d1Ready=true;}catch{}
 if(c.env.DOCS){try{await c.env.DOCS.list({limit:1});r2Ready=true;}catch(error){r2Error=error?.message||'R2 access failed';}}
-return ok(c,{service:'E88 Enterprise System',version:'13.1.0-exact-inventory-r2-rollout',
-build:'E88-ROLLOUT-ERP-20260731-R13.1',d1Bound:!!c.env.DB,d1Ready,
-r2Bound:!!c.env.DOCS,r2Ready,r2Error,mailConfigured:!!(c.env.MAIL_WEBHOOK_URL&&c.env.MAIL_WEBHOOK_SECRET),
+return ok(c,{service:'Blitz - ERP',version:'15.0.0-blitz-live',
+build:'BLITZ-ERP-20260806-R15.0',d1Bound:!!c.env.DB,d1Ready,
+r2Bound:!!c.env.DOCS,r2Ready,r2Error,
+mailConfigured:!!(c.env.RESEND_API_KEY||(c.env.MAIL_WEBHOOK_URL&&c.env.MAIL_WEBHOOK_SECRET)),
+mailTransport:c.env.RESEND_API_KEY?'resend':((c.env.MAIL_WEBHOOK_URL&&c.env.MAIL_WEBHOOK_SECRET)?'apps-script':'none'),
+driveConfigured:!!(c.env.MAIL_WEBHOOK_URL&&c.env.MAIL_WEBHOOK_SECRET),
 environment:c.env.ENVIRONMENT||'unknown',time:new Date().toISOString()});
 });
 app.route('/api/auth',authRoutes);
@@ -70,6 +74,7 @@ app.route('/api/finance',financeRoutes);
 app.route('/api/finance',rfpAlignmentRoutes);
 app.route('/api/enterprise',enterpriseRoutes);
 app.route('/api/workspace',workspaceRoutes);
+app.route('/api/service',serviceRoutes);
 app.route('/api/mail',mailRoutes);
 app.all('/api/*',c=>fail(c,'Unknown endpoint',404));
 
@@ -88,7 +93,7 @@ const asset=response.status!==404?response:await env.ASSETS.fetch(new Request(ne
 const headers=new Headers(asset.headers);
 headers.set('Cache-Control','no-store, no-cache, must-revalidate');
 headers.set('Pragma','no-cache');
-headers.set('X-E88-Build','E88-ROLLOUT-ERP-20260731-R13.1');
+headers.set('X-E88-Build','BLITZ-ERP-20260806-R15.0');
 return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
 }
 };
