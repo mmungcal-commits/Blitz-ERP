@@ -101,7 +101,7 @@ async function main() {
 
   const foundation = await readFile(join(ROOT, 'public/foundation.js'), 'utf8');
   check(!foundation.includes('renderEmptyWorkspace'), 'No generic empty module fallback remains');
-  for (const token of ['E88-ROLLOUT-ERP-20260731-R13.1','data-group-toggle','column-resizer',
+  for (const token of ['BLITZ-ERP-20260806-R15.0','data-group-toggle','column-resizer',
     'openInventoryDetail','unitClass','Exact Serial Inventory Register']) {
     check(foundation.includes(token), `Rollout interface control present: ${token}`);
   }
