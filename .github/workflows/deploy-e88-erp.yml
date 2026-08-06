@@ -111,6 +111,11 @@ jobs:
           npx wrangler d1 execute DB --remote --file=migrations/0033_demo_rfp_requestors.sql
           npx wrangler d1 execute DB --remote --file=migrations/0035_master_skus.sql
           npx wrangler d1 execute DB --remote --file=migrations/0036_departments_and_sample_requisition.sql
+          # 0037_admin_operations_scope.sql is deliberately NOT run here: its two
+          # ALTER TABLE statements were already applied by hand to the live database
+          # and re-running them fails with "duplicate column name".
+          npx wrangler d1 execute DB --remote --file=migrations/0038_blitz_live_operations.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0039_service_management.sql
 
       # ---------- Empty-database bootstrap (unchanged) ----------
       - name: Confirm D1 is empty before bootstrap
