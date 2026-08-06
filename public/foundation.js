@@ -1,4 +1,5 @@
-const FOUNDATION_BUILD='E88-ROLLOUT-ERP-20260731-R13.1';
+const FOUNDATION_BUILD='BLITZ-ERP-20260806-R15.0';
+const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
   catalog:{groups:[],tools:[],addons:[]},
@@ -13,6 +14,8 @@ const state={
   apiCache:new Map(),
   apiInflight:new Map(),
   expandedGroups:new Set(JSON.parse(localStorage.getItem('e88-expanded-groups')||'[]')),
+  scope:(function(){try{return localStorage.getItem('blitz-scope')||'OPERATIONS';}catch(e){return 'OPERATIONS';}})(),
+  movementStatuses:[],
 };
 
 const $=selector=>document.querySelector(selector);
@@ -121,13 +124,16 @@ function authMessage(message,type='error'){
 function moduleList(){
   return [
     ...state.catalog.groups.flatMap(group=>group.items.map(item=>({...item,groupCode:group.code,groupTitle:group.title,type:'module'}))),
-    ...state.catalog.tools.map(item=>({...item,groupCode:'tools',groupTitle:'Enterprise Tools',type:'tool'})),
-    ...state.catalog.addons.map(item=>({...item,groupCode:'addons',groupTitle:'Enterprise Add-ons',type:'addon'})),
+    ...state.catalog.tools.map(item=>({...item,groupCode:'tools',groupTitle:'Tools',type:'tool'})),
+    ...state.catalog.addons.map(item=>({...item,groupCode:'addons',groupTitle:'Add-ons',type:'addon'})),
   ];
 }
 function moduleByCode(code){return moduleList().find(module=>module.code===code);}
 function isDemoMode(){try{return localStorage.getItem('e88-live')!=='1';}catch(e){return true;}}
+function isAdminScope(){return state.scope==='ADMIN';}
+function setScope(next){state.scope=next==='ADMIN'?'ADMIN':'OPERATIONS';try{localStorage.setItem('blitz-scope',state.scope);}catch(e){}document.body.classList.toggle('scope-admin',state.scope==='ADMIN');}
 function can(permission,action='VIEW'){
+  if(isAdminScope()&&(action==='APPROVE'||action==='POST'))return false;
   if(isDemoMode())return true;
   if(state.session?.user?.role==='ADMIN')return true;
   const row=(state.session?.permissions||[]).find(value=>value.module===permission);
@@ -225,21 +231,42 @@ function showAuth(mode='login'){
   if(resetToken)mode='reset';
   const host=$('#authContent');
   if(mode==='login'){
-    host.innerHTML=`<div class="auth-heading"><h1>Sign in</h1><p>Enterprise System</p></div>
+    const startScope=state.scope==='ADMIN'?'ADMIN':'OPERATIONS';
+    host.innerHTML=`<div class="blitz-auth">
+      <div class="blitz-auth-brand">
+        <img class="blitz-mark" src="/logo.png" alt="E88 Ventures Inc.">
+        <h1 class="blitz-wordmark">Blitz <i>-</i> ERP</h1>
+        <p class="blitz-tagline">E88 Ventures Inc.</p>
+        <div class="blitz-charge" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      </div>
+      <div class="auth-heading"><h1>Sign in</h1></div>
+      <div class="blitz-scope" role="group" aria-label="Sign-in scope">
+        <button type="button" class="blitz-scope-btn ${startScope==='OPERATIONS'?'active':''}" data-scope-pick="OPERATIONS"><b>Operations</b><small>Transactions, approvals, reports</small></button>
+        <button type="button" class="blitz-scope-btn ${startScope==='ADMIN'?'active':''}" data-scope-pick="ADMIN"><b>System Administration</b><small>Setup, users, backup. No approvals.</small></button>
+      </div>
       <form id="loginForm" class="auth-form">
+        <input type="hidden" name="scope" id="loginScope" value="${esc(startScope)}">
         ${authField('Corporate email','email','email',email,'autocomplete="username" placeholder="name@nrdev.ph" required')}
         ${authField('Password','password','password','','autocomplete="current-password" required')}
         <button class="button auth-submit">Sign in</button>
       </form>
       <div id="authMessage" class="auth-message"></div>
-      <div class="auth-links"><button type="button" data-auth="activate">Activate account</button><button type="button" data-auth="reset">Reset password</button></div>`;
+      <div class="auth-links"><button type="button" data-auth="activate">Activate account</button><button type="button" data-auth="reset">Reset password</button></div>
+    </div>`;
+    $$('[data-scope-pick]').forEach(btn=>btn.onclick=()=>{
+      $$('[data-scope-pick]').forEach(other=>other.classList.remove('active'));
+      btn.classList.add('active');
+      $('#loginScope').value=btn.dataset.scopePick;
+    });
     $('#loginForm').onsubmit=async event=>{
       event.preventDefault();
       const button=event.currentTarget.querySelector('button');
       button.disabled=true;
-      authMessage('Signing in…','info');
+      authMessage('Signing in...','info');
       try{
-        await api('/auth/login',{method:'POST',body:JSON.stringify(formDataObject(event.currentTarget))});
+        const payload=formDataObject(event.currentTarget);
+        setScope(payload.scope);
+        await api('/auth/login',{method:'POST',body:JSON.stringify(payload)});
         history.replaceState({},'',location.pathname);
         await init();
       }catch(error){authMessage(error.message);}
@@ -281,6 +308,12 @@ async function init(){
   $('#loading').classList.remove('hidden');
   try{
     state.session=await api('/session');
+    // The server decides the scope at login (erp_sessions.session_scope); the
+    // client only reflects it. Switching scope requires signing in again.
+    state.scope=(state.session.user&&state.session.user.scope)||'OPERATIONS';
+    try{localStorage.setItem('blitz-scope',state.scope);}catch(e){}
+    document.body.classList.toggle('scope-admin',state.scope==='ADMIN');
+    try{document.title='Blitz - ERP';}catch(e){}
     state.catalog=state.session.workspaceCatalog||{groups:[],tools:[],addons:[]};
     var __hiddenModules=['sd-crm','sd-demand-planning','sd-warranty-management','sd-pim','sd-customer-portal','sd-lease-contract-management','ip-inventory-analysis','ip-subcontracting'];
     if(state.catalog&&state.catalog.groups)state.catalog.groups.forEach(function(g){if(g.items)g.items=g.items.filter(function(it){return __hiddenModules.indexOf(it.code)<0;});});
@@ -310,8 +343,8 @@ function renderLaunchpad(){
   document.body.classList.add('launchpad-view');
   content.innerHTML=`<section class="enterprise-launchpad">
     <div class="launchpad-controls">
-      <div><img src="/logo.png" alt="E88"><span>Enterprise Modules</span></div>
-      <div><span>${esc(state.session.user.displayName||state.session.user.email)}</span>${state.session.user.role==='ADMIN'?'<button id="launchAccess">User Access</button>':''}<button id="launchRecords">Master Reference</button><button id="expandAllGroups">Expand all</button><button id="collapseAllGroups">Collapse all</button><button id="launchLogout">Sign out</button></div>
+      <div class="launchpad-brand"><img src="/logo-navy.png" alt="E88 Ventures Inc." class="brand-logo"><span class="brand-name">Blitz <i>-</i> ERP</span><small class="brand-sub">E88 Ventures Inc.</small></div>
+      <div><span>${esc(state.session.user.displayName||state.session.user.email)}</span>${state.session.user.role==='ADMIN'?'<button id="launchAccess">User Access</button>':''}<button id="launchScope" class="scope-chip" title="Switch between Operations and System Administration">${state.scope==='ADMIN'?'Admin scope':'Operations scope'}</button><button id="launchRecords">Master Reference</button><button id="expandAllGroups">Expand all</button><button id="collapseAllGroups">Collapse all</button><button id="launchLogout">Sign out</button></div>
     </div>
     <div class="enterprise-map">
       <div class="enterprise-columns">${state.catalog.groups.map(group=>{
@@ -322,11 +355,11 @@ function renderLaunchpad(){
         </section>`;
       }).join('')}</div>
       <div class="enterprise-tools">${state.catalog.tools.map(item=>enterpriseButton(item,'enterprise-tool-button')).join('')}</div>
-      <div class="enterprise-addons-title"><span>Enterprise Add-ons</span></div>
+      <div class="enterprise-addons-title"><span>Add-ons</span></div>
       <div class="enterprise-addons">${state.catalog.addons.map(item=>enterpriseButton(item,'enterprise-addon-button')).join('')}</div>
       <footer class="enterprise-brand-strip">
         <div class="enterprise-brand-primary">E88 Ventures Inc.</div>
-        <div class="enterprise-brand-secondary">Finance Console · © 2026 AL23</div>
+        <div class="enterprise-brand-secondary">Blitz - ERP · © 2026 E88 Ventures Inc.</div>
       </footer>
     </div>
   </section>`;
@@ -342,13 +375,24 @@ function renderLaunchpad(){
   $('#launchLogout').onclick=logout;
   if($('#launchAccess'))$('#launchAccess').onclick=renderAccessAdmin;
   if($('#launchRecords'))$('#launchRecords').onclick=()=>renderRecordConsole();
+  if($('#launchScope'))$('#launchScope').onclick=()=>{
+    const admin=state.scope==='ADMIN';
+    if(!state.session.user.canUseAdminScope&&!admin)return toast('This account is not enabled for System Administration.','error');
+    modal(admin?'You are in System Administration':'You are in Operations',
+      `<div class="operational-form"><p>${admin?'Setup, users and backup are available. Approvals are intentionally blocked in this scope.':'Transactions and approvals are available. System setup is blocked in this scope.'}</p>
+       <p>The scope is fixed for the whole session. To switch, sign out and pick the other scope on the sign-in screen.</p>
+       <div class="modal-actions"><button type="button" class="command primary" id="scopeSwitch">Sign out and switch</button><button type="button" class="command" id="scopeStay">Stay here</button></div></div>`);
+    const mb=$('#modalBody');
+    mb.querySelector('#scopeStay').onclick=()=>closeModal();
+    mb.querySelector('#scopeSwitch').onclick=async()=>{setScope(admin?'OPERATIONS':'ADMIN');closeModal();await logout();};
+  };
 }
 
 function renderSidebar(){
   const module=state.module;
   const icons={center:'▦',records:'☷',approvals:'✓',reports:'▥',setup:'⚙'};
   const items=workspaceTabs(module.code).map(([section,label])=>[section,label,icons[section]]);
-  $('#nav').innerHTML=`<button class="nav-home" id="moduleHome">← Enterprise Modules</button>
+  $('#nav').innerHTML=`<button class="nav-home" id="moduleHome">&larr; Blitz - ERP</button>
     <div class="nav-group">${esc(module.groupTitle)}</div>
     ${items.map(([section,label,icon])=>`<button class="nav-item ${state.section===section?'active':''}" data-section="${section}"><span class="nav-icon">${icon}</span>${label}</button>`).join('')}
     ${state.session.user.role==='ADMIN'?'<div class="nav-group">System</div><button class="nav-item" id="sidebarAccess"><span class="nav-icon">♙</span>User Access</button>':''}`;
@@ -386,6 +430,7 @@ async function openSection(section){
   if(state.module.code==='ip-sourcing-purchasing')return renderSourcingWorkspace(section);
   if(state.module.code==='qm-inspection-sampling')return renderQualityWorkspace(section);
   if(state.module.code==='ip-supplier-portal')return renderSupplierPortal(section);
+  if(state.module.code==='sd-service-management')return renderServiceWorkspace(section);
   return renderConnectedModuleWorkspace(section);
 }
 async function renderQualityWorkspace(section){
@@ -398,8 +443,43 @@ async function renderQualityWorkspace(section){
   }catch(error){showWorkspaceError(error);}
 }
 
-function kpi(label,value){
-  return `<article class="workspace-kpi"><span>${esc(label)}</span><strong>${esc(value)}</strong></article>`;
+function kpi(label,value,opts){
+  opts=opts||{};
+  const go=opts.section?` data-kpi-go="${esc(opts.section)}"`:'';
+  const term=opts.match?` data-kpi-match="${esc(opts.match)}"`:'';
+  return `<article class="workspace-kpi is-clickable" role="button" tabindex="0" data-kpi-label="${esc(label)}" data-kpi-value="${esc(value)}"${go}${term}><span>${esc(label)}</span><strong>${esc(value)}</strong></article>`;
+}
+function kpiKeyword(label){
+  const map=[[/discrepan|variance/i,'VARIANCE'],[/draft/i,'DRAFT'],[/approved|approval/i,'APPROVED'],
+    [/pending|awaiting|for approval/i,'PENDING'],[/open/i,'OPEN'],[/overdue/i,'OVERDUE'],[/paid/i,'PAID'],
+    [/posted/i,'POSTED'],[/received/i,'RECEIVED'],[/submitted/i,'SUBMITTED'],[/missing/i,'MISSING'],[/matched/i,'MATCHED']];
+  for(const [re,key] of map){if(re.test(label))return key;}
+  return '';
+}
+function kpiDrill(card){
+  const label=card.dataset.kpiLabel||'KPI';
+  const go=card.dataset.kpiGo;
+  if(go)return openSection(go);
+  const term=(card.dataset.kpiMatch||kpiKeyword(label)).toUpperCase();
+  const table=document.querySelector('.workbench-canvas table.record-table');
+  if(!table){toast(label+': '+(card.dataset.kpiValue||''),'success');return;}
+  const heads=[...table.querySelectorAll('thead th')].map(th=>th.textContent.replace(/\s+/g,' ').trim());
+  let rows=[...table.querySelectorAll('tbody tr')];
+  if(term)rows=rows.filter(tr=>tr.textContent.toUpperCase().includes(term));
+  if(!rows.length){toast('No matching rows for '+label,'error');return;}
+  const html='<div class="record-table-wrap"><table class="record-table"><thead><tr>'
+    +heads.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'
+    +rows.slice(0,300).map(tr=>'<tr>'+[...tr.children].map(td=>'<td>'+esc(td.textContent.replace(/\s+/g,' ').trim())+'</td>').join('')+'</tr>').join('')
+    +'</tbody></table></div>';
+  modal(label,html,rows.length+' matching record'+(rows.length===1?'':'s'));
+}
+function bindKpiCards(){
+  $$('.workspace-kpi.is-clickable').forEach(card=>{
+    if(card.dataset.kpiBound==='1')return;
+    card.dataset.kpiBound='1';
+    card.onclick=()=>{try{kpiDrill(card);}catch(e){}};
+    card.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();card.click();}};
+  });
 }
 function workbenchShell(body,active=state.section){
   const module=state.module;
@@ -409,7 +489,7 @@ function workbenchShell(body,active=state.section){
   return `<section class="erp-workbench">
     <div class="workbench-headwrap">
     <header class="workbench-systembar">
-      <div><button class="workbench-home" title="Enterprise Modules">▦</button><span class="workbench-user-dot">●</span><b>${esc(user.displayName||user.email)}</b><small>${esc(user.role)}</small></div>
+      <div><button class="workbench-home" title="Blitz - ERP">▦</button><span class="workbench-user-dot">●</span><b>${esc(user.displayName||user.email)}</b><small>${esc(user.role)}</small></div>
       <div><span>INTERNAL</span><button class="workbench-home">Modules</button><button class="workbench-logout">Sign out</button></div>
     </header>
     <div class="workbench-modulebar">
@@ -420,10 +500,11 @@ function workbenchShell(body,active=state.section){
     ${submodules.length?`<nav class="workbench-submodules"><span>Submodules</span>${submodules.map(sub=>`<button data-submodule-code="${esc(sub.submodule_code)}" data-submodule-type="${esc(sub.record_type||'')}" data-submodule-connected="${esc(sub.connected_module_code||'')}" title="${esc(sub.posting_event_type||'Operational submodule')}">${esc(sub.submodule_name)}</button>`).join('')}</nav>`:''}
     </div>
     <main class="workbench-canvas">${body}</main>
-    <footer class="workbench-footer"><span>Enterprise System</span><span>Connected Workspace · © 2026 AL23</span></footer>
+    <footer class="workbench-footer"><span>Blitz - ERP</span><span>Connected Workspace · © 2026 AL23</span></footer>
   </section>`;
 }
 function bindWorkbench(){
+  bindKpiCards();
   $$('.workbench-home').forEach(button=>button.onclick=renderLaunchpad);
   $$('.workbench-logout').forEach(button=>button.onclick=logout);
   $$('[data-workbench-section]').forEach(button=>button.onclick=()=>openSection(button.dataset.workbenchSection));
@@ -580,9 +661,9 @@ async function renderFinanceCenter(title,subtitle,payablesMode){
       const pendingRows=rfpRows.filter(r=>r.status!=='PAID');
       const pendingAmt=pendingRows.reduce((s,r)=>s+(Number(r.net_payable)||0),0);
       const paidAmt=rfpRows.filter(r=>r.status==='PAID').reduce((s,r)=>s+(Number(r.net_payable)||0),0);
-      kpiRow=`${kpi('Total Payables',money(totalPayables))}${kpi('Overdue Payables',money(overdue))}`
-        +`${kpi('RFPs Awaiting Action',String(pendingRows.length))}${kpi('RFP Pending Value',money(pendingAmt))}`
-        +`${kpi('RFP Paid to Date',money(paidAmt))}`;
+      kpiRow=`${kpi('Total Payables',money(totalPayables),{section:'approvals'})}${kpi('Overdue Payables',money(overdue),{section:'reports'})}`
+        +`${kpi('RFPs Awaiting Action',String(pendingRows.length),{section:'approvals'})}${kpi('RFP Pending Value',money(pendingAmt),{section:'approvals'})}`
+        +`${kpi('RFP Paid to Date',money(paidAmt),{section:'reports'})}`;
     }else{
       kpiRow=`${kpi('Cash',money(balances.cash))}${kpi('Receivables',money(balances.receivables))}`
         +`${kpi('Payables',money(balances.payables))}${kpi('Revenue',money(balances.revenue))}`
@@ -911,18 +992,19 @@ async function renderPaymentRequests(){
           row.status==='APPROVED'?'MARK_PAID':row.status==='PAYMENT_PREPARED'?'CONFIRM_PAID':'';
       return `<tr><td><b>${esc(row.request_no)}</b></td><td>${date(row.request_date)}</td><td>${esc(row.payee_name)}</td>
         <td>${esc(row.department)}</td><td>${esc(row.purchase_order_no||'-')}</td><td class="num">${money(row.net_payable)}</td>
-        <td>${financeStatus(row.status)}</td><td><button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(rfpActionLabel(action))}</button>`:''}</td></tr>`;
+        <td>${financeStatus(row.status)}</td><td><button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(rfpActionLabel(action))}</button>`:''}${!['PAID','REJECTED','DRAFT'].includes(row.status)?`<button class="table-action" data-rfp-action="RETURN" data-rfp-id="${row.id}">Return</button>`:''}</td></tr>`;
     });
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newRfp">New Request for Payment</button>
+      <button class="command" id="openLiquidations">Cash Advance Liquidation</button>
       <span class="command-spacer"></span><span class="workspace-mode">CONTROLLED PAYMENT WORKFLOW</span></div>
       ${workflowStrip(['Requestor','Dept Head','Finance Review','CEO Approval','Instruct Bank (MNC)','Proof & Close'],2)}
-      <p class="form-note" style="margin:0 0 12px">Controlled payment flow: Requestor raises the request, the Department Head approves, Finance reviews, the CEO gives final approval, then Finance instructs the disbursing bank (MNC), uploads proof of payment, and the requestor is notified on completion.</p>
       <section class="workspace-card"><header><h2>Request for Payment Worklist</h2><span>${data.rows.length} requests</span></header>
         ${financeTable(['RFP','Date','Payee','Department','PO','Net Payable','Status','Action'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'approvals');bindWorkbench();
     window.__rfpRows={};data.rows.forEach(function(x){window.__rfpRows[x.id]=x;});
     $$('[data-print-rfp]').forEach(function(b){b.onclick=function(){if(window.czPrintRfp)window.czPrintRfp(window.__rfpRows[b.dataset.printRfp]);};});
     $('#newRfp').onclick=()=>openRfpForm(data.purchaseOrders,master);
+    if($('#openLiquidations'))$('#openLiquidations').onclick=renderLiquidations;
     $$('[data-rfp-action]').forEach(button=>button.onclick=()=>runRfpAction(button.dataset.rfpAction,button.dataset.rfpId,master));
   }catch(error){showWorkspaceError(error);}
 }
@@ -931,8 +1013,19 @@ async function submitRfpAction(id,body){
     toast('Payment request updated');await renderPaymentRequests();}catch(error){toast(error.message,'error');}
 }
 function runRfpAction(action,id,master){
+  if(action==='RETURN'){
+    modal('Return this request for payment',`<form id="rfpReturnForm" class="operational-form grid">
+      <label class="wide"><span>Reason for returning</span><textarea name="reason" required placeholder="Explain what needs to be corrected"></textarea></label>
+      <div class="modal-actions wide"><button type="submit" class="command primary">Return request</button><button type="button" class="command" id="rfpReturnCancel">Cancel</button></div></form>`,
+      'The requestor, department head and finance are all notified');
+    const mb=$('#modalBody');
+    mb.querySelector('#rfpReturnCancel').onclick=()=>closeModal();
+    mb.querySelector('#rfpReturnForm').onsubmit=event=>{event.preventDefault();
+      const f=formDataObject(event.currentTarget);closeModal();submitRfpAction(id,{action:'RETURN',reason:f.reason});};
+    return;
+  }
   if(action==='FINAL_APPROVE'){
-    modal('Final Approval — Release for Payment',`<form id="rfpFinalForm" class="operational-form grid">
+    modal('Final Approval - Release for Payment',`<form id="rfpFinalForm" class="operational-form grid">
       <label class="wide"><span>Expense or inventory account code</span><input name="accountCode" value="6990" required></label>
       <p class="form-note">This account is debited when the supplier bill is recognized on final approval.</p>
       <button class="command primary">Approve payment</button></form>`);
@@ -941,7 +1034,7 @@ function runRfpAction(action,id,master){
   }
   if(action==='MARK_PAID'){
     const banks=(master&&master.bankAccounts)||[];if(!banks.length)return toast('Create a bank account first.','error');
-    modal('Prepare Payment — Instruct Bank (MNC)',`<form id="rfpPayForm" class="operational-form grid">
+    modal('Prepare Payment - Instruct Bank (MNC)',`<form id="rfpPayForm" class="operational-form grid">
       <label class="wide"><span>Disbursing bank / partner email (MNC)</span><input name="bankInstructionEmail" type="email" placeholder="treasury@bank.com"></label>
       <label class="wide"><span>Bank account</span><select name="bankAccountId">${banks.map(b=>`<option value="${b.id}">${esc(b.bank_name||b.account_name||b.bank_account_code||('Bank '+b.id))}</option>`).join('')}</select></label>
       <label class="wide"><span>Bank payment reference</span><input name="paymentReference" required placeholder="e.g. BT-2026-0102"></label>
@@ -951,13 +1044,19 @@ function runRfpAction(action,id,master){
     return;
   }
   if(action==='CONFIRM_PAID'){
-    modal('Confirm Payment — Attach Proof',`<form id="rfpProofForm" class="operational-form grid">
+    modal('Confirm Payment - Attach Proof',`<form id="rfpProofForm" class="operational-form grid">
       <label class="wide"><span>Proof of payment reference / link</span><input name="proofReference" required placeholder="Bank receipt no. or document URL"></label>
-      <label class="wide"><span>Attach receipt file</span><input name="proofFile" type="file" disabled>
-        <small class="form-note">File upload activates once Cloudflare R2 storage is enabled; use the reference/link field for now.</small></label>
+      <label class="wide"><span>Attach proof of payment</span><input id="rfpProofFile" type="file" multiple accept=".pdf,.png,.jpg,.jpeg"></label>
       <p class="form-note">On confirm, the requestor is notified that payment is complete (once the mail relay is connected).</p>
       <button class="command primary">Confirm payment</button></form>`);
-    $('#rfpProofForm').onsubmit=event=>{event.preventDefault();const f=formDataObject(event.currentTarget);if(!f.proofReference)return;closeModal();submitRfpAction(id,{action:action,proofReference:f.proofReference});};
+    $('#rfpProofForm').onsubmit=async event=>{event.preventDefault();const f=formDataObject(event.currentTarget);if(!f.proofReference)return;
+      const input=$('#rfpProofFile');
+      const files=input&&input.files?[...input.files]:[];
+      const attachments=await Promise.all(files.slice(0,5).map(file=>new Promise(resolve=>{
+        const reader=new FileReader();
+        reader.onload=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,data:String(reader.result||'').split(',')[1]||''});
+        reader.onerror=()=>resolve(null);reader.readAsDataURL(file);})));
+      closeModal();submitRfpAction(id,{action:action,proofReference:f.proofReference,attachments:attachments.filter(Boolean)});};
     return;
   }
   submitRfpAction(id,{action:action});
@@ -971,17 +1070,817 @@ function openRfpForm(purchaseOrders,master){
       ${purchaseOrders.map(x=>`<option value="${x.id}">${esc(x.purchase_order_no)} · ${esc(x.vendor_name)} · ${money(x.total_amount)}</option>`).join('')}</select></label>
     <label class="wide"><span>Payee</span><select name="payeePartnerId"><option value="">Use PO vendor</option>
       ${master.partners.filter(x=>x.partner_type==='VENDOR').map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label>
-    <label><span>Department</span><input name="department" required></label><label><span>Cost Center</span><input name="costCenter"></label>
+    <label><span>Requestor name</span><input name="requestorName" value="${esc((state.session&&state.session.user&&(state.session.user.displayName||state.session.user.email))||'')}"></label>
+    <label><span>Requestor email</span><input name="requestorEmail" type="email" value="${esc((state.session&&state.session.user&&state.session.user.email)||'')}"></label>
+    <label><span>Department</span><input name="department" required></label><label><span>Contact number</span><input name="contactNo"></label>
+    <label><span>Cost Center</span><input name="costCenter"></label>
+    <label><span>Request type</span><select name="requestType"><option>Payment to Vendor</option><option>Cash Advance</option><option>Reimbursement</option><option>Per Diem Request</option></select></label>
+    <label><span>Payment type</span><select name="paymentType"><option>Full</option><option>Partial</option><option>Subscription</option></select></label>
+    <label><span>Mode of payment</span><select name="modeOfPayment"><option>Bank Deposit/Transfer</option><option>Check</option><option>Online Payment</option><option>Credit Card</option></select></label>
+    <label><span>Bank name</span><input name="bankName"></label>
+    <label><span>Account name</span><input name="accountName"></label>
+    <label><span>Account number</span><input name="accountNo"></label>
+    <label><span>Payee TIN</span><input name="payeeTin"></label>
+    <label><span>Payee contact</span><input name="payeeContact"></label>
+    <label><span>GL account</span><input name="glAccount"></label>
+    <label><span>Currency</span><select name="currency"><option>PHP</option><option>USD</option></select></label>
     <label><span>Supplier Invoice</span><input name="supplierInvoiceNo"></label><label><span>Invoice Date</span><input name="invoiceDate" type="date"></label>
     <label><span>Gross Amount</span><input name="grossAmount" type="number" step="0.01" required></label>
     <label><span>VAT Amount</span><input name="vatAmount" type="number" step="0.01"></label>
     <label><span>Withholding</span><input name="withholdingAmount" type="number" step="0.01"></label>
     <label><span>Due Date</span><input name="dueDate" type="date"></label>
     <label class="wide"><span>Purpose</span><textarea name="purpose" required></textarea></label>
+    <label class="wide"><span>Additional remarks</span><input name="remarks"></label>
+    <label class="wide"><span>Supporting documents (required)</span><input id="rfpDocs" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.xlsx,.docx"></label>
+    <div id="rfpDocList" class="po-doc-list wide"></div>
+    <label class="wide"><span>Signature - type your full name</span><input name="requestorSignature" class="sig-typed" placeholder="Type your full name"></label>
     <button class="command primary">Save RFP</button></form>`);
-  $('#rfpForm').onsubmit=async event=>{event.preventDefault();try{await api('/finance/payment-requests',{method:'POST',
-    body:JSON.stringify(formDataObject(event.currentTarget))});closeModal();toast('Payment request created');await renderPaymentRequests();}
+  const rfpFiles=[];
+  const rfpRender=()=>{const host=$('#rfpDocList');if(!host)return;
+    host.innerHTML=rfpFiles.length?rfpFiles.map((f,i)=>`<span class="po-doc-chip">${esc(f.name)} <button type="button" data-rfp-drop="${i}">&times;</button></span>`).join(''):'<span class="po-doc-empty">No file attached yet</span>';
+    host.querySelectorAll('[data-rfp-drop]').forEach(b=>b.onclick=()=>{rfpFiles.splice(Number(b.dataset.rfpDrop),1);rfpRender();});};
+  rfpRender();
+  if($('#rfpDocs'))$('#rfpDocs').onchange=event=>{[...event.target.files].forEach(f=>{if(f.size<=5*1024*1024&&rfpFiles.length<6)rfpFiles.push(f);});event.target.value='';rfpRender();};
+  $('#rfpForm').onsubmit=async event=>{event.preventDefault();
+    if(!rfpFiles.length){toast('Attach the supporting document before saving.','error');return;}
+    const payload=formDataObject(event.currentTarget);
+    payload.attachments=await Promise.all(rfpFiles.map(file=>new Promise(resolve=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,data:String(reader.result||'').split(',')[1]||''});
+      reader.onerror=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,data:''});
+      reader.readAsDataURL(file);})));
+    payload.signatureType='TYPE';
+    try{await api('/finance/payment-requests',{method:'POST',body:JSON.stringify(payload)});closeModal();toast('Payment request created');await renderPaymentRequests();}
     catch(error){toast(error.message,'error');}};
+}
+
+
+async function renderLiquidations(){
+  content.innerHTML='<div class="workspace-loading">Loading cash advance liquidations...</div>';
+  try{
+    const [eligible,existing]=await Promise.all([
+      api('/finance/liquidations/eligible'),
+      api('/finance/liquidations'),
+    ]);
+    const eligRows=(eligible.rows||[]).map(row=>`<tr>
+      <td><b>${esc(row.requestNo)}</b></td><td>${date(row.requestDate)}</td><td>${esc(row.purpose||'-')}</td>
+      <td class="num">${money(row.amount)}</td><td>${statusBadge(row.status)}</td>
+      <td>${row.liquidation?`<button class="table-action" data-open-liq="${row.liquidation.id}">Open ${esc(row.liquidation.liquidation_no)}</button>`
+        :`<button class="table-action" data-start-liq="${row.id}">Start liquidation</button>`}</td></tr>`);
+    const liqRows=(existing.rows||[]).map(row=>`<tr>
+      <td><b>${esc(row.liquidation_no)}</b></td><td>${esc(row.request_no)}</td><td>${esc(row.requestor_email)}</td>
+      <td class="num">${money(row.advance_amount)}</td><td class="num">${money(row.spent_amount)}</td>
+      <td class="num">${money(row.variance)}</td><td>${statusBadge(row.status)}</td>
+      <td><button class="table-action" data-open-liq="${row.id}">Open</button></td></tr>`);
+    const body=`<div class="workspace-commandbar"><button class="command" id="liqBack">Back to Payables</button>
+        <span class="command-spacer"></span><span class="workspace-mode">CASH ADVANCE LIQUIDATION</span></div>
+      <section class="workspace-card"><header><h2>Your approved cash advances</h2><span>${(eligible.rows||[]).length} available</span></header>
+        ${operationalTable(['RFP','Date','Purpose','Advance','RFP Status','Action'],eligRows,
+          {emptyMessage:'You have no fully approved cash advance to liquidate. A liquidation only opens once the cash-advance RFP is fully approved.'})}</section>
+      <section class="workspace-card"><header><h2>Liquidation register</h2><span>${(existing.rows||[]).length} records</span></header>
+        ${operationalTable(['Liquidation','Cash advance','Requestor','Advance','Spent','Variance','Status','Action'],liqRows)}</section>`;
+    content.innerHTML=workbenchShell(body,'approvals');bindOperationalShell();
+    $('#liqBack').onclick=renderPaymentRequests;
+    $$('[data-start-liq]').forEach(b=>b.onclick=async()=>{
+      try{const r=await api('/finance/liquidations',{method:'POST',body:JSON.stringify({paymentRequestId:Number(b.dataset.startLiq)})});
+        toast('Liquidation '+(r.liquidationNo||'')+' opened');await openLiquidation(r.id);}
+      catch(err){toast(err.message,'error');}});
+    $$('[data-open-liq]').forEach(b=>b.onclick=()=>openLiquidation(Number(b.dataset.openLiq)));
+  }catch(error){showWorkspaceError(error);}
+}
+
+async function openLiquidation(id){
+  try{
+    const data=await api('/finance/liquidations/'+id);
+    const header=data.header;const items=data.items||[];
+    const editable=header.status==='DRAFT';
+    const lineHtml=item=>`<div class="line-editor-row liq-line">
+      <input data-liq="expenseDate" type="date" value="${esc((item&&item.expense_date||'').slice(0,10))}" ${editable?'':'disabled'}>
+      <input data-liq="particulars" placeholder="Particulars" value="${esc(item&&item.particulars||'')}" ${editable?'':'disabled'}>
+      <input data-liq="amount" type="number" min="0" step="0.01" placeholder="Amount" value="${esc(item&&item.amount||'')}" ${editable?'':'disabled'}>
+      <input data-liq="receiptNo" placeholder="Receipt no." value="${esc(item&&item.receipt_no||'')}" ${editable?'':'disabled'}>
+      ${editable?'<button type="button" class="remove-line">&times;</button>':''}</div>`;
+    modal('Liquidation '+esc(header.liquidation_no),
+      `<div class="operational-form">
+        <div class="workspace-kpis">${kpi('Cash advance',money(header.advance_amount))}${kpi('Total spent',money(header.spent_amount))}${kpi('Variance',money(header.variance))}${kpi('Status',header.status)}</div>
+        <div class="line-editor-head"><b>Expenses (one line per receipt)</b>${editable?'<button type="button" id="liqAddLine">Add line</button>':''}</div>
+        <div id="liqLines" class="line-editor">${(items.length?items:(editable?[null]:[])).map(lineHtml).join('')}</div>
+        ${editable?'<label class="wide"><span>Attach receipts</span><input id="liqFiles" type="file" multiple accept=".pdf,.png,.jpg,.jpeg"></label>':''}
+        ${(data.attachments||[]).length?'<p style="font-size:12px"><b>Receipts on file:</b> '+data.attachments.map(a=>a.file_url?`<a href="${esc(a.file_url)}" target="_blank" rel="noopener">${esc(a.file_name)}</a>`:esc(a.file_name)).join(', ')+'</p>':''}
+        <div class="modal-actions">
+          ${editable?'<button type="button" class="command" id="liqSave">Save lines</button><button type="button" class="command primary" id="liqSubmit">Submit to Finance</button>':''}
+          ${(!editable&&header.status==='SUBMITTED'&&can('FINANCE','APPROVE'))?'<button type="button" class="command primary" id="liqApprove">Approve</button><button type="button" class="command" id="liqReject">Return</button>':''}
+          <button type="button" class="command" id="liqClose">Close</button>
+        </div>
+      </div>`, 'Cash advance '+esc(header.request_no));
+    const mb=$('#modalBody');
+    bindKpiCards();
+    const wire=row=>{const rm=row.querySelector('.remove-line');if(rm)rm.onclick=()=>row.remove();};
+    mb.querySelectorAll('.liq-line').forEach(wire);
+    if(mb.querySelector('#liqAddLine'))mb.querySelector('#liqAddLine').onclick=()=>{
+      const wrap=document.createElement('div');wrap.innerHTML=lineHtml(null);
+      const row=wrap.firstElementChild;wire(row);mb.querySelector('#liqLines').append(row);};
+    const collect=()=>[...mb.querySelectorAll('.liq-line')].map(row=>({
+      expenseDate:row.querySelector('[data-liq="expenseDate"]').value,
+      particulars:row.querySelector('[data-liq="particulars"]').value,
+      amount:Number(row.querySelector('[data-liq="amount"]').value||0),
+      receiptNo:row.querySelector('[data-liq="receiptNo"]').value,
+    })).filter(x=>x.amount>0);
+    const readFiles=async()=>{
+      const input=mb.querySelector('#liqFiles');
+      const files=input&&input.files?[...input.files]:[];
+      return await Promise.all(files.slice(0,8).map(file=>new Promise(resolve=>{
+        const reader=new FileReader();
+        reader.onload=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,data:String(reader.result||'').split(',')[1]||''});
+        reader.onerror=()=>resolve(null);reader.readAsDataURL(file);})));
+    };
+    const save=async()=>{
+      const lines=collect();
+      if(!lines.length){toast('Add at least one expense line','error');return null;}
+      const attachments=(await readFiles()).filter(Boolean);
+      return await api('/finance/liquidations/'+id+'/lines',{method:'POST',body:JSON.stringify({lines,attachments})});
+    };
+    if(mb.querySelector('#liqSave'))mb.querySelector('#liqSave').onclick=async()=>{
+      try{const r=await save();if(!r)return;toast('Saved. Spent '+money(r.spent)+', variance '+money(r.variance));await openLiquidation(id);}
+      catch(err){toast(err.message,'error');}};
+    if(mb.querySelector('#liqSubmit'))mb.querySelector('#liqSubmit').onclick=async()=>{
+      try{const r=await save();if(!r)return;
+        await api('/finance/liquidations/'+id+'/submit',{method:'POST',body:'{}'});
+        closeModal();toast('Liquidation submitted to Finance');await renderLiquidations();}
+      catch(err){toast(err.message,'error');}};
+    if(mb.querySelector('#liqApprove'))mb.querySelector('#liqApprove').onclick=async()=>{
+      try{await api('/finance/liquidations/'+id+'/review',{method:'POST',body:JSON.stringify({decision:'APPROVE'})});
+        closeModal();toast('Liquidation approved');await renderLiquidations();}catch(err){toast(err.message,'error');}};
+    if(mb.querySelector('#liqReject'))mb.querySelector('#liqReject').onclick=async()=>{
+      const remarks=prompt('Reason for returning this liquidation:');
+      if(remarks===null)return;
+      try{await api('/finance/liquidations/'+id+'/review',{method:'POST',body:JSON.stringify({decision:'REJECT',remarks})});
+        closeModal();toast('Liquidation returned');await renderLiquidations();}catch(err){toast(err.message,'error');}};
+    mb.querySelector('#liqClose').onclick=()=>closeModal();
+  }catch(error){toast(error.message,'error');}
+}
+
+
+/* ===================================================================
+ * ATLAS class keys
+ * Motorcycle = VIN / frame no. + motor no.
+ * Battery    = barcode / DevID + IMEI / ICCID / SIM
+ * Locker     = SN + IMSI
+ * =================================================================== */
+function atlasKeys(asset){
+  const type=String(asset&&(asset.serial_type||asset.category)||'').toUpperCase();
+  if(/MOTOR|MC|VEHICLE|FRAME|VIN/.test(type))
+    return {classLabel:'Motorcycle',primaryLabel:'VIN / frame no.',secondaryLabel:'Motor no.'};
+  if(/BAT|BATTERY|BARCODE|DEVID/.test(type))
+    return {classLabel:'Battery',primaryLabel:'Barcode / DevID',secondaryLabel:'IMEI / ICCID / SIM'};
+  if(/LOCK|BSS|STATION|SN/.test(type))
+    return {classLabel:'Locker / Station',primaryLabel:'Serial no. (SN)',secondaryLabel:'IMSI'};
+  return {classLabel:asset&&asset.category||'Unit',primaryLabel:'Serial no.',secondaryLabel:'Secondary serial'};
+}
+
+/* ===================================================================
+ * Mobile receiving: scan on a phone, confirm, and it counts itself.
+ * Keeps the camera open between units so a whole shipment can be walked
+ * through without touching the screen apart from Confirm.
+ * =================================================================== */
+async function openMobileReceive(shipmentId,workbench,lookups){
+  const openExpected=(workbench.expectedAssets||[]).filter(a=>!['RECEIVED','SUBSTITUTED','CANCELLED','SHORT_CLOSED'].includes(a.expected_status));
+  modal('Mobile receiving · '+esc(workbench.header.shipment_no),
+    `<div class="mobile-receive">
+      <div class="mr-head">
+        <label><span>Receiving location</span><select id="mrLocation"><option value="">Select location</option>
+          ${lookups.locations.map(l=>`<option value="${l.id}" ${Number(l.id)===Number(state.inbound.locationId)?'selected':''}>${esc(l.code)} · ${esc(l.name)}</option>`).join('')}</select></label>
+      </div>
+      <div class="mr-counter"><b id="mrCount">${state.inbound.receiptLines.length}</b><span>of ${openExpected.length} expected</span></div>
+      <div id="mrStatus" class="mr-status">Tap <b>Scan unit</b>, point the camera at the QR or barcode, then tap Confirm.</div>
+      <input id="mrSerial" inputmode="text" autocomplete="off" placeholder="Or type / scan with a hardware scanner">
+      <div class="mr-actions">
+        <button type="button" class="command primary mr-big" id="mrScan">Scan unit</button>
+        <button type="button" class="command mr-big" id="mrConfirm">Confirm</button>
+      </div>
+      <div id="mrList" class="mr-list"></div>
+      <div class="modal-actions">
+        <button type="button" class="command primary" id="mrPost">Post goods receipt</button>
+        <button type="button" class="command" id="mrClose">Close</button>
+      </div>
+    </div>`,
+    'Scan and confirm. Every confirmed unit is matched against the ATLAS manifest.');
+  const mb=$('#modalBody');
+  let pending='';
+  const setStatus=(text,tone)=>{const el=mb.querySelector('#mrStatus');el.className='mr-status '+(tone||'');el.innerHTML=text;};
+  const paint=()=>{
+    mb.querySelector('#mrCount').textContent=state.inbound.receiptLines.length;
+    mb.querySelector('#mrList').innerHTML=state.inbound.receiptLines.slice().reverse().slice(0,40)
+      .map(l=>`<div class="mr-item ${l.acceptance==='MATCHED'?'good':'bad'}"><b>${esc(l.actualSerialNo)}</b><span>${esc(l.acceptance.replace(/_/g,' '))}</span></div>`).join('')
+      ||'<div class="mr-empty">Nothing scanned yet</div>';
+  };
+  paint();
+  const confirmSerial=async raw=>{
+    const serial=serialFromQrPayload(raw||pending||mb.querySelector('#mrSerial').value);
+    if(!serial){setStatus('Nothing to confirm. Scan a unit first.','bad');return;}
+    try{
+      const candidate=[...state.inbound.receiptLines,{actualSerialNo:serial,sourceMethod:'QR',qrPayload:raw||''}];
+      const result=await api('/receiving/validate',{method:'POST',body:JSON.stringify({shipmentId,lines:candidate})});
+      state.inbound.receiptLines=result.results;
+      const last=result.results[result.results.length-1];
+      setStatus(`<b>${esc(serial)}</b> · ${esc(String(last.acceptance).replace(/_/g,' '))}${last.message?' · '+esc(last.message):''}`,
+        last.acceptance==='MATCHED'?'good':'bad');
+      if(navigator.vibrate)navigator.vibrate(last.acceptance==='MATCHED'?40:[60,60,60]);
+      pending='';mb.querySelector('#mrSerial').value='';
+      paint();
+    }catch(error){setStatus(esc(error.message),'bad');}
+  };
+  mb.querySelector('#mrScan').onclick=()=>scanQrWithCamera(value=>{
+    pending=value;
+    setStatus('Scanned <b>'+esc(serialFromQrPayload(value))+'</b>. Tap Confirm to count it.','');
+    if(navigator.vibrate)navigator.vibrate(25);
+    confirmSerial(value);
+  });
+  mb.querySelector('#mrConfirm').onclick=()=>confirmSerial('');
+  mb.querySelector('#mrSerial').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();confirmSerial('');}};
+  mb.querySelector('#mrClose').onclick=()=>{closeModal();renderGoodsReceipt(shipmentId);};
+  mb.querySelector('#mrPost').onclick=async()=>{
+    const locationId=Number(mb.querySelector('#mrLocation').value||state.inbound.locationId);
+    if(!locationId){setStatus('Select the receiving location first.','bad');return;}
+    if(!state.inbound.receiptLines.length){setStatus('Scan at least one unit.','bad');return;}
+    try{
+      const result=await api('/receiving',{method:'POST',body:JSON.stringify({shipmentId,locationId,
+        documentRef:'MOBILE',notes:'Received on mobile',lines:state.inbound.receiptLines})});
+      state.inbound.receiptLines=[];state.inbound.shipment=null;
+      closeModal();toast(result.receiptNo+' posted');
+      await renderGoodsReceipt();
+      try{if(window.czPrintGRN&&result.receiptId)window.czPrintGRN(result.receiptId);}catch(e){}
+    }catch(error){setStatus(esc(error.message),'bad');}
+  };
+}
+
+/* ===================================================================
+ * Service Management
+ * =================================================================== */
+async function renderServiceWorkspace(section){
+  if(section==='setup')return renderServiceSetup();
+  if(section==='records')return renderServiceJobs();
+  if(section==='approvals')return renderServiceJobs('IN_PROGRESS');
+  if(section==='reports')return renderServiceReports();
+  return renderServiceOverview();
+}
+
+async function renderServiceOverview(){
+  content.innerHTML='<div class="workspace-loading">Loading service control center...</div>';
+  try{
+    const [summary,jobs]=await Promise.all([api('/service/summary'),api('/service/jobs?size=25')]);
+    const byStatus=Object.fromEntries((summary.byStatus||[]).map(r=>[r.status,r.n]));
+    const rows=(jobs.rows||[]).map(serviceRow);
+    const body=`${workflowStrip(['Job Order','Assembly Card','Estimate & Markup','Completion','Excess Return'],0)}
+      <div class="workspace-kpis">
+        ${kpi('Open Jobs',(byStatus.DRAFT||0)+(byStatus.ESTIMATED||0)+(byStatus.IN_PROGRESS||0),{section:'records'})}
+        ${kpi('In Progress',byStatus.IN_PROGRESS||0,{match:'IN_PROGRESS'})}
+        ${kpi('Completed',byStatus.COMPLETED||0,{match:'COMPLETED'})}
+        ${kpi('Service Revenue',money(summary.revenue&&summary.revenue.revenue),{section:'reports'})}
+        ${kpi('Gross Margin',money(summary.revenue&&summary.revenue.margin),{section:'reports'})}
+        ${kpi('Parts Held on Jobs',summary.partsReserved||0,{section:'records'})}</div>
+      <div class="ramco-layout"><div class="ramco-main">
+        <section class="workspace-card"><header><div><h2>Service Job Orders</h2></div>
+          <button class="ramco-primary" id="svcNew">New Job Order</button></header>
+          ${operationalTable(['Job','Type','Customer','Unit Serial','Status','Est. Price','Final Price','Action'],rows,
+            {emptyMessage:'No service jobs yet'})}</section>
+      </div><aside class="ramco-rail"><section><header>Service Actions</header><div class="ramco-action-links">
+        <button data-section-link="records">All Job Orders</button>
+        <button data-section-link="approvals">Jobs In Progress</button>
+        <button data-section-link="reports">Service Profitability</button>
+        <button data-section-link="setup">Rates & Markup</button>
+      </div></section></aside></div>`;
+    content.innerHTML=workbenchShell(body,'center');bindOperationalShell();
+    $('#svcNew').onclick=openServiceJobForm;
+    bindServiceRows();
+  }catch(error){showWorkspaceError(error);}
+}
+
+function serviceRow(row){
+  return `<tr><td><b>${esc(row.job_no)}</b>${Number(row.attachment_count)?' <span class="chip-mini">'+row.attachment_count+' file(s)</span>':''}</td>
+    <td>${esc(row.job_type)}</td><td>${esc(row.customer_name||'-')}</td><td>${esc(row.unit_serial_no||'-')}</td>
+    <td>${statusBadge(row.status)}</td><td class="num">${money(row.estimated_price)}</td><td class="num">${money(row.final_price)}</td>
+    <td><button class="table-action" data-svc-open="${row.id}">Open</button><button class="table-action" data-svc-print="${row.id}">Print JO</button></td></tr>`;
+}
+
+function bindServiceRows(){
+  $$('[data-svc-open]').forEach(b=>b.onclick=()=>openServiceJob(Number(b.dataset.svcOpen)));
+  $$('[data-svc-print]').forEach(b=>b.onclick=()=>printJobOrder(Number(b.dataset.svcPrint)));
+}
+
+async function renderServiceJobs(status=''){
+  content.innerHTML='<div class="workspace-loading">Loading job orders...</div>';
+  try{
+    const data=await api('/service/jobs?size=250'+(status?'&status='+encodeURIComponent(status):''));
+    const rows=(data.rows||[]).map(serviceRow);
+    const body=`<div class="workspace-commandbar"><button class="command primary" id="svcNew">New Job Order</button>
+        <span class="command-spacer"></span><span class="workspace-mode">${status?esc(status.replace(/_/g,' ')):'SERVICE JOB REGISTER'}</span></div>
+      <section class="workspace-card"><header><h2>Job Orders</h2><span>${data.total} records</span></header>
+        ${operationalTable(['Job','Type','Customer','Unit Serial','Status','Est. Price','Final Price','Action'],rows,
+          {emptyMessage:'No service jobs yet'})}</section>`;
+    content.innerHTML=workbenchShell(body,status?'approvals':'records');bindOperationalShell();
+    $('#svcNew').onclick=openServiceJobForm;
+    bindServiceRows();
+  }catch(error){showWorkspaceError(error);}
+}
+
+async function renderServiceReports(){
+  content.innerHTML='<div class="workspace-loading">Loading service profitability...</div>';
+  try{
+    const [summary,jobs]=await Promise.all([api('/service/summary'),api('/service/jobs?size=250')]);
+    const closed=(jobs.rows||[]).filter(r=>['COMPLETED','CLOSED'].includes(r.status));
+    const rows=closed.map(r=>`<tr><td><b>${esc(r.job_no)}</b></td><td>${esc(r.customer_name||'-')}</td>
+      <td class="num">${money(r.final_material_cost)}</td><td class="num">${money(r.labor_cost)}</td>
+      <td class="num">${money(r.overhead_cost)}</td><td class="num">${money(r.final_cost)}</td>
+      <td class="num">${esc(r.markup_pct)}%</td><td class="num">${money(r.final_price)}</td>
+      <td class="num">${money(r.gross_margin)}</td></tr>`);
+    const body=`<div class="workspace-kpis">
+        ${kpi('Revenue',money(summary.revenue&&summary.revenue.revenue))}
+        ${kpi('Cost',money(summary.revenue&&summary.revenue.cost))}
+        ${kpi('Gross Margin',money(summary.revenue&&summary.revenue.margin))}
+        ${kpi('Jobs Billed',closed.length)}</div>
+      <section class="workspace-card"><header><h2>Service Profitability</h2><span>${closed.length} completed jobs</span></header>
+        ${operationalTable(['Job','Customer','Material','Labour','Overhead','Total Cost','Markup','Price','Margin'],rows)}</section>`;
+    content.innerHTML=workbenchShell(body,'reports');bindOperationalShell();
+  }catch(error){showWorkspaceError(error);}
+}
+
+function renderServiceSetup(){
+  const body=`<section class="workspace-card"><header><h2>Service Rates</h2></header>
+    <form id="svcRates" class="operational-form grid">
+      <label><span>Default labour rate per hour</span><input name="SERVICE_LABOR_RATE" type="number" min="0" step="0.01"></label>
+      <label><span>Default markup %</span><input name="SERVICE_DEFAULT_MARKUP" type="number" min="0" step="0.1"></label>
+      <label><span>Overhead % of material + labour</span><input name="SERVICE_OVERHEAD_PCT" type="number" min="0" step="0.1"></label>
+      <button class="command primary">Save rates</button>
+    </form></section>`;
+  content.innerHTML=workbenchShell(body,'setup');bindOperationalShell();
+  api('/service/lookups').then(l=>{
+    const f=$('#svcRates');if(!f)return;
+    f.SERVICE_LABOR_RATE.value=l.laborRate;f.SERVICE_DEFAULT_MARKUP.value=l.defaultMarkup;f.SERVICE_OVERHEAD_PCT.value=l.overheadPct;
+  }).catch(()=>{});
+  $('#svcRates').onsubmit=async event=>{
+    event.preventDefault();const f=formDataObject(event.currentTarget);
+    try{await api('/service/settings',{method:'POST',body:JSON.stringify(f)});toast('Service rates saved');}
+    catch(error){toast(error.message,'error');}
+  };
+}
+
+async function openServiceJobForm(){
+  const lookups=await api('/service/lookups');
+  modal('New Job Order',`<form id="svcJobForm" class="operational-form grid">
+    <label><span>Job type</span><select name="jobType"><option value="REPAIR">Repair</option><option value="PREVENTIVE">Preventive service</option>
+      <option value="WARRANTY">Warranty</option><option value="ROADSIDE">Roadside assistance</option><option value="INSTALLATION">Installation</option></select></label>
+    <label><span>Priority</span><select name="priority"><option>NORMAL</option><option>HIGH</option><option>URGENT</option></select></label>
+    <label class="wide"><span>Customer / holder</span><select name="customerId"><option value="">Walk-in</option>
+      ${lookups.customers.map(x=>`<option value="${x.id}">${esc(x.partner_code)} · ${esc(x.name)}</option>`).join('')}</select></label>
+    <label><span>Contact person</span><input name="contactPerson"></label>
+    <label><span>Contact number</span><input name="contactNumber"></label>
+    <label class="wide"><span>Unit under service (serial)</span><div class="pick-with-add">
+      <input name="unitSerialNo" id="svcUnitSerial" placeholder="Scan or type the unit serial" list="svcUnits">
+      <button type="button" class="table-action" id="svcScanUnit">Scan QR</button></div>
+      <datalist id="svcUnits">${lookups.units.slice(0,1200).map(u=>`<option value="${esc(u.serial_no)}">${esc(u.item_name||'')}</option>`).join('')}</datalist></label>
+    <label><span>Odometer / usage</span><input name="odometer"></label>
+    <label><span>Promised date</span><input name="promisedDate" type="date"></label>
+    <label class="wide"><span>Complaint / work requested</span><textarea name="complaint" required></textarea></label>
+    <label class="wide"><span>Initial diagnosis</span><textarea name="diagnosis"></textarea></label>
+    <label><span>Markup %</span><input name="markupPct" type="number" min="0" step="0.1" value="${esc(lookups.defaultMarkup)}"></label>
+    <label class="wide"><span>Attach photos / documents</span><input id="svcFiles" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.mp4"></label>
+    <div class="modal-actions wide"><button type="submit" class="command primary">Create job order</button>
+      <button type="button" class="command" id="svcCancel">Cancel</button></div>
+  </form>`);
+  const mb=$('#modalBody');
+  mb.querySelector('#svcCancel').onclick=()=>closeModal();
+  mb.querySelector('#svcScanUnit').onclick=()=>scanQrWithCamera(v=>{mb.querySelector('#svcUnitSerial').value=serialFromQrPayload(v);});
+  mb.querySelector('#svcJobForm').onsubmit=async event=>{
+    event.preventDefault();
+    const payload=formDataObject(event.currentTarget);
+    payload.markupPct=Number(payload.markupPct||0);
+    const input=mb.querySelector('#svcFiles');
+    const files=input&&input.files?[...input.files]:[];
+    payload.attachments=(await Promise.all(files.slice(0,8).map(file=>new Promise(resolve=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,data:String(reader.result||'').split(',')[1]||''});
+      reader.onerror=()=>resolve(null);reader.readAsDataURL(file);})))).filter(Boolean);
+    try{const r=await api('/service/jobs',{method:'POST',body:JSON.stringify(payload)});
+      closeModal();toast('Job order '+r.jobNo+' created');await openServiceJob(r.id);}
+    catch(error){toast(error.message,'error');}
+  };
+}
+
+async function openServiceJob(id){
+  try{
+    const [data,lookups]=await Promise.all([api('/service/jobs/'+id),api('/service/lookups')]);
+    const h=data.header;const parts=data.parts||[];const labor=data.labor||[];
+    const editable=!['CLOSED','CANCELLED'].includes(h.status);
+    const reserved=parts.filter(p=>p.state==='RESERVED');
+    const partRows=parts.map(p=>`<tr><td>${esc(p.item_code||'-')}</td><td>${esc(p.item_name||'-')}</td>
+      <td>${esc(p.serial_no||'-')}</td><td class="num">${esc(p.qty)}</td><td class="num">${money(p.unit_cost)}</td>
+      <td class="num">${money(p.line_cost)}</td><td>${statusBadge(p.state)}</td>
+      <td>${(editable&&p.state==='RESERVED')?`<button class="table-action" data-svc-drop-part="${p.id}">Remove</button>`:'-'}</td></tr>`);
+    const laborRows=labor.map(l=>`<tr><td>${esc(l.description||'-')}</td><td>${esc(l.technician||'-')}</td>
+      <td class="num">${esc(l.hours)}</td><td class="num">${money(l.rate)}</td><td class="num">${money(l.amount)}</td></tr>`);
+    const returnRows=(data.returns||[]).map(r=>`<tr><td><b>${esc(r.return_no)}</b></td><td>${esc(r.serial_no||r.item_code||'-')}</td>
+      <td class="num">${esc(r.qty)}</td><td>${esc(r.condition_code)}</td><td>${esc(r.returned_by||'-')}</td><td>${date(r.returned_at)}</td></tr>`);
+
+    modal('Job Order '+esc(h.job_no),
+      `<div class="operational-form svc-job">
+        <div class="workspace-kpis">
+          ${kpi('Status',h.status)}${kpi('Material',money(h.material_cost))}${kpi('Labour',money(h.labor_cost))}
+          ${kpi('Overhead',money(h.overhead_cost))}${kpi('Cost',money(h.estimated_cost))}
+          ${kpi('Markup',h.markup_pct+'%')}${kpi('Price / Revenue',money(h.estimated_price))}
+          ${['COMPLETED','CLOSED'].includes(h.status)?kpi('Final price',money(h.final_price))+kpi('Margin',money(h.gross_margin)):''}</div>
+
+        <div class="record-fields">
+          <label class="record-field"><span>Customer</span><input value="${esc(h.customer_name||'Walk-in')}" readonly></label>
+          <label class="record-field"><span>Unit serial</span><input value="${esc(h.unit_serial_no||'-')}" readonly></label>
+          <label class="record-field"><span>Complaint</span><input value="${esc(h.complaint||'')}" readonly></label>
+          <label class="record-field"><span>Diagnosis</span><input id="svcDiagnosis" value="${esc(h.diagnosis||'')}" ${editable?'':'readonly'}></label>
+          <label class="record-field"><span>Work performed</span><input id="svcWork" value="${esc(h.work_performed||'')}" ${editable?'':'readonly'}></label>
+          <label class="record-field"><span>Markup %</span><input id="svcMarkup" type="number" min="0" step="0.1" value="${esc(h.markup_pct)}" ${editable?'':'readonly'}></label>
+        </div>
+
+        <div class="line-editor-head"><b>Assembly card - parts drawn from inventory</b>
+          ${editable&&!['COMPLETED','CLOSED'].includes(h.status)?'<button type="button" id="svcAddPart">Add part</button>':''}</div>
+        ${operationalTable(['Item','Description','Serial','Qty','Unit cost','Line cost','State','Action'],partRows,
+          {key:'svc-parts',emptyMessage:'No parts drawn yet. A part picked here leaves inventory immediately.'})}
+
+        <div class="line-editor-head" style="margin-top:10px"><b>Labour</b>${editable?'<button type="button" id="svcAddLabor">Edit labour</button>':''}</div>
+        ${operationalTable(['Description','Technician','Hours','Rate','Amount'],laborRows,{key:'svc-labor',emptyMessage:'No labour recorded'})}
+
+        ${returnRows.length?'<div class="line-editor-head" style="margin-top:10px"><b>Parts returned to inventory</b></div>'
+          +operationalTable(['Return','Part','Qty','Condition','By','Date'],returnRows,{key:'svc-returns'}):''}
+
+        ${(data.attachments||[]).length?'<p style="font-size:12px;margin-top:10px"><b>Files:</b> '
+          +data.attachments.map(a=>a.file_url?`<a href="${esc(a.file_url)}" target="_blank" rel="noopener">${esc(a.file_name)}</a>`:esc(a.file_name)).join(', ')+'</p>':''}
+        ${editable?'<label class="wide"><span>Attach more files</span><input id="svcMoreFiles" type="file" multiple></label>':''}
+
+        <div class="modal-actions">
+          ${editable?'<button type="button" class="command" id="svcSave">Save & reprice</button>':''}
+          ${editable&&['DRAFT','ESTIMATED'].includes(h.status)?'<button type="button" class="command" id="svcApprove">Approve & start</button>':''}
+          ${editable&&['IN_PROGRESS','ESTIMATED','DRAFT'].includes(h.status)?'<button type="button" class="command primary" id="svcComplete">Complete job</button>':''}
+          ${reserved.length&&editable?`<button type="button" class="command" id="svcReturnParts">Return ${reserved.length} excess part(s)</button>`:''}
+          ${h.status==='COMPLETED'?'<button type="button" class="command primary" id="svcClose">Close job</button>':''}
+          <button type="button" class="command" id="svcPrint">Print Job Order</button>
+          ${editable?'<button type="button" class="command" id="svcCancelJob">Cancel job</button>':''}
+          <button type="button" class="command" id="svcDone">Close window</button>
+        </div>
+      </div>`, esc(h.job_type)+' · '+esc(h.customer_name||'Walk-in'));
+
+    const mb=$('#modalBody');bindKpiCards();
+    const refresh=()=>openServiceJob(id);
+
+    if(mb.querySelector('#svcAddPart'))mb.querySelector('#svcAddPart').onclick=()=>openServicePartPicker(id,lookups,refresh);
+    if(mb.querySelector('#svcAddLabor'))mb.querySelector('#svcAddLabor').onclick=()=>openServiceLabor(id,labor,lookups,refresh);
+    $$('[data-svc-drop-part]').forEach(b=>b.onclick=async()=>{
+      try{await api('/service/jobs/'+id+'/parts/'+b.dataset.svcDropPart,{method:'DELETE'});
+        toast('Part returned to inventory');await refresh();}catch(err){toast(err.message,'error');}});
+
+    if(mb.querySelector('#svcSave'))mb.querySelector('#svcSave').onclick=async()=>{
+      const input=mb.querySelector('#svcMoreFiles');
+      const files=input&&input.files?[...input.files]:[];
+      const attachments=(await Promise.all(files.slice(0,8).map(file=>new Promise(resolve=>{
+        const reader=new FileReader();
+        reader.onload=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,data:String(reader.result||'').split(',')[1]||''});
+        reader.onerror=()=>resolve(null);reader.readAsDataURL(file);})))).filter(Boolean);
+      try{
+        await api('/service/jobs/'+id,{method:'PATCH',body:JSON.stringify({
+          diagnosis:mb.querySelector('#svcDiagnosis').value,workPerformed:mb.querySelector('#svcWork').value,
+          markupPct:Number(mb.querySelector('#svcMarkup').value||0),attachments})});
+        await api('/service/jobs/'+id+'/estimate',{method:'POST',body:JSON.stringify({markupPct:Number(mb.querySelector('#svcMarkup').value||0)})});
+        toast('Job repriced');await refresh();
+      }catch(err){toast(err.message,'error');}};
+
+    if(mb.querySelector('#svcApprove'))mb.querySelector('#svcApprove').onclick=async()=>{
+      try{await api('/service/jobs/'+id+'/approve',{method:'POST',body:'{}'});toast('Job approved and in progress');await refresh();}
+      catch(err){toast(err.message,'error');}};
+
+    if(mb.querySelector('#svcComplete'))mb.querySelector('#svcComplete').onclick=()=>openServiceComplete(id,parts,refresh,mb.querySelector('#svcWork').value);
+    if(mb.querySelector('#svcReturnParts'))mb.querySelector('#svcReturnParts').onclick=()=>openServiceReturn(id,reserved,lookups,refresh);
+    if(mb.querySelector('#svcClose'))mb.querySelector('#svcClose').onclick=async()=>{
+      try{await api('/service/jobs/'+id+'/close',{method:'POST',body:'{}'});closeModal();toast('Job closed');await renderServiceJobs();}
+      catch(err){toast(err.message,'error');}};
+    if(mb.querySelector('#svcCancelJob'))mb.querySelector('#svcCancelJob').onclick=async()=>{
+      const reason=prompt('Reason for cancelling this job order:');
+      if(reason===null)return;
+      try{const r=await api('/service/jobs/'+id+'/cancel',{method:'POST',body:JSON.stringify({reason})});
+        closeModal();toast('Job cancelled; '+r.restored+' part(s) returned to stock');await renderServiceJobs();}
+      catch(err){toast(err.message,'error');}};
+    mb.querySelector('#svcPrint').onclick=()=>printJobOrder(id);
+    mb.querySelector('#svcDone').onclick=()=>{closeModal();renderServiceJobs();};
+  }catch(error){toast(error.message,'error');}
+}
+
+function openServicePartPicker(jobId,lookups,done){
+  const serialOptions=lookups.spareAssets.slice(0,2000).map(a=>`<option value="${esc(a.serial_no)}" data-cost="${esc(a.unit_cost||0)}">${esc(a.serial_no)} · ${esc(a.item_name||a.item_code)} · ${esc(a.current_location_code||'')}</option>`).join('');
+  const itemOptions=lookups.items.map(i=>`<option value="${i.id}" data-cost="${esc(i.standard_cost||0)}" data-serialized="${i.serialized?1:0}">${esc(i.item_code)} · ${esc(i.item_name)}</option>`).join('');
+  modal('Add part to the assembly card',`<form id="svcPartForm" class="operational-form grid">
+    <label class="wide"><span>Serialised part from stock</span><div class="pick-with-add">
+      <select id="svcPartSerial"><option value="">Not a serialised part</option>${serialOptions}</select>
+      <button type="button" class="table-action" id="svcPartScan">Scan</button></div></label>
+    <label class="wide"><span>Or a quantity item</span><select id="svcPartItem"><option value="">Select item</option>${itemOptions}</select></label>
+    <label><span>Quantity</span><input id="svcPartQty" type="number" min="0.01" step="0.01" value="1"></label>
+    <label><span>Unit cost</span><input id="svcPartCost" type="number" min="0" step="0.01" value="0"></label>
+    <label class="wide"><span>Notes</span><input id="svcPartNotes"></label>
+    <div class="modal-actions wide"><button type="submit" class="command primary">Add to job</button>
+      <button type="button" class="command" id="svcPartCancel">Cancel</button></div>
+  </form>`,'A serialised part leaves inventory the moment it is added');
+  const mb=$('#modalBody');
+  const serialSel=mb.querySelector('#svcPartSerial'),itemSel=mb.querySelector('#svcPartItem'),cost=mb.querySelector('#svcPartCost'),qty=mb.querySelector('#svcPartQty');
+  serialSel.onchange=()=>{const o=serialSel.selectedOptions[0];if(o&&o.value){cost.value=o.dataset.cost||0;qty.value=1;qty.readOnly=true;itemSel.value='';}else qty.readOnly=false;};
+  itemSel.onchange=()=>{const o=itemSel.selectedOptions[0];if(o&&o.value){cost.value=o.dataset.cost||0;serialSel.value='';qty.readOnly=false;}};
+  mb.querySelector('#svcPartScan').onclick=()=>scanQrWithCamera(v=>{
+    const serial=serialFromQrPayload(v);
+    const match=[...serialSel.options].find(o=>o.value===serial);
+    if(match){serialSel.value=serial;serialSel.onchange();toast('Part '+serial+' selected');}
+    else toast('Serial '+serial+' is not available in stock','error');});
+  mb.querySelector('#svcPartCancel').onclick=()=>closeModal();
+  mb.querySelector('#svcPartForm').onsubmit=async event=>{
+    event.preventDefault();
+    const payload={serialNo:serialSel.value,itemId:itemSel.value?Number(itemSel.value):null,
+      qty:Number(qty.value||1),unitCost:Number(cost.value||0),notes:mb.querySelector('#svcPartNotes').value};
+    if(!payload.serialNo&&!payload.itemId)return toast('Pick a serialised part or an item.','error');
+    try{await api('/service/jobs/'+jobId+'/parts',{method:'POST',body:JSON.stringify(payload)});
+      closeModal();toast('Part added and removed from available stock');await done();}
+    catch(err){toast(err.message,'error');}};
+}
+
+function openServiceLabor(jobId,existing,lookups,done){
+  const line=l=>`<div class="line-editor-row svc-labor-line">
+    <input data-l="description" placeholder="Task" value="${esc(l&&l.description||'')}">
+    <input data-l="technician" placeholder="Technician" value="${esc(l&&l.technician||'')}">
+    <input data-l="hours" type="number" min="0" step="0.25" placeholder="Hours" value="${esc(l&&l.hours||'')}">
+    <input data-l="rate" type="number" min="0" step="0.01" placeholder="Rate" value="${esc((l&&l.rate)||lookups.laborRate)}">
+    <button type="button" class="remove-line">&times;</button></div>`;
+  modal('Labour on this job',`<div class="operational-form">
+    <div class="line-editor-head"><b>Labour lines</b><button type="button" id="svcLaborAdd">Add line</button></div>
+    <div id="svcLaborLines" class="line-editor">${(existing.length?existing:[null]).map(line).join('')}</div>
+    <div class="modal-actions"><button type="button" class="command primary" id="svcLaborSave">Save labour</button>
+      <button type="button" class="command" id="svcLaborCancel">Cancel</button></div></div>`);
+  const mb=$('#modalBody');
+  const wire=row=>{row.querySelector('.remove-line').onclick=()=>row.remove();};
+  mb.querySelectorAll('.svc-labor-line').forEach(wire);
+  mb.querySelector('#svcLaborAdd').onclick=()=>{const w=document.createElement('div');w.innerHTML=line(null);
+    const row=w.firstElementChild;wire(row);mb.querySelector('#svcLaborLines').append(row);};
+  mb.querySelector('#svcLaborCancel').onclick=()=>closeModal();
+  mb.querySelector('#svcLaborSave').onclick=async()=>{
+    const rows=[...mb.querySelectorAll('.svc-labor-line')].map(r=>({
+      description:r.querySelector('[data-l="description"]').value,
+      technician:r.querySelector('[data-l="technician"]').value,
+      hours:Number(r.querySelector('[data-l="hours"]').value||0),
+      rate:Number(r.querySelector('[data-l="rate"]').value||0)})).filter(x=>x.hours>0);
+    try{await api('/service/jobs/'+jobId+'/labor',{method:'POST',body:JSON.stringify({labor:rows})});
+      closeModal();toast('Labour saved');await done();}catch(err){toast(err.message,'error');}};
+}
+
+function openServiceComplete(jobId,parts,done,workPerformed){
+  const reserved=parts.filter(p=>p.state==='RESERVED');
+  modal('Complete job order',`<div class="operational-form">
+    <label class="wide"><span>Work performed</span><textarea id="svcCompleteWork">${esc(workPerformed||'')}</textarea></label>
+    <div class="line-editor-head"><b>Confirm what was actually used</b></div>
+    <div id="svcUsedLines" class="line-editor">${reserved.map(p=>`<div class="line-editor-row svc-used-line" data-part="${p.id}">
+      <span class="used-label">${esc(p.item_name||p.item_code||'Part')}${p.serial_no?' · '+esc(p.serial_no):''}</span>
+      <input data-u="qtyUsed" type="number" min="0" step="0.01" value="${esc(p.qty)}" ${p.serial_no?'readonly':''}>
+      <span class="used-of">of ${esc(p.qty)}</span></div>`).join('')||'<div class="workspace-empty"><b>No parts to confirm</b></div>'}</div>
+    <div class="modal-actions"><button type="button" class="command primary" id="svcCompleteGo">Complete job</button>
+      <button type="button" class="command" id="svcCompleteCancel">Cancel</button></div></div>`,
+    'Anything not used stays reserved and can be returned to inventory');
+  const mb=$('#modalBody');
+  mb.querySelector('#svcCompleteCancel').onclick=()=>closeModal();
+  mb.querySelector('#svcCompleteGo').onclick=async()=>{
+    const used=[...mb.querySelectorAll('.svc-used-line')].map(r=>({partId:Number(r.dataset.part),
+      qtyUsed:Number(r.querySelector('[data-u="qtyUsed"]').value||0)}));
+    try{const r=await api('/service/jobs/'+jobId+'/complete',{method:'POST',
+      body:JSON.stringify({workPerformed:mb.querySelector('#svcCompleteWork').value,used})});
+      closeModal();
+      toast('Job completed · final price '+money(r.totals&&r.totals.finalPrice));
+      await done();}
+    catch(err){toast(err.message,'error');}};
+}
+
+function openServiceReturn(jobId,reserved,lookups,done){
+  modal('Return excess parts to inventory',`<div class="operational-form">
+    <label class="wide"><span>Return to location</span><select id="svcRetLoc"><option value="">Keep current location</option>
+      ${lookups.locations.map(l=>`<option value="${l.id}" data-code="${esc(l.code)}" data-name="${esc(l.name)}" data-type="${esc(l.location_type)}">${esc(l.code)} · ${esc(l.name)}</option>`).join('')}</select></label>
+    <div class="line-editor-head"><b>Excess parts</b></div>
+    <div id="svcRetLines" class="line-editor">${reserved.map(p=>`<div class="line-editor-row svc-ret-line" data-part="${p.id}">
+      <label class="ret-pick"><input type="checkbox" data-r="pick" checked> ${esc(p.item_name||p.item_code||'Part')}${p.serial_no?' · '+esc(p.serial_no):''}</label>
+      <input data-r="qty" type="number" min="0" step="0.01" value="${esc(Number(p.qty)-Number(p.qty_used||0))}" ${p.serial_no?'readonly':''}>
+      <select data-r="condition"><option value="GOOD">Good - back to available</option><option value="DAMAGED">Damaged - quarantine</option></select>
+    </div>`).join('')}</div>
+    <div class="modal-actions"><button type="button" class="command primary" id="svcRetGo">Return to inventory</button>
+      <button type="button" class="command" id="svcRetCancel">Cancel</button></div></div>`,
+    'Returned units become available in the warehouse again');
+  const mb=$('#modalBody');
+  mb.querySelector('#svcRetCancel').onclick=()=>closeModal();
+  mb.querySelector('#svcRetGo').onclick=async()=>{
+    const loc=mb.querySelector('#svcRetLoc').selectedOptions[0];
+    const returns=[...mb.querySelectorAll('.svc-ret-line')]
+      .filter(r=>r.querySelector('[data-r="pick"]').checked)
+      .map(r=>({partId:Number(r.dataset.part),qty:Number(r.querySelector('[data-r="qty"]').value||0),
+        conditionCode:r.querySelector('[data-r="condition"]').value}));
+    if(!returns.length)return toast('Select at least one part','error');
+    try{const r=await api('/service/jobs/'+jobId+'/return-parts',{method:'POST',body:JSON.stringify({
+        returns,locationId:loc&&loc.value?Number(loc.value):null,locationCode:loc?loc.dataset.code:'',
+        locationName:loc?loc.dataset.name:'',locationType:loc?loc.dataset.type:''})});
+      closeModal();toast(r.restored.length+' part(s) returned to inventory on '+r.returnNo);await done();}
+    catch(err){toast(err.message,'error');}};
+}
+
+async function printJobOrder(id){
+  try{
+    const data=await api('/service/jobs/'+id);
+    const h=data.header;
+    const rows=(data.parts||[]).map((p,i)=>[String(i+1),p.item_code||'',p.item_name||'',p.serial_no||'',String(p.qty),money(p.unit_cost),money(p.line_cost)]);
+    const laborRows=(data.labor||[]).map((l,i)=>[String(i+1),l.description||'',l.technician||'',String(l.hours),money(l.rate),money(l.amount)]);
+    const w=window.open('','_blank','width=940,height=1000');
+    if(!w)return toast('Allow pop-ups to print the Job Order.','error');
+    const cell=v=>'<td>'+esc(v)+'</td>';
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Job Order ${esc(h.job_no)}</title><style>
+      *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#17212b;padding:26px;max-width:900px;margin:0 auto}
+      header{display:flex;align-items:center;gap:14px;border-bottom:3px solid #0a2239;padding-bottom:10px;margin-bottom:14px}
+      header img{height:40px}h1{font-size:19px;margin:0;color:#0a2239;letter-spacing:1px}
+      .meta{margin-left:auto;text-align:right;color:#667;font-size:11px}
+      .grid{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #c2ceda;margin-bottom:12px}
+      .grid div{padding:6px 9px;border-top:1px solid #e4eaf0}.grid b{color:#556;font-weight:600}
+      h2{font-size:13px;margin:14px 0 6px;color:#0a2239}
+      table{width:100%;border-collapse:collapse}th,td{border:1px solid #c2ceda;padding:6px 8px;text-align:left}
+      th{background:#eef2f6}td.n,th.n{text-align:right}
+      .totals{margin-top:12px;margin-left:auto;width:320px}
+      .totals td{border:0;padding:3px 0}.totals tr.big td{border-top:2px solid #0a2239;padding-top:6px;font-weight:700;font-size:14px}
+      .sign{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;margin-top:48px}
+      .sign div{border-top:1px solid #333;padding-top:6px;font-size:11px;color:#556;text-align:center}
+      .bar{margin-top:20px}.bar button{padding:9px 18px;background:#0a2239;color:#fff;border:0;border-radius:4px;cursor:pointer}
+      @media print{.bar{display:none}}</style></head><body>
+      <header><img src="${location.origin}/logo-navy.png" alt="E88 Ventures Inc."><div><h1>JOB ORDER</h1>
+        <div style="font-size:11px;color:#667">Blitz - ERP · Service Management</div></div>
+        <div class="meta">${esc(h.job_no)}<br>${esc((h.created_at||'').slice(0,10))}<br>${esc(h.status)}</div></header>
+      <div class="grid">
+        <div><b>Customer:</b> ${esc(h.customer_name||'Walk-in')}</div><div><b>Contact:</b> ${esc(h.contact_person||'')} ${esc(h.contact_number||'')}</div>
+        <div><b>Job type:</b> ${esc(h.job_type)}</div><div><b>Priority:</b> ${esc(h.priority||'NORMAL')}</div>
+        <div><b>Unit serial:</b> ${esc(h.unit_serial_no||'-')}</div><div><b>Unit:</b> ${esc(h.unit_item_name||'-')}</div>
+        <div><b>Odometer:</b> ${esc(h.odometer||'-')}</div><div><b>Promised:</b> ${esc(h.promised_date||'-')}</div>
+        <div style="grid-column:1/-1"><b>Complaint:</b> ${esc(h.complaint||'')}</div>
+        <div style="grid-column:1/-1"><b>Diagnosis:</b> ${esc(h.diagnosis||'')}</div>
+        <div style="grid-column:1/-1"><b>Work performed:</b> ${esc(h.work_performed||'')}</div>
+      </div>
+      <h2>Parts (assembly card)</h2>
+      <table><thead><tr><th>#</th><th>Item</th><th>Description</th><th>Serial</th><th class="n">Qty</th><th class="n">Unit cost</th><th class="n">Amount</th></tr></thead>
+      <tbody>${rows.length?rows.map(r=>'<tr>'+r.map((v,i)=>i>=4?'<td class="n">'+esc(v)+'</td>':cell(v)).join('')+'</tr>').join(''):'<tr><td colspan="7">No parts</td></tr>'}</tbody></table>
+      <h2>Labour</h2>
+      <table><thead><tr><th>#</th><th>Task</th><th>Technician</th><th class="n">Hours</th><th class="n">Rate</th><th class="n">Amount</th></tr></thead>
+      <tbody>${laborRows.length?laborRows.map(r=>'<tr>'+r.map((v,i)=>i>=3?'<td class="n">'+esc(v)+'</td>':cell(v)).join('')+'</tr>').join(''):'<tr><td colspan="6">No labour recorded</td></tr>'}</tbody></table>
+      <table class="totals">
+        <tr><td>Material</td><td class="n" style="text-align:right">${money(h.material_cost)}</td></tr>
+        <tr><td>Labour</td><td style="text-align:right">${money(h.labor_cost)}</td></tr>
+        <tr><td>Overhead</td><td style="text-align:right">${money(h.overhead_cost)}</td></tr>
+        <tr><td>Total cost</td><td style="text-align:right">${money(h.final_cost||h.estimated_cost)}</td></tr>
+        <tr><td>Markup ${esc(h.markup_pct)}%</td><td style="text-align:right">${money((h.final_price||h.estimated_price)-(h.final_cost||h.estimated_cost))}</td></tr>
+        <tr class="big"><td>Total payable</td><td style="text-align:right">${money(h.final_price||h.estimated_price)}</td></tr>
+      </table>
+      <div class="sign"><div>Prepared by / Date</div><div>Approved by / Date</div><div>Customer conforme / Date</div></div>
+      <div class="bar"><button onclick="window.print()">Print this document</button></div>
+      </body></html>`);
+    w.document.close();
+  }catch(error){toast(error.message,'error');}
+}
+
+
+/* ===================================================================
+ * Mobile physical count: scan, it counts itself, variance is shown at once.
+ * =================================================================== */
+function openMobileCount(countId,data){
+  modal('Mobile count · '+esc(data.header.count_no),
+    `<div class="mobile-receive">
+      <div class="mr-counter"><b id="mcCount">${data.summary.counted}</b><span>of ${data.summary.expected} expected</span></div>
+      <div id="mcStatus" class="mr-status">Tap <b>Scan unit</b> and the count sheet updates itself.</div>
+      <input id="mcSerial" inputmode="text" autocomplete="off" placeholder="Or type / scan with a hardware scanner">
+      <div class="mr-actions">
+        <button type="button" class="command primary mr-big" id="mcScan">Scan unit</button>
+        <button type="button" class="command mr-big" id="mcAdd">Count</button>
+      </div>
+      <div id="mcList" class="mr-list"></div>
+      <div class="modal-actions">
+        <button type="button" class="command primary" id="mcSubmit">Submit count</button>
+        <button type="button" class="command" id="mcClose">Close</button>
+      </div>
+    </div>`,'Every scan is checked against the frozen count sheet');
+  const mb=$('#modalBody');
+  const log=[];
+  const setStatus=(t,tone)=>{const el=mb.querySelector('#mcStatus');el.className='mr-status '+(tone||'');el.innerHTML=t;};
+  const paint=()=>{
+    mb.querySelector('#mcList').innerHTML=log.slice().reverse().slice(0,40)
+      .map(l=>`<div class="mr-item ${l.variance?'bad':'good'}"><b>${esc(l.serial)}</b><span>${esc(l.variance||'counted')}</span></div>`).join('')
+      ||'<div class="mr-empty">Nothing counted yet</div>';
+  };
+  paint();
+  const count=async raw=>{
+    const serial=serialFromQrPayload(raw||mb.querySelector('#mcSerial').value);
+    if(!serial){setStatus('Scan or type a serial.','bad');return;}
+    try{
+      const result=await api(`/inventory/cycle-counts/${countId}/scan`,{method:'POST',
+        body:JSON.stringify({serialNo:serial,qrPayload:raw||'',scanMethod:raw?'QR':'MANUAL'})});
+      const variance=result.result&&result.result.varianceType;
+      log.push({serial,variance:variance?String(variance).replace(/_/g,' '):''});
+      mb.querySelector('#mcCount').textContent=log.filter(x=>!x.variance).length+Number(data.summary.counted||0);
+      setStatus(`<b>${esc(serial)}</b> · ${variance?esc(String(variance).replace(/_/g,' ')):'counted'}`,variance?'bad':'good');
+      if(navigator.vibrate)navigator.vibrate(variance?[60,60,60]:40);
+      mb.querySelector('#mcSerial').value='';paint();
+    }catch(error){setStatus(esc(error.message),'bad');}
+  };
+  mb.querySelector('#mcScan').onclick=()=>scanQrWithCamera(v=>count(v));
+  mb.querySelector('#mcAdd').onclick=()=>count('');
+  mb.querySelector('#mcSerial').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();count('');}};
+  mb.querySelector('#mcClose').onclick=()=>{closeModal();renderPhysicalCount(countId);};
+  mb.querySelector('#mcSubmit').onclick=async()=>{
+    try{await api(`/inventory/cycle-counts/${countId}/submit`,{method:'POST',body:'{}'});
+      closeModal();toast('Count submitted for approval');await renderPhysicalCount(countId);}
+    catch(error){setStatus(esc(error.message),'bad');}
+  };
+}
+
+/* ===================================================================
+ * Goods-issue card: open a delivery and drive its movement from here.
+ * =================================================================== */
+async function openDeliveryCard(id,done){
+  try{
+    const data=await api('/deliveries/'+id);
+    const h=data.header||data;
+    const assets=data.assets||[];
+    const rows=assets.map(a=>`<tr><td>${esc(a.item_name||a.item_code||'-')}</td><td>${esc(a.category||'-')}</td>
+      <td><b>${esc(a.serial_no||'-')}</b></td><td>${statusBadge(a.current_status||'-')}</td></tr>`);
+    modal('Delivery '+esc(h.delivery_no),
+      `<div class="operational-form">
+        <div class="workspace-kpis">${kpi('Status',h.status)}${kpi('Serials',assets.length)}
+          ${kpi('Destination',h.destination||'-')}${kpi('Holder',h.recipient_name||'-')}</div>
+        ${operationalTable(['Item','Class','Serial','Inventory status'],rows,{key:'dlv-assets'})}
+        <div class="modal-actions">
+          ${h.status==='PLANNED'||h.status==='READY'?'<button type="button" class="command primary" id="dlvRelease">Post goods issuance</button>':''}
+          ${h.status==='RELEASED'?'<button type="button" class="command primary" id="dlvComplete">Confirm delivered</button>':''}
+          <button type="button" class="command" id="dlvPrint">Print delivery note</button>
+          <button type="button" class="command" id="dlvClose">Close</button>
+        </div>
+      </div>`,esc(h.requisition_no||h.sales_order_no||''));
+    const mb=$('#modalBody');bindKpiCards();
+    if(mb.querySelector('#dlvRelease'))mb.querySelector('#dlvRelease').onclick=async()=>{
+      try{const r=await api('/deliveries/'+id+'/release',{method:'POST',body:JSON.stringify({releaseDate:new Date().toISOString()})});
+        closeModal();toast(r.released+' serialized units issued');await done();}catch(err){toast(err.message,'error');}};
+    if(mb.querySelector('#dlvComplete'))mb.querySelector('#dlvComplete').onclick=async()=>{
+      try{await api('/deliveries/'+id+'/complete',{method:'POST',body:JSON.stringify({actualDeliveryDate:new Date().toISOString()})});
+        closeModal();toast('Delivery confirmed');await done();}catch(err){toast(err.message,'error');}};
+    mb.querySelector('#dlvPrint').onclick=()=>{try{if(window.czPrintDelivery)window.czPrintDelivery(id);}catch(e){}};
+    mb.querySelector('#dlvClose').onclick=()=>closeModal();
+  }catch(error){toast(error.message,'error');}
+}
+
+/* ===================================================================
+ * Draft goods return: editable and voidable until it is posted.
+ * =================================================================== */
+async function openReturnDraft(id,lookups,done){
+  try{
+    const data=await api('/returns/'+id+'/detail');
+    const h=data.header;const lines=data.lines||[];
+    modal('Edit draft return '+esc(h.return_no),
+      `<div class="operational-form grid">
+        <label><span>Return date</span><input id="rdDate" type="date" value="${esc((h.return_date||'').slice(0,10))}"></label>
+        <label><span>Return location</span><select id="rdLocation"><option value="">Keep current</option>
+          ${(lookups.locations||[]).map(l=>`<option value="${esc(l.code)}" data-name="${esc(l.name)}" data-type="${esc(l.location_type)}">${esc(l.code)} · ${esc(l.name)}</option>`).join('')}</select></label>
+        <label><span>Reason</span><select id="rdReason">${['CUSTOMER_RETURN','END_OF_LEASE','REPLACEMENT','EMPLOYEE_RETURN','DEMO_COMPLETE','REPAIR','OTHER']
+          .map(r=>`<option ${r===h.reason_code?'selected':''}>${r}</option>`).join('')}</select></label>
+        <label class="wide"><span>Notes</span><input id="rdNotes" value="${esc(h.notes||'')}"></label>
+        <div class="wide line-editor-head"><b>Returned units</b></div>
+        <div class="wide line-editor">${lines.map(l=>`<div class="line-editor-row rd-line" data-line="${l.id}">
+          <span class="used-label">${esc(l.expected_serial||l.actual_serial||'-')}</span>
+          <input data-rd="actualSerialNo" value="${esc(l.actual_serial||'')}" placeholder="Actual serial">
+          <select data-rd="conditionCode">${['GOOD','DAMAGED','FOR_REPAIR','MISSING_PARTS']
+            .map(cnd=>`<option ${cnd===l.condition_code?'selected':''}>${cnd}</option>`).join('')}</select>
+          <input data-rd="notes" value="${esc(l.notes||'')}" placeholder="Line notes">
+        </div>`).join('')||'<div class="workspace-empty"><b>No lines</b></div>'}</div>
+        <div class="modal-actions wide">
+          <button type="button" class="command primary" id="rdSave">Save draft</button>
+          <button type="button" class="command" id="rdVoid">Void draft</button>
+          <button type="button" class="command" id="rdCancel">Cancel</button>
+        </div>
+      </div>`,'A draft return can be corrected or voided; a posted return cannot');
+    const mb=$('#modalBody');
+    mb.querySelector('#rdCancel').onclick=()=>closeModal();
+    mb.querySelector('#rdSave').onclick=async()=>{
+      const loc=mb.querySelector('#rdLocation').selectedOptions[0];
+      const payload={returnDate:mb.querySelector('#rdDate').value,
+        returnLocationCode:loc&&loc.value?loc.value:'',returnLocationName:loc?loc.dataset.name:'',
+        returnLocationType:loc?loc.dataset.type:'',reasonCode:mb.querySelector('#rdReason').value,
+        notes:mb.querySelector('#rdNotes').value,
+        lines:[...mb.querySelectorAll('.rd-line')].map(r=>({id:Number(r.dataset.line),
+          actualSerialNo:r.querySelector('[data-rd="actualSerialNo"]').value,
+          conditionCode:r.querySelector('[data-rd="conditionCode"]').value,
+          notes:r.querySelector('[data-rd="notes"]').value}))};
+      try{await api('/returns/'+id,{method:'PATCH',body:JSON.stringify(payload)});
+        closeModal();toast('Draft return updated');await done();}catch(err){toast(err.message,'error');}};
+    mb.querySelector('#rdVoid').onclick=async()=>{
+      const reason=prompt('Reason for voiding this draft return:');
+      if(reason===null)return;
+      try{await api('/returns/'+id+'/void',{method:'POST',body:JSON.stringify({reason})});
+        closeModal();toast('Draft return voided');await done();}catch(err){toast(err.message,'error');}};
+  }catch(error){toast(error.message,'error');}
 }
 
 async function renderAgingTax(){
@@ -1303,7 +2202,7 @@ async function renderInboundOverview(){
     const discrepancies=reconciliation.totals.openVariances;
     const recent=shipments.rows.slice(0,12);
     const body=`${workflowStrip(['Purchase Order','ATLAS Expected Shipment','Goods Receipt','Warehouse Visibility'],0)}
-      <div class="workspace-kpis">${kpi('Approved POs',approved)}${kpi('Expected Units',expected)}${kpi('Received Units',received)}${kpi('Open Discrepancies',discrepancies)}</div>
+      <div class="workspace-kpis">${kpi('Approved POs',approved,{section:'records'})}${kpi('Expected Units',expected,{section:'approvals'})}${kpi('Received Units',received,{section:'reports'})}${kpi('Open Discrepancies',discrepancies,{section:'setup'})}</div>
       <div class="ramco-layout">
         <div class="ramco-main">
           <section class="ramco-window">
@@ -1356,12 +2255,19 @@ async function renderPurchaseOrders(){
 
 async function renderPurchaseOrderForm(){
   const lookups=await api('/masters/lookups');
+  // Vendor droplist is fed by BOTH the partner master and the vendor accreditation platform
+  let accredited=[];
+  try{const av=await api('/masters/accredited-vendors');accredited=(av.rows||av.vendors||av||[]);}catch(e){accredited=[];}
+  const vendorNames=[...new Set([].concat(
+    (lookups.vendors||[]).map(v=>v.name||v.partner_name||''),
+    (accredited||[]).map(v=>v.name||v.vendor_name||v.partner_name||'')
+  ).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
   const body=`${workflowStrip(['Purchase Order','ATLAS Expected Shipment','Goods Receipt','Warehouse Visibility'],0)}
     <div class="record-actionbar"><button class="command primary" id="savePO">Save Purchase Order</button><button class="command" id="cancelPO">Cancel</button></div>
     <form id="poForm" class="record-page">
       <header><div><small>Inbound Logistics</small><h2>New Purchase Order</h2></div><div class="record-number">AUTO NUMBER</div></header>
       <section class="record-body"><div class="record-fields">
-        <label class="record-field"><span>Vendor</span><select name="vendorName" required><option value="">Select vendor…</option>${lookups.vendors.map(v=>`<option>${esc(v.name)}</option>`).join('')}</select></label>
+        <label class="record-field"><span>Vendor</span><select name="vendorName" required><option value="">Select vendor</option>${vendorNames.map(v=>`<option>${esc(v)}</option>`).join('')}</select></label>
         ${recordField('Order Date','orderDate','date',new Date().toISOString().slice(0,10),'required')}
         ${recordField('Expected Delivery','expectedDeliveryDate','date','')}
         <label class="record-field"><span>Currency</span><select name="currency"><option>PHP</option><option>USD</option><option>EUR</option></select></label>
@@ -1388,8 +2294,16 @@ async function renderPurchaseOrderForm(){
       <div class="record-tabs"><button type="button" class="active">Items</button></div>
       <section class="record-sublist"><div class="line-editor-head"><b>Purchase Order Lines</b><button type="button" id="addPOLine">Add Line</button></div>
         <div id="poLines" class="line-editor"></div></section>
-      <section class="record-sublist"><div class="line-editor-head"><b>Approval routing (no login needed — approvers act from a link)</b></div>
+      <section class="record-sublist"><div class="line-editor-head"><b>Supporting documents (required)</b></div>
         <div class="record-fields">
+          <label class="record-field wide"><span>Approved quotation / invoice / supporting file</span><input id="poDocs" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.docx,.doc"></label>
+        </div>
+        <div id="poDocList" class="po-doc-list"></div>
+      </section>
+      <section class="record-sublist"><div class="line-editor-head"><b>Approval routing</b></div>
+        <div class="record-fields">
+          <label class="record-field"><span>Department Manager name</span><input id="apMgrName"></label>
+          <label class="record-field"><span>Department Manager email</span><input id="apMgrEmail" type="email" placeholder="name@nrdev.ph"></label>
           <label class="record-field"><span>Department Head name</span><input id="apDeptName"></label>
           <label class="record-field"><span>Department Head email</span><input id="apDeptEmail" type="email" placeholder="name@nrdev.ph"></label>
           <label class="record-field"><span>Finance name</span><input id="apFinName" value="Finance"></label>
@@ -1400,8 +2314,7 @@ async function renderPurchaseOrderForm(){
         <div class="line-editor-head" style="margin-top:8px"><b>Your signature (creator)</b></div>
         <div class="sig-tabs"><button type="button" class="table-action active" id="poTabDraw">Draw</button><button type="button" class="table-action" id="poTabType">Type</button></div>
         <div id="poDrawWrap"><canvas id="poPad" class="po-sigpad" width="420" height="140"></canvas> <button type="button" class="table-action" id="poClearPad">Clear</button></div>
-        <div id="poTypeWrap" style="display:none"><input id="poTypedName" placeholder="Type your full name" style="min-width:260px"></div>
-        <p class="muted" style="font-size:12px;color:#66788c;margin:6px 0 0">Fill approver emails and sign to route for approval. Leave approvers blank to save as a plain draft.</p>
+        <div id="poTypeWrap" style="display:none"><input id="poTypedName" class="sig-typed" placeholder="Type your full name" style="min-width:260px"></div>
       </section>
     </form>`;
   content.innerHTML=workbenchShell(body,'records');
@@ -1433,8 +2346,8 @@ async function renderPurchaseOrderForm(){
     const row=document.createElement('div');
     row.className='line-editor-row po-line';
     row.innerHTML=`<div class="po-item-cell"><select data-line="itemId" required><option value="">Item…</option>${lookups.items.map(itemOptionHtml).join('')}</select><button type="button" class="table-action po-newitem" title="Create a new item not in the master">+ New</button></div>
-      <input data-line="description" placeholder="Description"><input data-line="remarks" placeholder="Remarks"><input data-line="unit" placeholder="Unit" value="pcs"><input data-line="qty" type="number" min="0.01" step="0.01" value="1" aria-label="Quantity">
-      <input data-line="unitCost" type="number" min="0" step="0.01" value="0" aria-label="Unit cost"><button type="button" class="remove-line">×</button>`;
+      <input data-line="description" placeholder="Description"><input data-line="unit" placeholder="Unit" value="pcs"><input data-line="qty" type="number" min="0.01" step="0.01" value="1" aria-label="Quantity">
+      <input data-line="unitCost" type="number" min="0" step="0.01" value="0" aria-label="Unit cost"><input data-line="remarks" placeholder="Remarks"><button type="button" class="remove-line">×</button>`;
     row.querySelector('select').onchange=()=>{
       const option=row.querySelector('select').selectedOptions[0];
       row.querySelector('[data-line="description"]').value=option?.dataset.name||'';
@@ -1455,6 +2368,26 @@ async function renderPurchaseOrderForm(){
     poPad.addEventListener('touchstart',down);poPad.addEventListener('touchmove',move);poPad.addEventListener('touchend',up);
     $('#poClearPad').onclick=()=>{poCtx.clearRect(0,0,poPad.width,poPad.height);poInk=false;};};
   initPoPad();
+  const poDocFiles=[];
+  const poRenderDocs=()=>{const host=$('#poDocList');if(!host)return;
+    host.innerHTML=poDocFiles.length?poDocFiles.map((f,i)=>`<span class="po-doc-chip">${esc(f.name)} <button type="button" data-doc-drop="${i}">&times;</button></span>`).join(''):'<span class="po-doc-empty">No file attached yet</span>';
+    host.querySelectorAll('[data-doc-drop]').forEach(b=>b.onclick=()=>{poDocFiles.splice(Number(b.dataset.docDrop),1);poRenderDocs();});};
+  poRenderDocs();
+  if($('#poDocs'))$('#poDocs').onchange=event=>{
+    [...event.target.files].forEach(file=>{
+      if(file.size>5*1024*1024)return toast(file.name+' is over 5 MB',
+        'error');
+      if(poDocFiles.length>=5)return toast('Maximum 5 attachments','error');
+      poDocFiles.push(file);
+    });
+    event.target.value='';poRenderDocs();
+  };
+  const poReadDocs=()=>Promise.all(poDocFiles.map(file=>new Promise(resolve=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve({fileName:file.name,contentType:file.type||'application/octet-stream',size:file.size,data:String(reader.result||'').split(',')[1]||''});
+    reader.onerror=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,data:''});
+    reader.readAsDataURL(file);
+  })));
   $('#poTabDraw')&&($('#poTabDraw').onclick=()=>{poSigMode='DRAW';$('#poDrawWrap').style.display='';$('#poTypeWrap').style.display='none';$('#poTabDraw').classList.add('active');$('#poTabType').classList.remove('active');});
   $('#poTabType')&&($('#poTabType').onclick=()=>{poSigMode='TYPE';$('#poDrawWrap').style.display='none';$('#poTypeWrap').style.display='';$('#poTabType').classList.add('active');$('#poTabDraw').classList.remove('active');});
   const poGetSig=()=>{if(poSigMode==='DRAW'){return poInk?{signature:poPad.toDataURL('image/png'),signatureType:'DRAW'}:null;}const n=($('#poTypedName').value||'').trim();return n?{signature:n,signatureType:'TYPE'}:null;};
@@ -1472,16 +2405,19 @@ async function renderPurchaseOrderForm(){
         remarks:row.querySelector('[data-line="remarks"]')?row.querySelector('[data-line="remarks"]').value:'',unit:row.querySelector('[data-line="unit"]')?row.querySelector('[data-line="unit"]').value:'pcs',
         qty:Number(row.querySelector('[data-line="qty"]').value),unitCost:Number(row.querySelector('[data-line="unitCost"]').value),serialized:true};
     });
+    payload.attachments=await poReadDocs();
     const approvers=[];
     const add=(role,name,email)=>{if((email||'').trim())approvers.push({role,name:(name||'').trim(),email:email.trim()});};
+    add('DEPT_MANAGER',$('#apMgrName').value,$('#apMgrEmail').value);
     add('DEPT_HEAD',$('#apDeptName').value,$('#apDeptEmail').value);
     add('FINANCE',$('#apFinName').value||'Finance',$('#apFinEmail').value||'mmungcal@nrdev.ph');
     add('CEO',$('#apCeoName').value,$('#apCeoEmail').value);
+    if(!payload.attachments.length){toast('Attach the approved quotation or invoice before saving.','error');return;}
     if(approvers.length){const sig=poGetSig();if(!sig){toast('Please sign (draw or type) before routing for approval.','error');return;}
       payload.approvers=approvers;payload.creatorSignature=sig.signature;payload.creatorSignatureType=sig.signatureType;payload.creatorName=(state.session&&state.session.user&&(state.session.user.displayName||state.session.user.email))||'';}
     try{const result=await api('/procurement/purchase-orders',{method:'POST',body:JSON.stringify(payload)});
       if(result.chainBuilt&&result.firstToken){const link=location.origin+'/approve.html?token='+result.firstToken;
-        modal('Purchase order routed for approval',`<div class="operational-form"><p><b>${esc(result.purchaseOrderNo)}</b> is now FOR APPROVAL.</p><p style="color:#556;font-size:12px">Send this link to the first approver (Department Head). Each approver gets the next link automatically after they sign — no login needed.</p><label><span>Approval link</span><input id="poShareLink" readonly value="${esc(link)}"></label><div class="modal-actions"><button type="button" class="command primary" id="poCopyLink">Copy link</button><button type="button" class="command" id="poDoneLink">Done</button></div></div>`);
+        modal('Purchase order routed for approval',`<div class="operational-form"><p><b>${esc(result.purchaseOrderNo)}</b> is now FOR APPROVAL.</p><p style="color:#556;font-size:12px">Send this link to the first approver (Department Head). Each approver gets the next link automatically after they sign - no login needed.</p><label><span>Approval link</span><input id="poShareLink" readonly value="${esc(link)}"></label><div class="modal-actions"><button type="button" class="command primary" id="poCopyLink">Copy link</button><button type="button" class="command" id="poDoneLink">Done</button></div></div>`);
         const mb=$('#modalBody');mb.querySelector('#poCopyLink').onclick=()=>{const i=mb.querySelector('#poShareLink');i.select();try{document.execCommand('copy');}catch(e){}try{navigator.clipboard&&navigator.clipboard.writeText(link);}catch(e){}toast('Link copied');};
         mb.querySelector('#poDoneLink').onclick=async()=>{closeModal();await renderPurchaseOrders();};
       } else {toast(`Purchase order ${result.purchaseOrderNo} created`);await renderPurchaseOrders();}
@@ -1618,8 +2554,17 @@ async function renderGoodsReceipt(selectedShipmentId=''){
       <td>${statusBadge(row.acceptance)}</td><td>${esc(row.message||'-')}</td><td><button class="table-action" data-remove-scan="${index}">Remove</button></td></tr>`);
     const expectedOptions=(workbench?.expectedAssets||[]).filter(asset=>!['RECEIVED','SUBSTITUTED','CANCELLED','SHORT_CLOSED'].includes(asset.expected_status))
       .map(asset=>`<option value="${asset.id}">${esc(asset.serial_no)} · ${esc(asset.item_code||asset.item_name||'Item')}</option>`).join('');
-    const expectedRows=(workbench?.expectedAssets||[]).slice(0,250).map(asset=>`<tr><td>${esc(asset.serial_no)}</td><td>${esc(asset.item_code||'-')}</td>
-      <td>${esc(asset.item_name||asset.description||'-')}</td><td>${esc(asset.actual_serial_no||'-')}</td><td>${statusBadge(asset.match_status||asset.expected_status)}</td></tr>`);
+    // ATLAS gives a different identifying key per class, so the expected list
+    // shows the key the receiver will actually read off the unit.
+    const expectedRows=(workbench?.expectedAssets||[]).slice(0,400).map(asset=>{
+      const k=atlasKeys(asset);
+      return `<tr data-expected-pick="${asset.id}" data-serial="${esc(asset.serial_no)}" class="${['RECEIVED','SUBSTITUTED'].includes(asset.expected_status)?'':'clickable-row'}">
+        <td>${esc(k.classLabel)}</td><td><b>${esc(asset.serial_no)}</b><small class="atlas-key">${esc(k.primaryLabel)}</small></td>
+        <td>${esc(asset.secondary_serial||'-')}<small class="atlas-key">${esc(k.secondaryLabel)}</small></td>
+        <td>${esc(asset.item_code||'-')}</td><td>${esc(asset.item_name||asset.description||'-')}</td>
+        <td>${esc(asset.model||'-')} ${esc(asset.color||'')}</td>
+        <td>${esc(asset.actual_serial_no||'-')}</td><td>${statusBadge(asset.match_status||asset.expected_status)}</td></tr>`;});
+    const openExpected=(workbench?.expectedAssets||[]).filter(a=>!['RECEIVED','SUBSTITUTED','CANCELLED','SHORT_CLOSED'].includes(a.expected_status));
     const body=`${workflowStrip(['Purchase Order','ATLAS Expected Shipment','Goods Receipt','Warehouse Visibility'],2)}
       <div class="workspace-commandbar">
         <label class="inline-control"><span>Expected Shipment</span><select id="receiptShipment"><option value="">Select shipment…</option>${open.rows.map(row=>`<option value="${row.shipment_id}" ${Number(row.shipment_id)===shipmentId?'selected':''}>${esc(row.shipment_no)} · PO ${esc(row.purchase_order_no||row.purchase_order_ref||'-')} · ${esc(row.remaining_qty)} remaining</option>`).join('')}</select></label>
@@ -1633,6 +2578,7 @@ async function renderGoodsReceipt(selectedShipmentId=''){
               <select id="expectedAsset"><option value="">Auto-match expected serial…</option>${expectedOptions}</select>
               <input id="actualSerial" autocomplete="off" placeholder="Scan or enter actual serial">
               <button class="command primary" id="addSerial">Add Serial</button><button class="command scan-camera" id="cameraReceipt">Scan QR</button>
+              <button class="command" id="mobileReceive">Mobile receive</button>
             </div>
             <div class="scan-summary">${kpi('Scanned',lines.length)}${kpi('Matched',lines.filter(row=>row.acceptance==='MATCHED').length)}
               ${kpi('Discrepancies',lines.filter(row=>row.acceptance!=='MATCHED').length)}</div>
@@ -1641,8 +2587,8 @@ async function renderGoodsReceipt(selectedShipmentId=''){
               <label>Notes <input id="receiptNotes" placeholder="Receiving notes"></label>
               <button class="command primary" id="postReceipt" ${lines.length?'':'disabled'}>Confirm & Post Goods Receipt</button></div>
           </section>
-          <section class="workspace-card"><header><h2>Expected vs Actual Serials</h2><span>${workbench.expectedAssets.length} expected</span></header>
-            ${operationalTable(['Expected Serial','Item','Description','Actual Serial','Status'],expectedRows)}</section>
+          <section class="workspace-card"><header><div><h2>ATLAS Expected Units</h2><span>${workbench.expectedAssets.length} units on the manifest · ${openExpected.length} still to receive</span></div></header>
+            ${operationalTable(['Class','Primary key','Secondary key','Item','Description','Model / Colour','Actual Serial','Status'],expectedRows,{key:'atlas-expected'})}</section>
         </div>
         <aside class="ramco-rail"><section><header>Receipt Control</header><div class="control-note"><b>Actual creates inventory</b><p>Matched units become available. Substituted or unexpected units go to quarantine with a discrepancy.</p></div></section>
         <section><header>Destination</header><div class="control-note"><b>Required location</b><p>Every confirmed serial is assigned to the selected warehouse or retail location.</p></div></section></aside>
@@ -1669,6 +2615,7 @@ async function renderGoodsReceipt(selectedShipmentId=''){
     $('#addSerial').onclick=()=>addManual('');
     $('#actualSerial').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();addManual('');}};
     $('#cameraReceipt').onclick=()=>scanQrWithCamera(value=>addManual(value));
+    $('#mobileReceive').onclick=()=>openMobileReceive(shipmentId,workbench,lookups);
     $$('[data-remove-scan]').forEach(button=>button.onclick=async()=>{
       state.inbound.receiptLines.splice(Number(button.dataset.removeScan),1);
       if(state.inbound.receiptLines.length){
@@ -1765,8 +2712,8 @@ async function renderOutboundOverview(){
       <td>${esc(row.holder_type||'-')}</td><td>${esc(row.holder_name||row.partner_name||'-')}</td><td>${date(row.required_date)}</td>
       <td>${esc(row.serial_count||0)}</td><td>${esc(row.total_qty||0)}</td><td>${statusBadge(row.status)}</td></tr>`);
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],0)}
-      <div class="workspace-kpis">${kpi('Open Requisitions',open.length)}${kpi('Ready to Issue',ready.length)}
-        ${kpi('Out for Delivery',inTransit.length)}${kpi('Expected Returns',returnable.length)}</div>
+      <div class="workspace-kpis">${kpi('Open Requisitions',open.length,{section:'records'})}${kpi('Ready to Issue',ready.length,{section:'approvals'})}
+        ${kpi('Out for Delivery',inTransit.length,{section:'reports'})}${kpi('Expected Returns',returnable.length,{section:'setup'})}</div>
       <div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
         <header><div><h2>Outbound & Custody Work Summary</h2></div>
           <button class="ramco-primary" data-section-link="records">New Requisition</button></header>
@@ -1784,6 +2731,11 @@ async function renderOutboundRequisitions(){
   try{
     const [lookups,data,deptData]=await Promise.all([api('/requisitions/lookups'),api('/requisitions/outbound-workbench'),api('/admin/records/departments').catch(()=>({rows:[]}))]);
     const departments=(deptData&&deptData.rows)||[];
+    // A sales order that already has a requisition disappears from the picker so it cannot be double-processed
+    const usedOrders=new Set();
+    (data.requisitions||[]).forEach(r=>{[r.source_order_id,r.sales_order_id,r.order_id].forEach(v=>{if(v)usedOrders.add(String(v));});
+      [r.sales_order_no,r.source_order_no].forEach(v=>{if(v)usedOrders.add(String(v));});});
+    const openOrders=(lookups.orders||[]).filter(o=>!usedOrders.has(String(o.id))&&!usedOrders.has(String(o.sales_order_no)));
     const rows=data.requisitions.map(row=>`<tr><td><b>${esc(row.requisition_no)}</b></td><td>${date(row.request_date)}</td>
       <td>${esc(row.request_type||'-')}</td><td>${esc(row.holder_type||'-')}</td><td>${esc(row.holder_name||'-')}</td>
       <td>${esc(row.serial_count||0)}</td><td>${esc(row.total_qty||0)}</td><td>${date(row.required_date)}</td><td>${statusBadge(row.status)}</td>
@@ -1799,7 +2751,7 @@ async function renderOutboundRequisitions(){
           <label><span>Department</span><select name="department"><option value="">Select department…</option>${departments.map(d=>`<option${d.name===(state.session.user.department||'')?' selected':''}>${esc(d.name)}</option>`).join('')}</select></label>
           <label><span>Required Date</span><input name="requiredDate" type="date" value="${new Date().toISOString().slice(0,10)}"></label>
           <label><span>Expected Return Date</span><input name="expectedReturnDate" type="date"></label>
-          <label><span>Source Sales / Lease Order</span><select name="sourceOrderId" id="sourceOrder"><option value="">Not order-related</option>${lookups.orders.map(order=>`<option value="${order.id}" data-no="${esc(order.sales_order_no)}" data-customer="${esc(order.customer_name)}" data-customer-id="${order.customer_id}" data-destination="${esc(order.delivery_address||'')}">${esc(order.sales_order_no)} · ${esc(order.transaction_type)} · ${esc(order.customer_name)}</option>`).join('')}</select></label>
+          <label><span>Source Sales / Lease Order</span><select name="sourceOrderId" id="sourceOrder"><option value="">Not order-related</option>${openOrders.map(order=>`<option value="${order.id}" data-no="${esc(order.sales_order_no)}" data-customer="${esc(order.customer_name)}" data-customer-id="${order.customer_id}" data-destination="${esc(order.delivery_address||'')}">${esc(order.sales_order_no)} · ${esc(order.transaction_type)} · ${esc(order.customer_name)}</option>`).join('')}</select></label>
           <label class="wide"><span>Purpose / Custody Reason</span><input name="purpose" required placeholder="Lease deployment, employee use, demo, sale, pilot, project, or internal use"></label>
           <label class="wide"><span>Destination</span><input name="destination" id="requisitionDestination" required></label>
           <div class="wide line-editor-head"><b>Requested Items and Available Serials</b><button type="button" id="addRequisitionLine">Add Item</button></div>
@@ -1986,12 +2938,18 @@ async function renderGoodsIssuance(){
       <section class="workspace-card"><header><div><h2>Goods Issuance Worklist</h2></div></header>
       ${rows.length?operationalTable(['Delivery','Requisition','Assignment','Schedule','Destination','Holder','Serials','Status','Action'],rows):outboundEmptyHint('No deliveries are waiting to be issued.','A delivery lands here automatically once you approve a requisition (Requisitions tab, Approve & Create Delivery). For motorcycles, pass the Pre-release checklist first, then use Post Goods Issuance here.')}</section>`;
     let __gi=[];try{for(let __p=1;__p<=8;__p++){const __r=await api('/deliveries?size=250&page='+__p);const __rr=(__r.rows||[]);__gi=__gi.concat(__rr);if(__rr.length<250)break;}}catch(e){}
-    const __giRows=__gi.map(r=>`<tr><td><b>${esc(r.delivery_no)}</b> <button class="table-action" data-print-dlv="${r.id}">Print</button></td><td>${esc(r.requisition_no||r.sales_order_no||'\u2014')}</td><td>${esc(r.assignment_no||'\u2014')}</td><td>${esc(r.destination||'\u2014')}</td><td>${esc(r.recipient_name||'\u2014')}</td><td>${esc(r.asset_count||0)}</td><td>${statusBadge(r.status)}</td><td>${esc((r.scheduled_date||r.created_at||'').slice(0,10))}</td></tr>`);
+    const __giRows=__gi.map(r=>`<tr class="clickable-row" data-gi-open="${r.id}" data-gi-status="${esc(r.status)}"><td><b>${esc(r.delivery_no)}</b> <button class="table-action" data-print-dlv="${r.id}">Print</button></td><td>${esc(r.requisition_no||r.sales_order_no||'-')}</td><td>${esc(r.assignment_no||'-')}</td><td>${esc(r.destination||'-')}</td><td>${esc(r.recipient_name||'-')}</td><td>${esc(r.asset_count||0)}</td><td>${statusBadge(r.status)}</td><td>${esc((r.scheduled_date||r.created_at||'').slice(0,10))}</td></tr>`);
     const __giBody=`<section class="workspace-card"><header><div><h2>Goods Issuance Register</h2><span>All ${__gi.length} outbound movements (actuals).</span></div></header>${operationalTable(['Delivery','Requisition','Assignment','Destination','Holder','Serials','Status','Date'],__giRows)}</section>`;
     content.innerHTML=workbenchShell(body+__giBody,'reports');bindOperationalShell();
-    $$('[data-release-delivery]').forEach(button=>button.onclick=async()=>{
+    $$('[data-release-delivery]').forEach(button=>button.onclick=async event=>{
+      event.stopPropagation();
       try{const result=await api(`/deliveries/${button.dataset.releaseDelivery}/release`,{method:'POST',body:JSON.stringify({releaseDate:new Date().toISOString()})});toast(`${result.released} serialized units issued`);await renderGoodsIssuance();}
       catch(error){toast(error.message,'error');}
+    });
+    // Every goods-issue row opens its delivery so the movement can be updated from the card.
+    $$('[data-gi-open]').forEach(row=>row.onclick=event=>{
+      if(event.target.closest('button'))return;
+      openDeliveryCard(Number(row.dataset.giOpen),renderGoodsIssuance);
     });
   }catch(error){showWorkspaceError(error);}
 }
@@ -2004,7 +2962,7 @@ async function renderDeliveryReturns(){
       api('/returns/deliveries/returnable'),api('/returns?size=500'),api('/masters/lookups'),
     ]);
     let __dall=[];try{for(let __p=1;__p<=8;__p++){const __r=await api('/deliveries?size=250&page='+__p);const __rr=(__r.rows||[]);__dall=__dall.concat(__rr);if(__rr.length<250)break;}}catch(e){}
-    const __dallRows=__dall.map(r=>`<tr><td><b>${esc(r.delivery_no)}</b> <button class="table-action" data-print-dlv="${r.id}">Print</button></td><td>${esc(r.requisition_no||r.sales_order_no||'\u2014')}</td><td>${esc(r.assignment_no||'\u2014')}</td><td>${esc(r.destination||'\u2014')}</td><td>${esc(r.recipient_name||'\u2014')}</td><td>${esc(r.asset_count||0)}</td><td>${statusBadge(r.status)}</td><td>${esc((r.actual_delivery_date||r.scheduled_date||r.created_at||'').slice(0,10))}</td></tr>`);
+    const __dallRows=__dall.map(r=>`<tr><td><b>${esc(r.delivery_no)}</b> <button class="table-action" data-print-dlv="${r.id}">Print</button></td><td>${esc(r.requisition_no||r.sales_order_no||'-')}</td><td>${esc(r.assignment_no||'-')}</td><td>${esc(r.destination||'-')}</td><td>${esc(r.recipient_name||'-')}</td><td>${esc(r.asset_count||0)}</td><td>${statusBadge(r.status)}</td><td>${esc((r.actual_delivery_date||r.scheduled_date||r.created_at||'').slice(0,10))}</td></tr>`);
     const __dallBody=`<section class="workspace-card"><header><div><h2>Delivery Register</h2><span>All ${__dall.length} deliveries (actuals).</span></div></header>${operationalTable(['Delivery','Requisition','Assignment / Sale','Destination','Holder','Serials','Status','Date'],__dallRows)}</section>`;
     const deliveryRows=data.deliveries.filter(row=>['RELEASED','DELIVERED'].includes(row.status)).map(row=>`<tr><td><b>${esc(row.delivery_no)}</b></td><td>${esc(row.requisition_no||'-')}</td>
       <td>${esc(row.assignment_no||row.sales_order_no||'-')}</td><td>${esc(row.destination)}</td><td>${esc(row.recipient_name)}</td><td>${statusBadge(row.status)}</td>
@@ -2014,7 +2972,9 @@ async function renderDeliveryReturns(){
       :(row.assignment_no||'Deployment');return `<tr><td><b>${esc(row.return_no)}</b></td><td>${esc(row.return_type||'CUSTODY_RETURN')}</td>
       <td>${esc(source)}</td><td>${esc(row.customer_name||row.partner_name||'-')}</td><td>${date(row.return_date)}</td>
       <td>${esc(row.return_location_code||'-')}</td><td>${esc(row.line_count)}</td><td>${row.return_type==='SALES_RETURN'&&Number(row.refund_gross_amount||0)>0?money(row.refund_gross_amount):'-'}</td>
-      <td>${statusBadge(row.status)}</td><td>${row.status==='DRAFT'?`<button class="table-action" data-post-return="${row.id}">Post Return</button>`:'-'}</td></tr>`;});
+      <td>${statusBadge(row.status)}</td><td>${row.status==='DRAFT'
+        ?`<button class="table-action" data-post-return="${row.id}">Post Return</button><button class="table-action" data-edit-return="${row.id}">Edit</button><button class="table-action" data-void-return="${row.id}">Void</button>`
+        :'-'}</td></tr>`;});
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],3)}
       <section class="workspace-card"><header><h2>Delivery Confirmation</h2></header>
         ${deliveryRows.length?operationalTable(['Delivery','Requisition','Assignment / Sale','Destination','Holder','Status','Action'],deliveryRows):outboundEmptyHint('No deliveries are ready to confirm.','This list is only for confirming outbound deliveries to a customer or holder, which flow from an approved requisition then Goods Issuance. To bring a delivered unit back to the warehouse you do NOT need a requisition; use Create Goods Return below.')}</section>
@@ -2078,6 +3038,13 @@ async function renderDeliveryReturns(){
       try{await api(`/deliveries/${button.dataset.completeDelivery}/complete`,{method:'POST',body:JSON.stringify({deliveryDate:new Date().toISOString()})});toast('Delivery, inventory, custody, and Finance source posting prepared');await renderDeliveryReturns();}
       catch(error){toast(error.message,'error');}
     });
+    $$('[data-edit-return]').forEach(button=>button.onclick=()=>openReturnDraft(Number(button.dataset.editReturn),lookups,renderDeliveryReturns));
+    $$('[data-void-return]').forEach(button=>button.onclick=async()=>{
+      const reason=prompt('Reason for voiding this draft return:');
+      if(reason===null)return;
+      try{await api('/returns/'+button.dataset.voidReturn+'/void',{method:'POST',body:JSON.stringify({reason})});
+        toast('Draft return voided');await renderDeliveryReturns();}
+      catch(error){toast(error.message,'error');}});
     $$('[data-post-return]').forEach(button=>button.onclick=async()=>{
       try{const result=await api(`/returns/${button.dataset.postReturn}/post`,{method:'POST',body:'{}'});toast(result.returnType==='SALES_RETURN'?'Sales return posted with inventory and Finance entries':'Goods return posted and custody updated');await renderDeliveryReturns();}
       catch(error){toast(error.message,'error');}
@@ -2230,10 +3197,30 @@ async function renderAssemblyWorkbench(){
   }catch(error){showWorkspaceError(error);}
 }
 
+const MOVEMENT_STATUS_KEY='blitz-movement-statuses';
+const MOVEMENT_STATUS_BASE=[
+  {code:'AVAILABLE',restricted:false},{code:'AVAILABLE_FOR_LEASE',restricted:false},
+  {code:'AVAILABLE_FOR_SALE',restricted:false},{code:'RESERVED',restricted:true},
+  {code:'QUARANTINE',restricted:true},{code:'UNDER_REPAIR',restricted:true},
+  {code:'ASSIGNED',restricted:true},{code:'SOLD',restricted:true}];
+function movementStatuses(){
+  let extra=[];try{extra=JSON.parse(localStorage.getItem(MOVEMENT_STATUS_KEY)||'[]');}catch(e){extra=[];}
+  return MOVEMENT_STATUS_BASE.concat(extra.filter(x=>x&&x.code));
+}
+function movementStatusOptions(){
+  const list=(state.movementStatuses&&state.movementStatuses.length)?state.movementStatuses:movementStatuses();
+  return list.map(x=>`<option value="${esc(x.code)}"${x.restricted?' data-restricted="1"':''}>${esc(x.label||x.code.replace(/_/g,' '))}${x.restricted?' (restricted)':''}</option>`).join('');
+}
+function isSoldStatus(value){return String(value||'').toUpperCase()==='SOLD';}
 async function renderStockMovement(){
   content.innerHTML='<div class="workspace-loading">Loading movement workbench…</div>';
   try{
-    const [lookups,movements]=await Promise.all([api('/masters/lookups'),api('/inventory/movements')]);
+    const [lookups,movements,statusData,slipData]=await Promise.all([
+      api('/masters/lookups'),api('/inventory/movements'),
+      api('/inventory/movement-statuses').catch(()=>({rows:[]})),
+      api('/inventory/move-requests').catch(()=>({rows:[]}))]);
+    state.movementStatuses=(statusData.rows&&statusData.rows.length)?statusData.rows:movementStatuses();
+    const slips=slipData.rows||[];
     const rows=movements.rows.slice(0,250).map(row=>`<tr data-move-serial="${esc(row.serial_no)}" style="cursor:pointer" title="Click to move this serial to another location"><td><b>${esc(row.movement_no)}</b></td><td>${date(row.movement_date)}</td>
       <td>${esc(row.movement_type)}</td><td>${esc(row.serial_no)}</td><td>${esc(row.item_name||row.item_code||'-')}</td>
       <td>${esc(row.from_location_code||'-')}</td><td>${esc(row.to_location_code||'-')}</td><td>${esc(row.to_status||'-')}</td><td>${esc(row.posted_by||'-')}</td></tr>`);
@@ -2243,19 +3230,56 @@ async function renderStockMovement(){
           <label><span>Serial Number</span><div class="scan-field"><input name="serialNo" id="moveSerial" required placeholder="Scan or enter serial"><button type="button" class="table-action" id="moveScan">Scan QR</button></div></label>
           <label><span>Movement</span><select name="movementType"><option>TRANSFER</option><option>PLACEMENT</option><option>STATUS_CHANGE</option><option>ADJUSTMENT</option></select></label>
           <label><span>Destination</span><select name="locationId" required><option value="">Select location…</option>${lookups.locations.map(row=>`<option value="${row.id}">${esc(row.code)} · ${esc(row.name)}</option>`).join('')}</select></label>
-          <label><span>New Status</span><select name="toStatus"><option>AVAILABLE</option><option>QUARANTINE</option><option>UNDER_REPAIR</option><option>ASSIGNED</option></select></label>
+          <label><span>New Status</span><select name="toStatus" id="moveStatus">${movementStatusOptions()}</select>
+            <button type="button" class="table-action" id="moveAddStatus">+ Add status</button></label>
           <label class="wide"><span>Reason / notes</span><input name="notes" required></label>
-          <button class="command primary">Post Movement</button>
+          <button class="command primary">Create Requisition Slip</button>
         </form>
       </section>
+      <section class="workspace-card"><header><h2>Movement Slips Awaiting Approval</h2><span>${slips.filter(x=>['SUBMITTED','DEPT_MANAGER_APPROVED'].includes(x.status)).length} open</span></header>
+        ${operationalTable(['Slip','Serial','Item','To Location','New Status','Requested By','Status','Action'],
+          slips.filter(x=>['SUBMITTED','DEPT_MANAGER_APPROVED'].includes(x.status)).map(x=>`<tr>
+            <td><b>${esc(x.request_no)}</b></td><td>${esc(x.serial_no)}</td><td>${esc(x.item_name||x.item_code||'-')}</td>
+            <td>${esc(x.to_location_code||x.to_location_name||'-')}</td><td>${esc((x.to_status||'-').replace(/_/g,' '))}</td>
+            <td>${esc(x.requested_by||'-')}</td><td>${statusBadge(x.status)}</td>
+            <td>${can('INVENTORY','APPROVE')?`<button class="table-action" data-slip-approve="${x.id}">${x.status==='SUBMITTED'?'Manager approve':'Head approve & post'}</button><button class="table-action" data-slip-reject="${x.id}">Reject</button>`:'-'}</td></tr>`),
+          {emptyMessage:'No movement slips are waiting for approval'})}</section>
       <section class="workspace-card"><header><h2>Movement Register</h2><span>${movements.total} entries</span></header>
         ${operationalTable(['Movement','Date','Type','Serial','Item','From','To','Status','Posted By'],rows)}</section>
-      </div><aside class="ramco-rail"><section><header>Stock Control</header><div class="control-note"><b>One serial, one position</b><p>Every movement updates current location and writes an immutable stock-ledger entry. Click any register row to move that serial.</p></div></section>
-      <section><header>Master Data</header><div class="ramco-action-links"><button type="button" id="openItemMaster">Item Master (Products)</button><button type="button" id="openAssembly">Assembly / BOM</button></div></section></aside></div>`;
+      </div><aside class="ramco-rail"><section><header>Master Data</header><div class="ramco-action-links"><button type="button" id="openItemMaster">Item Master (Products)</button><button type="button" id="openAssembly">Assembly / BOM</button></div></section></aside></div>`;
     content.innerHTML=workbenchShell(body,'approvals');
     bindOperationalShell();
     var __ms=$('#moveScan');if(__ms)__ms.onclick=()=>scanQrWithCamera(value=>{var el=$('#moveSerial');if(el)el.value=value;});
+    var __mas=$('#moveAddStatus');
+    if(__mas)__mas.onclick=()=>{
+      modal('Add movement status',`<form id="msForm" class="operational-form grid">
+        <label class="wide"><span>Status code</span><input name="code" required placeholder="e.g. AVAILABLE_FOR_DEMO"></label>
+        <label class="wide"><span>Rule</span><select name="restricted"><option value="0">Not restricted - unit can still be moved</option><option value="1">Restricted - unit can no longer be moved</option></select></label>
+        <div class="modal-actions wide"><button type="submit" class="command primary">Add status</button><button type="button" class="command" id="msCancel">Cancel</button></div>
+      </form>`);
+      const mb=$('#modalBody');mb.querySelector('#msCancel').onclick=()=>closeModal();
+      mb.querySelector('#msForm').onsubmit=async ev=>{
+        ev.preventDefault();const f=formDataObject(ev.currentTarget);
+        const code=String(f.code||'').trim().toUpperCase().replace(/\s+/g,'_');
+        if(!code)return;
+        try{
+          await api('/inventory/movement-statuses',{method:'POST',body:JSON.stringify({
+            code,label:code.replace(/_/g,' '),restricted:f.restricted==='1',terminal:f.restricted==='1'&&/SOLD|SCRAP|DISPOSED/.test(code)})});
+          closeModal();toast('Status added');renderStockMovement();
+        }catch(err){toast(err.message,'error');}
+      };
+    };
     $$('[data-move-serial]').forEach(function(tr){tr.onclick=function(){var s=tr.getAttribute('data-move-serial');var el=$('#moveSerial');if(el){el.value=s;el.focus();el.scrollIntoView({behavior:'smooth',block:'center'});toast('Serial '+s+' loaded into Post Stock Movement');}};});
+    $$('[data-slip-approve]').forEach(b=>b.onclick=async()=>{
+      try{const r=await api('/inventory/move-requests/'+b.dataset.slipApprove+'/approve',{method:'POST',body:'{}'});
+        toast(r.posted?'Movement posted to the stock ledger':'Approved. Waiting for the Department Head.');await renderStockMovement();}
+      catch(err){toast(err.message,'error');}});
+    $$('[data-slip-reject]').forEach(b=>b.onclick=async()=>{
+      const reason=prompt('Reason for rejecting this movement slip:');
+      if(reason===null)return;
+      try{await api('/inventory/move-requests/'+b.dataset.slipReject+'/reject',{method:'POST',body:JSON.stringify({reason})});
+        toast('Movement slip rejected');await renderStockMovement();}
+      catch(err){toast(err.message,'error');}});
     var __im=$('#openItemMaster');if(__im)__im.onclick=function(){renderProductRegistration();};
     var __ab=$('#openAssembly');if(__ab)__ab.onclick=function(){renderAssemblyWorkbench();};
     $('#movementForm').onsubmit=async event=>{
@@ -2263,8 +3287,16 @@ async function renderStockMovement(){
       const payload=formDataObject(event.currentTarget);
       const location=lookups.locations.find(row=>Number(row.id)===Number(payload.locationId));
       payload.toLocationName=location.name;payload.toLocationCode=location.code;payload.toLocationType=location.location_type;
-      try{await api('/inventory/move',{method:'POST',body:JSON.stringify(payload)});toast('Stock movement posted');await renderStockMovement();}
-      catch(error){toast(error.message,'error');}
+      // A movement is never posted directly any more: it raises a slip that runs
+      // Department Manager -> Department Head before the ledger is touched.
+      try{
+        const created=await api('/inventory/move-requests',{method:'POST',body:JSON.stringify({
+          serialNo:payload.serialNo,movementType:payload.movementType,toStatus:payload.toStatus,
+          toLocationId:Number(payload.locationId),toLocationCode:payload.toLocationCode,
+          toLocationName:payload.toLocationName,toLocationType:payload.toLocationType,notes:payload.notes})});
+        toast('Movement slip '+(created.requestNo||'')+' raised. It posts once both approvers sign.');
+        await renderStockMovement();
+      }catch(error){toast(error.message,'error');}
     };
   }catch(error){showWorkspaceError(error);}
 }
@@ -2336,7 +3368,7 @@ async function renderCycleOverview(){
     const rows=data.rows.slice(0,20).map(row=>`<tr data-cycle="${row.id}"><td><b>${esc(row.count_no)}</b></td><td>${date(row.count_date)}</td>
       <td>${esc(row.location_code)} · ${esc(row.location_name)}</td><td>${esc(row.category||'All')}</td><td>${esc(row.expected_units)}</td>
       <td>${esc(row.counted_units)}</td><td>${esc(row.variance_units)}</td><td>${statusBadge(row.status)}</td></tr>`);
-    const body=`<div class="workspace-kpis">${kpi('Count Plans',data.total)}${kpi('Open Counts',open)}${kpi('For Approval',submitted)}${kpi('Variances',variances)}</div>
+    const body=`<div class="workspace-kpis">${kpi('Count Plans',data.total,{section:'records'})}${kpi('Open Counts',open,{section:'records'})}${kpi('For Approval',submitted,{section:'approvals'})}${kpi('Variances',variances,{section:'setup'})}</div>
       <div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
         <header><div><h2>Inventory Cycle Counting</h2></div><button class="ramco-primary" data-section-link="records">New Count Plan</button></header>
         ${operationalTable(['Count No.','Date','Location','Category','Expected','Counted','Variance','Status'],rows)}
@@ -2380,7 +3412,7 @@ async function renderCyclePlans(){
 }
 
 function printCycleCountSheet(data){
-  const popup=window.open('','_blank','noopener,noreferrer');
+  const popup=window.open('','_blank','width=980,height=1000');
   if(!popup)return toast('Allow pop-ups to print the cycle count sheet.','error');
   const rows=data.lines.filter(row=>row.expected_asset_id).map((row,index)=>`<tr><td>${index+1}</td><td>${esc(row.item_code||'')}</td><td>${esc(row.item_name||'')}</td>
     <td>${esc(row.expected_serial_no||'')}</td><td class="blank"></td><td class="blank"></td></tr>`).join('');
@@ -2388,7 +3420,7 @@ function printCycleCountSheet(data){
     body{font:12px Arial;margin:24px;color:#111}header{display:flex;justify-content:space-between;border-bottom:2px solid #0a2239;padding-bottom:12px}
     h1{margin:0;font-size:22px}p{margin:4px 0}table{width:100%;border-collapse:collapse;margin-top:18px}th,td{border:1px solid #777;padding:7px;text-align:left}
     .blank{height:22px}.sign{display:grid;grid-template-columns:1fr 1fr 1fr;gap:28px;margin-top:50px}.sign div{border-top:1px solid #111;padding-top:6px}
-    @media print{button{display:none}}</style></head><body><header><div><h1>E88 Inventory Cycle Count</h1><p>${esc(data.header.count_no)} · ${esc(data.header.location_code)} - ${esc(data.header.location_name)}</p>
+    @media print{button{display:none}}</style></head><body><header><div><h1>Blitz - ERP Inventory Cycle Count</h1><p>${esc(data.header.count_no)} · ${esc(data.header.location_code)} - ${esc(data.header.location_name)}</p>
     <p>Count date: ${esc(data.header.count_date)} · Category: ${esc(data.header.category||'All')}</p></div><div>© 2026 AL23<br>Internal Use Only</div></header>
     <table><thead><tr><th>#</th><th>Item Code</th><th>Item</th><th>Expected Serial</th><th>Actual / Tick</th><th>Remarks</th></tr></thead><tbody>${rows}</tbody></table>
     <div class="sign"><div>Counted by / Date</div><div>Reviewed by / Date</div><div>Approved by / Date</div></div><button onclick="window.print()">Print</button></body></html>`);
@@ -2410,7 +3442,7 @@ async function renderPhysicalCount(countId=state.cycleCount){
       ${data?`<div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
         <header><div><h2>${esc(data.header.count_no)} · Physical Count</h2><span>${esc(data.header.location_code)} - ${esc(data.header.location_name)}</span></div>${statusBadge(data.header.status)}</header>
         <div class="scan-entry"><input id="countSerial" placeholder="Scan or enter physical serial"><button class="command primary" id="countAdd">Count Serial</button>
-          <button class="command" id="countCamera">Scan QR</button></div>
+          <button class="command" id="countCamera">Scan QR</button><button class="command" id="countMobile">Mobile count</button></div>
         <div class="scan-summary">${kpi('Expected',data.summary.expected)}${kpi('Scanned',data.summary.counted)}${kpi('Variances',data.summary.variances)}
           ${kpi('Missing',data.summary.missing)}${kpi('Location Mismatch',data.summary.locationMismatch)}</div>
         ${operationalTable(['Item','Description','Expected Serial','Actual Serial','Count Status','Variance','Actual Location'],rows)}
@@ -2431,6 +3463,7 @@ async function renderPhysicalCount(countId=state.cycleCount){
     $('#countAdd').onclick=()=>scan('');
     $('#countSerial').onkeydown=event=>{if(event.key==='Enter')scan('');};
     $('#countCamera').onclick=()=>scanQrWithCamera(scan);
+    $('#countMobile').onclick=()=>openMobileCount(id,data);
     $('#submitCount').onclick=async()=>{
       try{await api(`/inventory/cycle-counts/${id}/submit`,{method:'POST',body:'{}'});toast('Cycle count submitted and variance report generated');await renderPhysicalCount(id);}
       catch(error){toast(error.message,'error');}
@@ -2445,15 +3478,40 @@ async function renderCycleVariances(countId=state.cycleCount){
     const id=Number(countId||register.rows.find(row=>Number(row.variance_units)>0)?.id||register.rows[0]?.id||0);
     const data=id?await api(`/inventory/cycle-counts/${id}`):null;
     const variance=id?await api(`/inventory/cycle-counts/${id}/variances`):{rows:[],total:0};
-    const rows=variance.rows.map(row=>`<tr><td>${esc(row.variance_type)}</td><td>${esc(row.item_code||'-')}</td><td>${esc(row.item_name||'-')}</td>
+    const isFinance=String(state.session.user.role||'').toUpperCase()==='FINANCE';
+    const rows=variance.rows.map(row=>`<tr><td>${isFinance?`<input type="checkbox" class="var-pick" value="${row.id||row.line_id||''}">`:''}${esc(row.variance_type)}</td><td>${esc(row.item_code||'-')}</td><td>${esc(row.item_name||'-')}</td>
       <td>${esc(row.expected_serial_no||'-')}</td><td>${esc(row.actual_serial_no||'-')}</td><td>${esc(row.count_location_code)}</td>
       <td>${esc(row.actual_location_code||'-')}</td><td>${esc(row.scanned_by||'-')}</td><td>${date(row.scanned_at)}</td></tr>`);
     const body=`<div class="workspace-commandbar"><label class="inline-control"><span>Count Plan</span><select id="varianceCountSelect"><option value="">Select count…</option>${register.rows.map(row=>`<option value="${row.id}" ${row.id===id?'selected':''}>${esc(row.count_no)} · ${esc(row.location_code)} · ${row.variance_units} variances</option>`).join('')}</select></label>
-      ${data?.header.status==='SUBMITTED'?'<button class="command primary" id="approveCount">Approve Count Report</button>':''}</div>
+      ${data?.header.status==='SUBMITTED'?'<button class="command primary" id="approveCount">Approve Count Report</button>':''}
+      ${isFinance&&variance.total?'<button class="command" id="financeOverride">Finance override</button>':''}
+      ${!isFinance&&variance.total?'<span class="workspace-mode">FINANCE OVERRIDE REQUIRED</span>':''}</div>
       <section class="workspace-card"><header><h2>Physical Count Variance Report</h2><span>${variance.total} discrepancies</span></header>
         ${operationalTable(['Variance','Item','Description','Expected Serial','Actual Serial','Count Location','Actual Location','Scanned By','Scanned At'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'reports');bindOperationalShell();
     $('#varianceCountSelect').onchange=event=>renderCycleVariances(Number(event.target.value));
+    if($('#financeOverride'))$('#financeOverride').onclick=()=>{
+      const picked=$$('.var-pick').filter(x=>x.checked).map(x=>Number(x.value)).filter(Boolean);
+      if(!picked.length)return toast('Tick the variance lines you are correcting.','error');
+      modal('Finance override',`<form id="ovForm" class="operational-form grid">
+        <label class="wide"><span>Correction</span><select name="resolution">
+          <option value="ACCEPT_SYSTEM">System record is correct - clear the variance</option>
+          <option value="ACCEPT_COUNT">Physical count is correct - keep for adjustment</option></select></label>
+        <label class="wide"><span>Remarks explaining the discrepancy</span><textarea name="remarks" required></textarea></label>
+        <div class="modal-actions wide"><button type="submit" class="command primary">Apply to ${picked.length} line(s)</button>
+          <button type="button" class="command" id="ovCancel">Cancel</button></div></form>`,
+        'Only Finance can override a physical count variance');
+      const mb=$('#modalBody');
+      mb.querySelector('#ovCancel').onclick=()=>closeModal();
+      mb.querySelector('#ovForm').onsubmit=async event=>{
+        event.preventDefault();const f=formDataObject(event.currentTarget);
+        try{
+          const r=await api(`/inventory/cycle-counts/${id}/override`,{method:'POST',body:JSON.stringify({
+            remarks:f.remarks,lines:picked.map(lineId=>({lineId,resolution:f.resolution}))})});
+          closeModal();toast(r.corrected+' variance line(s) corrected');await renderCycleVariances(id);
+        }catch(err){toast(err.message,'error');}
+      };
+    };
     if($('#approveCount'))$('#approveCount').onclick=async()=>{
       try{await api(`/inventory/cycle-counts/${id}/approve`,{method:'POST',body:'{}'});toast('Cycle-count report approved');await renderCycleVariances(id);}
       catch(error){toast(error.message,'error');}
@@ -2495,7 +3553,7 @@ async function renderRecordConsole(entityKey,search,includeInactive){
       var act='<button class="table-action" data-rec-edit="'+r.id+'">Edit</button>'+(data.hasActive?(isInactive?'<button class="table-action" data-rec-restore="'+r.id+'">Restore</button>':'<button class="table-action danger" data-rec-del="'+r.id+'">Delete</button>'):'');
       return '<tr'+(isInactive?' style="opacity:.5"':'')+'>'+tds+'<td>'+act+'</td></tr>';
     }).join('');
-    content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>Master Reference</h1><p>'+(cfg.financeAccess?'You have finance-level access - edits apply directly.':'Enter the edit passcode when prompted to save changes.')+' Delete deactivates a record (reversible via Restore). Every change is audited.</p></div><button class="command" id="recBack">&larr; Enterprise Modules</button></div>'+
+    content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>Master Reference</h1><p>'+(cfg.financeAccess?'You have finance-level access - edits apply directly.':'Enter the edit passcode when prompted to save changes.')+' Delete deactivates a record (reversible via Restore). Every change is audited.</p></div><button class="command" id="recBack">&larr; Blitz - ERP</button></div>'+
       '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">'+tabHtml+'</div>'+
       '<div class="workspace-commandbar"><input id="recSearch" placeholder="Search '+esc(ent.label)+'" value="'+esc(search||'')+'"><button class="command primary" id="recApply">Search</button><label class="inline-control" style="margin-left:10px"><input type="checkbox" id="recInactive" '+(includeInactive?'checked':'')+'> Include deactivated</label>'+(ent.create?'<button class="command" id="recAdd" style="margin-left:auto">+ Add '+esc(ent.label)+'</button>':'')+'</div>'+
       '<section class="workspace-card"><div class="record-table-wrap"><table class="record-table"><thead><tr>'+head+'</tr></thead><tbody>'+(body||'<tr><td colspan="'+(cols.length+1)+'" style="text-align:center;padding:20px;color:#64748b">No records.</td></tr>')+'</tbody></table></div></section></div>';
@@ -2620,7 +3678,7 @@ async function renderReportsHub(){
   const defs=reportsCatalog();
   const catHtml=cats.map(function(c){return '<section class="report-cat"><header><h2>'+c[0]+'</h2><span>'+defs.filter(d=>d.cat===c[1]).length+' reports</span></header><div class="report-grid">'+
     defs.filter(d=>d.cat===c[1]).map(d=>'<button class="report-card" data-report="'+esc(d.key)+'"><b>'+esc(d.title)+'</b><span>'+esc(d.desc||'')+'</span></button>').join('')+'</div></section>';}).join('');
-  content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>Reports &amp; Analytics</h1><p>Financial and operational reports across E88. Open a report to view it and export to Excel.</p></div><button class="command" id="reportsBack">&larr; Enterprise Modules</button></div>'+catHtml+'</div>';
+  content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>Reports &amp; Analytics</h1><p>Financial and operational reports across E88. Open a report to view it and export to Excel.</p></div><button class="command" id="reportsBack">&larr; Blitz - ERP</button></div>'+catHtml+'</div>';
   $('#reportsBack').onclick=renderLaunchpad;
   $$('[data-report]').forEach(b=>b.onclick=()=>renderReport(b.dataset.report));
 }
@@ -3103,7 +4161,7 @@ async function renderSalesOrderWorkspace(section){
       <td>${row.status==='DRAFT'&&can('SALES','APPROVE')?`<button class="table-action" data-approve-sales="${row.id}">Approve</button>`:'-'}</td></tr>`);
     if(section==='reports'){
       const types=['SALE','LEASE','DEMO','PILOT','EMPLOYEE_ASSIGNMENT'].map(type=>[type,rows.filter(row=>row.transaction_type===type).length]);
-      const body=`<div class="workspace-kpis">${kpi('Order Value',money(value))}${kpi('Orders',rows.length)}${kpi('Draft',drafts.length)}${kpi('Approved',approved.length)}</div>
+      const body=`<div class="workspace-kpis">${kpi('Orders',rows.length,{section:'records'})}${kpi('Draft',drafts.length,{match:'DRAFT'})}${kpi('Approved',approved.length,{match:'APPROVED'})}</div>
         <div class="setup-grid"><section class="workspace-card"><header><h2>Orders by Business Transaction</h2></header>${horizontalBars(types)}</section>
         <section class="workspace-card"><header><h2>Fulfilment Readiness</h2></header>${horizontalBars([['Draft',drafts.length,'orange'],['Approved',approved.length,'green'],['Posted',rows.filter(row=>row.status==='POSTED').length,'blue']])}</section></div>
         <section class="workspace-card"><header><h2>Sales Order Register</h2><span>${rows.length} orders</span></header>
@@ -3112,18 +4170,14 @@ async function renderSalesOrderWorkspace(section){
       return bindSalesOrderRows();
     }
     const center=section==='center';
-    const body=`${center?`<div class="workspace-kpis">${kpi('Order Value',money(value))}${kpi('Open Drafts',drafts.length)}
-      ${kpi('Approved for Fulfilment',approved.length)}${kpi('Motorcycles Available',(lookups.assets||[]).filter(a=>a.category==='MC'&&/^R5FBM/i.test(a.serial_no||'')).length)}${kpi('Batteries Available',(lookups.assets||[]).filter(a=>a.category==='BAT').length)}${kpi('Swap Stations Available',(lookups.assets||[]).filter(a=>a.category==='BSS').length)}</div>
+    const body=`${center?`<div class="workspace-kpis">${kpi('Open Drafts',drafts.length,{match:'DRAFT'})}
+      ${kpi('Approved for Fulfilment',approved.length,{match:'APPROVED'})}${kpi('Motorcycles Available',(lookups.assets||[]).filter(a=>a.category==='MC'&&/^R5FBM/i.test(a.serial_no||'')).length)}${kpi('Batteries Available',(lookups.assets||[]).filter(a=>a.category==='BAT').length)}${kpi('Swap Stations Available',(lookups.assets||[]).filter(a=>a.category==='BSS').length)}</div>
       ${workflowStrip(['CRM / Customer','Sales Order','Approval','Requisition & Allocation','Pre-release','Goods Issue / Delivery'],2)}`:''}
       <div class="workspace-commandbar"><button class="command primary" id="newSalesOrder" ${can('SALES','CREATE')?'':'disabled'}>New Sales Order</button>
         <span class="command-spacer"></span><span class="workspace-mode">${section==='approvals'?'ORDER APPROVAL':'CONNECTED ORDER REGISTER'}</span></div>
-      <div class="ramco-layout"><div class="ramco-main"><section class="workspace-card"><header><div><h2>${section==='approvals'?'Orders Requiring Approval':'Sales, Lease & Assignment Orders'}</h2>
-        <span>Reserved serials flow automatically to outbound logistics</span></div></header>
+      <div class="ramco-layout single"><div class="ramco-main"><section class="workspace-card"><header><div><h2>${section==='approvals'?'Orders Requiring Approval':'Sales, Lease & Assignment Orders'}</h2></div></header>
         ${operationalTable(['Order','Date','Type','Customer / Holder','Lines','Gross','Credit','Status','Action'],tableRows)}</section></div>
-        <aside class="ramco-rail"><section><header>Order Controls</header><div class="definition-list">
-          <div><b>Serial availability</b><span>Only clear, available inventory can be ordered.</span></div>
-          <div><b>Credit control</b><span>Blocked customers cannot be approved.</span></div>
-          <div><b>Connected fulfilment</b><span>Approval creates assignment and delivery records.</span></div></div></section></aside></div>`;
+        </div>`;
     content.innerHTML=workbenchShell(body,section);bindOperationalShell();
     $('#newSalesOrder').onclick=()=>openSalesOrderForm(lookups);
     bindSalesOrderRows();
@@ -3146,22 +4200,82 @@ function bindSalesOrderRows(){
       modal(`${data.header.sales_order_no} · ${data.header.customer_name}`,`${workflowStrip(['Order','Approval','Assignment','Delivery'],data.header.status==='DRAFT'?0:2)}
         <div class="workspace-kpis">${kpi('Type',data.header.transaction_type)}${kpi('Gross',money(data.header.gross_amount))}
           ${kpi('Deliveries',data.deliveries.length)}${kpi('Status',data.header.status)}</div>
-        ${operationalTable(['Line','Item','Description','Serial','Qty','Unit Price','Inventory Status'],lines)}`);
+        ${operationalTable(['Line','Item','Description','Serial','Qty','Unit Price','Inventory Status'],lines)}
+        ${data.header.status==='DRAFT'?`<div class="modal-actions"><button type="button" class="command primary" data-edit-so="${data.header.id}">Edit draft</button></div>`:''}`);
+      const editBtn=document.querySelector('[data-edit-so]');
+      if(editBtn)editBtn.onclick=()=>openSalesOrderEdit(data.header);
     }catch(error){toast(error.message,'error');}
   });
 }
 
+function openSalesOrderEdit(header){
+  modal('Edit draft '+(header.sales_order_no||''),`<form id="soEditForm" class="operational-form grid">
+    <label><span>Order Date</span><input name="orderDate" type="date" value="${esc((header.order_date||'').slice(0,10))}"></label>
+    <label><span>Transaction Type</span><select name="transactionType">${['SALE','LEASE','DEMO','PILOT','EMPLOYEE_ASSIGNMENT'].map(t=>`<option ${t===header.transaction_type?'selected':''}>${t}</option>`).join('')}</select></label>
+    <label><span>Contract Start</span><input name="contractStart" type="date" value="${esc((header.contract_start||'').slice(0,10))}"></label>
+    <label><span>Contract End</span><input name="contractEnd" type="date" value="${esc((header.contract_end||'').slice(0,10))}"></label>
+    <label><span>Rate per day</span><input name="ratePerDay" type="number" min="0" step="0.01" value="${esc(header.rate_per_day||'')}"></label>
+    <label class="wide"><span>Delivery / Deployment Address</span><input name="deliveryAddress" value="${esc(header.delivery_address||'')}"></label>
+    <div class="modal-actions wide"><button type="submit" class="command primary">Save draft</button><button type="button" class="command" id="soEditCancel">Cancel</button></div>
+  </form>`,'Drafts stay editable until they are submitted');
+  const mb=$('#modalBody');mb.querySelector('#soEditCancel').onclick=()=>closeModal();
+  mb.querySelector('#soEditForm').onsubmit=async event=>{
+    event.preventDefault();const body=formDataObject(event.currentTarget);
+    body.ratePerDay=Number(body.ratePerDay||0);
+    try{await api('/sales/'+header.id,{method:'PATCH',body:JSON.stringify(body)});closeModal();toast('Draft updated');await renderSalesOrderWorkspace(state.section);}
+    catch(error){toast(error.message,'error');}
+  };
+}
 function openSalesOrderForm(lookups){
   modal('New Connected Sales Order',`<form id="salesOrderForm" class="operational-form grid">
     <label><span>Transaction Type</span><select name="transactionType"><option>SALE</option><option>LEASE</option><option>DEMO</option><option>PILOT</option><option>EMPLOYEE_ASSIGNMENT</option></select></label>
     <label><span>Order Date</span><input name="orderDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></label>
-    <label class="wide"><span>Customer / Holder</span><select name="customerId" required><option value="">Select…</option>
-      ${[...lookups.customers,...lookups.employees].map(row=>`<option value="${row.id}">${esc(row.partner_code)} · ${esc(row.name)}${row.credit_status?` · ${esc(row.credit_status)}`:''}</option>`).join('')}</select></label>
+    <label class="wide"><span>Customer / Holder</span><div class="pick-with-add">
+      <select name="customerId" required><option value="">Select customer</option>
+      ${[...lookups.customers,...lookups.employees].map(row=>`<option value="${row.id}">${esc(row.partner_code)} · ${esc(row.name)}${row.credit_status?` · ${esc(row.credit_status)}`:''}</option>`).join('')}</select>
+      <button type="button" class="table-action" id="soAddCustomer">+ New customer</button></div></label>
     <label><span>Contract Start</span><input name="contractStart" type="date"></label><label><span>Contract End / Expected Return</span><input name="contractEnd" type="date"></label>
+    <label><span>Rate per day</span><input name="ratePerDay" type="number" min="0" step="0.01" placeholder="0.00"></label>
+    <label><span>Rate currency</span><select name="rateCurrency"><option>PHP</option><option>USD</option></select></label>
     <label class="wide"><span>Delivery / Deployment Address</span><input name="deliveryAddress" required></label>
-    <p class="form-note wide">Items and serial numbers are allocated later on the linked requisition, which drives the actual stock movement. This keeps the sales order as the commercial header.</p>
+    <label class="wide"><span>Signed contract / attachments</span><input id="soContract" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.docx,.doc"></label>
+    <div id="soContractList" class="po-doc-list wide"></div>
     <button class="command primary">Create Sales Order</button>
   </form>`);
+  const soFiles=[];
+  const soRender=()=>{const host=$('#soContractList');if(!host)return;
+    host.innerHTML=soFiles.length?soFiles.map((f,i)=>`<span class="po-doc-chip">${esc(f.name)} <button type="button" data-so-drop="${i}">&times;</button></span>`).join(''):'<span class="po-doc-empty">No contract attached</span>';
+    host.querySelectorAll('[data-so-drop]').forEach(b=>b.onclick=()=>{soFiles.splice(Number(b.dataset.soDrop),1);soRender();});};
+  soRender();
+  if($('#soContract'))$('#soContract').onchange=event=>{[...event.target.files].forEach(f=>{if(f.size<=5*1024*1024&&soFiles.length<5)soFiles.push(f);});event.target.value='';soRender();};
+  const soReadFiles=()=>Promise.all(soFiles.map(file=>new Promise(resolve=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,data:String(reader.result||'').split(',')[1]||''});
+    reader.onerror=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,data:''});
+    reader.readAsDataURL(file);})));
+  if($('#soAddCustomer'))$('#soAddCustomer').onclick=()=>{
+    const sel=$('#salesOrderForm select[name="customerId"]');
+    modal('New customer',`<form id="soNewCust" class="operational-form grid">
+      <label class="wide"><span>Customer name</span><input name="name" required></label>
+      <label><span>Contact person</span><input name="contactPerson"></label>
+      <label><span>Contact number</span><input name="contactNumber"></label>
+      <label class="wide"><span>Email</span><input name="email" type="email"></label>
+      <label class="wide"><span>Address</span><input name="address"></label>
+      <label><span>TIN</span><input name="tin"></label>
+      <label><span>Payment terms</span><input name="paymentTerms" placeholder="e.g. 30 days"></label>
+      <div class="modal-actions wide"><button type="submit" class="command primary">Add customer</button><button type="button" class="command" id="soNewCancel">Cancel</button></div>
+    </form>`);
+    const mb=$('#modalBody');mb.querySelector('#soNewCancel').onclick=()=>closeModal();
+    mb.querySelector('#soNewCust').onsubmit=async ev=>{
+      ev.preventDefault();const data=formDataObject(ev.currentTarget);
+      try{
+        const created=await api('/sales/customers',{method:'POST',body:JSON.stringify(data)});
+        const row=created.customer||created;
+        if(sel){const opt=document.createElement('option');opt.value=row.id;opt.textContent=(row.partner_code?row.partner_code+' · ':'')+(row.name||data.name);sel.append(opt);sel.value=String(row.id);}
+        closeModal();toast('Customer added');
+      }catch(err){toast(err.message,'error');}
+    };
+  };
   const addLine=()=>{
     const row=document.createElement('div');row.className='line-editor-row sales-line';
     row.innerHTML=`<select data-sales="itemId"><option value="">Item…</option>${lookups.items.map(item=>`<option value="${item.id}" data-code="${esc(item.item_code)}">${esc(item.item_code)} · ${esc(item.item_name)}</option>`).join('')}</select>
@@ -3177,6 +4291,8 @@ function openSalesOrderForm(lookups){
   $('#salesOrderForm').onsubmit=async event=>{
     event.preventDefault();const body=formDataObject(event.currentTarget);
     body.customerId=Number(body.customerId);
+    body.ratePerDay=Number(body.ratePerDay||0);
+    body.attachments=await soReadFiles();
     body.lines=[];
     try{const result=await api('/sales',{method:'POST',body:JSON.stringify(body)});closeModal();toast(`${result.salesOrderNo} created`);await renderSalesOrderWorkspace('records');}
     catch(error){toast(error.message,'error');}
@@ -3603,7 +4719,7 @@ function adminWorkbenchShell(body,active='users'){
   const tabs=[['users','Authorized Users'],['roles','Roles & Permissions'],['audit','Access Audit']];
   return `<section class="erp-workbench access-workbench">
     <header class="workbench-systembar">
-      <div><button class="admin-modules-home" title="Enterprise Modules">▦</button><span class="workbench-user-dot">●</span><b>${esc(user.displayName||user.email)}</b><small>${esc(user.role)}</small></div>
+      <div><button class="admin-modules-home" title="Blitz - ERP">▦</button><span class="workbench-user-dot">●</span><b>${esc(user.displayName||user.email)}</b><small>${esc(user.role)}</small></div>
       <div><span>INTERNAL</span><button class="admin-modules-home">Modules</button><button class="workbench-logout">Sign out</button></div>
     </header>
     <div class="workbench-modulebar">
@@ -3612,7 +4728,7 @@ function adminWorkbenchShell(body,active='users'){
     </div>
     <nav class="workbench-tabs">${tabs.map(([id,label])=>`<button data-admin-section="${id}" class="${active===id?'active':''}">${esc(label)}</button>`).join('')}</nav>
     <main class="workbench-canvas">${body}</main>
-    <footer class="workbench-footer"><span>Enterprise System</span><span>Controlled Module Access · © 2026 AL23</span></footer>
+    <footer class="workbench-footer"><span>Blitz - ERP</span><span>Controlled Module Access · © 2026 AL23</span></footer>
   </section>`;
 }
 function bindAdminWorkbench(){
@@ -3683,8 +4799,8 @@ function openUserForm(data,user=null,options={}){
   const selected=new Set(user?.allowed_workspace_modules||[]);
   const accessGroups=[
     ...state.catalog.groups,
-    {title:'Enterprise Tools',items:state.catalog.tools},
-    {title:'Enterprise Add-ons',items:state.catalog.addons},
+    {title:'Tools',items:state.catalog.tools},
+    {title:'Add-ons',items:state.catalog.addons},
   ];
   const groups=accessGroups.map(group=>`<fieldset class="access-group"><legend>${esc(group.title)}</legend>${group.items.map(item=>`<label><input type="checkbox" name="workspaceModules" value="${esc(item.code)}" ${selected.has(item.code)?'checked':''}><span>${esc(item.label)}</span></label>`).join('')}</fieldset>`).join('');
   const actionColumns=[
@@ -3849,14 +4965,14 @@ init();
   }
   function czWireRowInspector(){}
   function czPrintSlip(title,fields){
-    var brand=(S.branding&&S.branding.appTitle)||'Enterprise System';
+    var brand=(S.branding&&S.branding.appTitle)||'Blitz - ERP';
     var rows=fields.map(function(f){return '<tr><th>'+esc2(f.label)+'</th><td>'+esc2(f.value)+'</td></tr>';}).join('');
     var w=window.open('','_blank','width=840,height=920'); if(!w){alert('Please allow pop-ups to print.');return;}
     w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>'+esc2(title)+'</title><style>*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#17212b;padding:26px}header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0a2239;padding-bottom:10px;margin-bottom:16px}h1{font-size:18px;margin:0;color:#0a2239}.doc{margin-top:3px;color:#555;font-size:13px;font-weight:700}.meta{text-align:right;color:#666;font-size:11px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #c9d3db;padding:7px 10px;text-align:left;vertical-align:top}th{background:#eef2f6;width:220px;color:#334}.sign{display:flex;gap:34px;margin-top:52px}.sign>div{flex:1;border-top:1px solid #333;padding-top:6px;font-size:11px;color:#555;text-align:center}.bar{margin-top:22px}.bar button{padding:9px 18px;border:1px solid #0a2239;background:#0a2239;color:#fff;border-radius:4px;cursor:pointer;font-size:12px}@media print{.bar{display:none}}</style></head><body><header><div><h1>'+esc2(brand)+'</h1><div class="doc">'+esc2(title)+'</div></div><div class="meta">Printed '+new Date().toLocaleString()+'</div></header><table>'+rows+'</table><div class="sign"><div>Prepared by / Date</div><div>Approved by / Date</div><div>Received by / Date</div></div><div class="bar"><button onclick="window.print()">Print this document</button></div></body></html>');
     w.document.close();
   }
   function czDocHtml(opts){
-    var brand=(S.branding&&S.branding.appTitle)||'Enterprise System';
+    var brand=(S.branding&&S.branding.appTitle)||'Blitz - ERP';
     var meta=(opts.meta||[]).filter(function(m){return m&&m[1]!=null&&String(m[1]).trim()!==''&&String(m[1])!=='Invalid Date';}).map(function(m){return '<div><small>'+esc2(m[0])+'</small><b>'+esc2(m[1])+'</b></div>';}).join('');
     var lines='';
     if(opts.lineHead&&opts.lineRows&&opts.lineRows.length){
@@ -3877,7 +4993,7 @@ init();
       'table.lines{width:100%;border-collapse:collapse;margin:12px 0}table.lines th,table.lines td{border:1px solid #c9d3db;padding:6px 9px;text-align:left;font-size:11.5px}table.lines th{background:#eef2f6;color:#334}'+
       '.sign{display:flex;gap:34px;margin-top:56px}.sign>div{flex:1;border-top:1px solid #333;padding-top:6px;font-size:11px;color:#555;text-align:center}'+
       '.bar{margin-top:22px}.bar button{padding:9px 18px;border:1px solid #0a2239;background:#0a2239;color:#fff;border-radius:4px;cursor:pointer;font-size:12px}@media print{.bar{display:none}}'+
-      '</style></head><body><header><div class="brand" style="display:flex;align-items:center;gap:10px"><img src="'+location.origin+'/logo.png" alt="E88 Ventures" style="height:38px;width:auto"><div><h1>E88 Ventures Inc.</h1><small>'+esc2(opts.subtitle||'Enterprise System')+'</small></div></div>'+
+      '</style></head><body><header><div class="brand" style="display:flex;align-items:center;gap:10px"><img src="'+location.origin+'/logo.png" alt="E88 Ventures" style="height:38px;width:auto"><div><h1>E88 Ventures Inc.</h1><small>'+esc2(opts.subtitle||'Blitz - ERP')+'</small></div></div>'+
       '<div class="title"><h2>'+esc2(opts.title)+'</h2><small>Printed '+new Date().toLocaleString()+'</small></div></header>'+
       '<div class="meta">'+meta+'</div>'+purpose+lines+'<div class="sign">'+signs+'</div>'+
       '<div class="bar"><button onclick="window.print()">Print this document</button></div></body></html>';
@@ -3924,7 +5040,7 @@ init();
       'table.po{width:100%;border-collapse:collapse;margin:8px 0}table.po th,table.po td{border:1px solid #9fb4c8;padding:5px 7px}table.po th{background:#eef2f6}td.c{text-align:center}td.r,th.r{text-align:right}'+
       '.tot{display:flex;justify-content:flex-end;font-weight:700;margin-top:2px}.tot div{border:1px solid #9fb4c8;padding:5px 12px}'+
       '.rem{margin:8px 0;font-size:10.5px}.rem b{display:block}'+
-      '.sigs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-top:34px}.sg{text-align:center}.sgv{height:50px;display:flex;align-items:flex-end;justify-content:center}.sgv img{max-height:48px}.sgv .typed{font-family:cursive;font-size:18px}.sigline{width:100%;border-bottom:1px solid #333}.sgb b{display:block;font-size:10px;color:#556}.sgb div{font-weight:700;border-top:1px solid #333;padding-top:2px}.sgb small{color:#667}'+
+      '.sigs{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:34px}.sg{text-align:center}.sgv{height:50px;display:flex;align-items:flex-end;justify-content:center}.sgv img{max-height:48px}.sgv .typed{font-family:cursive;font-size:18px}.sigline{width:100%;border-bottom:1px solid #333}.sgb b{display:block;font-size:10px;color:#556}.sgb div{font-weight:700;border-top:1px solid #333;padding-top:2px}.sgb small{color:#667}'+
       '.foot{margin-top:24px;text-align:center;color:#667;font-size:10px;border-top:1px solid #cbd5e1;padding-top:6px}'+
       '.bar{margin-top:16px}.bar button{padding:8px 16px;background:#0a2239;color:#fff;border:0;border-radius:4px;cursor:pointer}@media print{.bar{display:none}}'+
       '</style></head><body>'+
@@ -3943,7 +5059,7 @@ init();
       '<table class="po"><thead><tr><th>Number</th><th>Particulars/Item Description</th><th>Remarks</th><th>Unit</th><th class="r">Unit Cost</th><th class="r">QTY</th><th class="r">Amount</th></tr></thead><tbody>'+rows+'</tbody></table>'+
       '<div class="tot"><div>Total Cost&nbsp;&nbsp;'+m(h.total_amount)+'</div></div>'+
       '<div class="rem"><b>Additional Remarks:</b><div>PAYMENT TERMS: '+esc2(doc.paymentTerms||h.payment_terms)+'</div><div>DELIVERY TERMS: '+esc2(doc.deliveryTerms||h.incoterm)+'</div>'+(doc.otherRemarks?('<div>OTHER REMARKS: '+esc2(doc.otherRemarks)+'</div>'):'')+'</div>'+
-      '<div class="sigs">'+sig('CREATOR','Requested by',doc.requestedByName,doc.requestedByTitle)+sig('FINANCE','Reviewed by',doc.financeName||'Mark Alexis Mungcal','Finance & Accounting Manager')+sig('CEO','Approved By',doc.ceoName,'Chief Executive Officer')+'</div>'+
+      '<div class="sigs">'+sig('CREATOR','Requested by',doc.requestedByName,doc.requestedByTitle)+sig('DEPT_MANAGER','Noted by',doc.deptManagerName,'Department Manager')+sig('DEPT_HEAD','Recommended by',doc.deptHeadName,'Department Head')+sig('FINANCE','Reviewed by',doc.financeName||'Mark Alexis Mungcal','Finance & Accounting Manager')+sig('CEO','Approved By',doc.ceoName,'Chief Executive Officer')+'</div>'+
       '<div class="foot">E88 Ventures, Inc. | 15 Brixton St., Kapitolyo, Pasig City 1603 Philippines</div>'+
       '<div class="bar"><button onclick="window.print()">Print this document</button></div></body></html>';
   }
@@ -3959,7 +5075,7 @@ init();
     var rt=String(r.request_type||'').toLowerCase(),pt=String(r.payment_type||'').toLowerCase(),mop=String(r.mode_of_payment||'').toLowerCase();
     var gross=Number(r.gross_amount||r.amount||0),ewt=Number(r.withholding_amount||0),net=Number(r.net_payable||(gross-ewt));
     var line='<tr>'+['<td style="'+bd+'">'+esc(czd(r.invoice_date||r.request_date))+'</td>','<td style="'+bd+'">'+esc(r.supplier_invoice_no||'')+'</td>','<td style="'+bd+'">'+esc(r.cost_center||'')+'</td>','<td style="'+bd+'">'+esc(r.purpose||'')+'</td>','<td style="'+bd+'">'+esc(r.gl_account||'')+'</td>','<td style="'+bd+';text-align:center">'+esc(r.uom||'-')+'</td>','<td style="'+bd+';text-align:center">1</td>','<td style="'+bd+';text-align:right">'+money2(net)+'</td>','<td style="'+bd+';text-align:right">'+money2(net)+'</td>'].join('')+'</tr>';
-    var sigCol=function(label,name,ts,title){return '<td style="border:1px solid #b9c0cf;padding:8px 6px;vertical-align:top;width:25%;text-align:center"><div style="font-size:10px;color:#333;margin-bottom:2px">'+label+'</div><div style="height:34px"></div><div style="font-size:16px;font-weight:bold;letter-spacing:1px;color:#15294B">'+esc(ts||'')+'</div><div style="border-top:1px solid #15294B;margin-top:2px;padding-top:3px;font-weight:bold;font-size:11px">'+esc(name||' ')+'</div><div style="font-size:10px;color:#445;font-style:italic">'+esc(title)+'</div></td>';};
+    var sigCol=function(label,name,ts,title){return '<td style="border:1px solid #b9c0cf;padding:8px 6px;vertical-align:top;width:25%;text-align:center"><div style="font-size:10px;color:#333;margin-bottom:2px">'+label+'</div><div style="height:34px"></div><div style="font-size:9.5px;font-weight:400;letter-spacing:.2px;color:#5a6577">'+esc(ts||'')+'</div><div style="border-top:1px solid #15294B;margin-top:2px;padding-top:3px;font-weight:bold;font-size:11px">'+esc(name||' ')+'</div><div style="font-size:10px;color:#445;font-style:italic">'+esc(title)+'</div></td>';};
     var reqName=r.requestor_name||r.requested_by||r.payee_name||'';
     return '<!doctype html><html><head><meta charset="utf-8"><title>Request for Payment '+esc(r.request_no||'')+'</title></head>'
      +'<body style="font-family:Arial,Helvetica,sans-serif;background:#eef1f5;margin:0;color:#222"><div style="max-width:1000px;margin:16px auto;background:#fff;padding:30px">'
@@ -4118,7 +5234,7 @@ init();
       .concat(BASE.groups.filter(g=>(S.groups[g.code]||{}).hidden).map(g=>['group',g.code,g.title]))
       .concat(BASE.groups.flatMap(g=>(g.items||[]).filter(it=>(S.items[it.code]||{}).hidden).map(it=>['item',it.code,it.label])));
     const hiddenHtml=hidden.length?`<div class="cz-hidden"><b>Hidden</b>${hidden.map(([t,code,label])=>`<button class="cz-show" data-t="${t}" data-code="${esc2(code)}">＋ ${esc2(label)}</button>`).join('')}</div>`:'';
-    modal('Customize Enterprise Modules',`
+    modal('Customize Blitz - ERP modules',`
       <style>
       .cz-toolbar{display:flex;gap:8px;margin-bottom:10px}.cz-toolbar input{flex:1;padding:7px;border:1px solid var(--line)}
       .cz-row{display:flex;align-items:center;gap:8px;padding:6px;border-bottom:1px solid var(--line)}
@@ -4173,7 +5289,7 @@ init();
     const b=S.branding||{};
     modal('Settings & Branding',`
       <div class="record-fields">
-        <label class="record-field"><span>Application title</span><input id="stTitle" value="${esc2(b.appTitle||'Enterprise Modules')}"></label>
+        <label class="record-field"><span>Application title</span><input id="stTitle" value="${esc2(b.appTitle||'Blitz - ERP')}"></label>
         <label class="record-field"><span>Footer text</span><input id="stFoot" value="${esc2(b.footer||'Finance Console · © 2026 AL23')}"></label>
         <label class="record-field"><span>Brand mark</span><input id="stMark" value="${esc2(b.brandMark||'E88')}"></label>
         <label class="record-field"><span>Theme</span><select id="stTheme"><option value="light" ${b.theme==='light'?'selected':''}>Light</option><option value="dark" ${b.theme==='dark'?'selected':''}>Dark</option></select></label>
@@ -4254,4 +5370,163 @@ init();
   // expose for debugging / advanced use
   // (removed) generic KPI-click per-class modal - each view now has its own inline analysis
   window.E88Custom={state:S,rebuild:buildCatalog,reset:()=>{localStorage.removeItem(LS);location.reload();}};
+})();
+
+/* ===================== BLITZ - ERP presentation layer ===================== */
+(function(){
+  var css=`
+  :root{--blitz-1:#0a2239;--blitz-2:#123a63;--blitz-3:#1e88e5;--blitz-accent:#ffc400;}
+
+  /* ---------- Login ---------- */
+  #login{min-height:100vh;position:relative;overflow:hidden;background:radial-gradient(1200px 700px at 12% -10%,#1b4f8a 0%,transparent 60%),radial-gradient(900px 600px at 100% 110%,#0e6b8f 0%,transparent 58%),linear-gradient(135deg,#061423 0%,#0a2239 45%,#123a63 100%);background-size:200% 200%;animation:blitzDrift 18s ease-in-out infinite;}
+  @keyframes blitzDrift{0%,100%{background-position:0% 50%,100% 50%,0% 50%}50%{background-position:100% 50%,0% 50%,100% 50%}}
+  #login:before{content:"";position:absolute;inset:-40% -20%;background:conic-gradient(from 0deg,transparent 0deg,rgba(30,136,229,.16) 40deg,transparent 90deg,rgba(255,196,0,.10) 160deg,transparent 220deg);animation:blitzSpin 26s linear infinite;pointer-events:none}
+  @keyframes blitzSpin{to{transform:rotate(360deg)}}
+  #authContent{position:relative;z-index:2}
+  /* the shell card is replaced by the Blitz card below */
+  #login .auth-card{background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;width:auto!important;max-width:none!important}
+  #login .auth-brand,#login .auth-copyright{display:none!important}
+  .blitz-auth{width:min(430px,92vw);margin:0 auto;background:rgba(255,255,255,.97);border-radius:18px;overflow:hidden;box-shadow:0 30px 70px rgba(0,0,0,.45);animation:blitzRise .5s cubic-bezier(.2,.8,.25,1) both}
+  .blitz-auth>*:not(.blitz-auth-brand){padding-left:26px;padding-right:26px}
+  .blitz-auth>.auth-links{padding-bottom:20px}
+  @keyframes blitzRise{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:none}}
+  .blitz-auth-brand{text-align:center;padding:22px 26px 18px;margin-bottom:6px;color:#fff;
+    background:radial-gradient(120% 140% at 50% -20%,#1b4f8a 0%,#0a2239 62%);position:relative;overflow:hidden}
+  .blitz-auth-brand:after{content:"";position:absolute;left:-30%;right:-30%;bottom:-70%;height:120%;
+    background:radial-gradient(closest-side,rgba(30,136,229,.35),transparent);animation:blitzGlow 5s ease-in-out infinite}
+  @keyframes blitzGlow{0%,100%{opacity:.5;transform:translateY(6px)}50%{opacity:1;transform:translateY(-4px)}}
+  .blitz-mark{display:block;position:relative;z-index:1;margin:0 auto;height:52px;width:auto;object-fit:contain;animation:blitzMark .7s cubic-bezier(.2,.8,.25,1) both}
+  @keyframes blitzMark{from{opacity:0;transform:translateY(-6px) scale(.94)}to{opacity:1;transform:none}}
+  .blitz-wordmark{position:relative;z-index:1;margin:12px 0 0;font-size:27px;letter-spacing:2px;font-weight:800;color:#fff;text-transform:uppercase}
+  .blitz-wordmark i{font-style:normal;color:#4fa8f5}
+  .blitz-tagline{position:relative;z-index:1;margin:3px 0 0;font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:rgba(255,255,255,.7)}
+  .blitz-auth .auth-heading{padding:16px 0 10px}
+  .blitz-auth .auth-heading h1{font-size:20px}
+  .blitz-charge{position:relative;z-index:1;display:flex;gap:5px;justify-content:center;margin-top:14px}
+  .blitz-charge i{width:26px;height:4px;border-radius:3px;background:rgba(255,255,255,.25);animation:blitzCharge 1.6s ease-in-out infinite}
+  .blitz-charge i:nth-child(2){animation-delay:.12s}.blitz-charge i:nth-child(3){animation-delay:.24s}
+  .blitz-charge i:nth-child(4){animation-delay:.36s}.blitz-charge i:nth-child(5){animation-delay:.48s}
+  @keyframes blitzCharge{0%,100%{background:rgba(255,255,255,.25)}50%{background:#4fa8f5;box-shadow:0 0 10px rgba(79,168,245,.7)}}
+  .blitz-scope{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:4px 0 14px}
+  .blitz-scope-btn{text-align:left;padding:9px 11px;border:1.5px solid #dbe4ee;border-radius:10px;background:#fff;cursor:pointer;transition:.16s}
+  .blitz-scope-btn b{display:block;font-size:12.5px;color:var(--blitz-1)}
+  .blitz-scope-btn small{display:block;font-size:10.5px;color:#7c8b9c;line-height:1.3;margin-top:2px}
+  .blitz-scope-btn:hover{border-color:#bcd0e4;transform:translateY(-1px)}
+  .blitz-scope-btn.active{border-color:var(--blitz-3);background:#f2f8ff;box-shadow:0 0 0 3px rgba(30,136,229,.12)}
+  .auth-submit{background:linear-gradient(135deg,var(--blitz-2),var(--blitz-3));border:0}
+
+  /* ---------- Launchpad brand ---------- */
+  .launchpad-brand{display:flex;align-items:center;gap:10px}
+  .launchpad-brand .brand-logo{height:36px;width:auto;background:transparent}
+  .launchpad-brand .brand-name{font-weight:800;letter-spacing:1.6px;text-transform:uppercase;font-size:16px}
+  .launchpad-brand .brand-name i{font-style:normal;color:var(--blitz-3)}
+  .launchpad-brand .brand-sub{color:#8496a8;font-size:10.5px;letter-spacing:1.4px;text-transform:uppercase;margin-left:2px}
+  .scope-chip{border:1px solid var(--blitz-3)!important;color:var(--blitz-3)!important;font-weight:700}
+
+  /* ---------- Freeze the module rail ---------- */
+  .enterprise-columns{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(228px,1fr))!important;align-items:start!important;gap:14px}
+  .enterprise-column{align-self:start}
+  .launchpad-controls{position:sticky;top:0;z-index:30;backdrop-filter:blur(6px)}
+  .workbench-headwrap{position:sticky;top:0;z-index:25;background:var(--panel,#fff);box-shadow:0 2px 10px rgba(10,34,57,.07)}
+  #nav{position:sticky;top:0;max-height:100vh;overflow:auto}
+
+  /* ---------- Clickable KPI cards ---------- */
+  .workspace-kpi.is-clickable{cursor:pointer;transition:transform .13s ease,box-shadow .13s ease,border-color .13s ease;position:relative}
+  .workspace-kpi.is-clickable:hover{transform:translateY(-2px);box-shadow:0 10px 22px rgba(10,34,57,.14);border-color:var(--blitz-3)}
+  .workspace-kpi.is-clickable:after{content:"\\2197";position:absolute;top:7px;right:9px;font-size:11px;color:#a9b8c8;opacity:0;transition:.13s}
+  .workspace-kpi.is-clickable:hover:after{opacity:1}
+  .workspace-kpi.is-clickable:focus-visible{outline:2px solid var(--blitz-3);outline-offset:2px}
+
+  /* ---------- Instructional notes removed everywhere ---------- */
+  .form-note,.password-rule,.control-note,.oe-detail,.ramco-rail .definition-list{display:none!important}
+
+  /* ---------- Signatures, attachments, pickers ---------- */
+  .sig-typed{font-family:"Segoe Script","Brush Script MT",cursive!important;font-size:22px!important;color:#15294B;letter-spacing:.5px}
+  .po-doc-list{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0}
+  .po-doc-chip{display:inline-flex;align-items:center;gap:6px;background:#eef4fb;border:1px solid #cfe0f2;border-radius:14px;padding:3px 10px;font-size:11.5px}
+  .po-doc-chip button{border:0;background:none;cursor:pointer;color:#8093a6;font-size:13px;line-height:1}
+  .po-doc-empty{font-size:11.5px;color:#93a3b4}
+  .pick-with-add{display:flex;gap:6px;align-items:center}
+  .pick-with-add select{flex:1}
+  .ramco-layout.single{grid-template-columns:1fr!important;display:grid}
+
+  /* ---------- Administration scope: configure, never approve ---------- */
+  body.scope-admin [data-workbench-section="approvals"],
+  body.scope-admin [data-section="approvals"],
+  body.scope-admin [data-approve-po],body.scope-admin [data-approve-sales],
+  body.scope-admin [data-approve-requisition],body.scope-admin [data-rfp-action],
+  body.scope-admin [data-release-delivery]{display:none!important}
+
+  /* ---------- Mobile receiving / counting ---------- */
+  .mobile-receive{display:flex;flex-direction:column;gap:10px}
+  .mobile-receive .mr-head label{display:block;font-size:11px;font-weight:700;color:#556}
+  .mobile-receive .mr-head select{width:100%;min-height:42px}
+  .mr-counter{display:flex;align-items:baseline;gap:8px;justify-content:center;padding:6px 0}
+  .mr-counter b{font-size:40px;line-height:1;color:var(--blitz-1)}
+  .mr-counter span{font-size:12px;color:#7c8b9c}
+  .mr-status{padding:10px 12px;border-radius:8px;background:#eef4fb;border:1px solid #d5e3f2;font-size:13px;min-height:44px}
+  .mr-status.good{background:#e9f8ee;border-color:#bde5c9}
+  .mr-status.bad{background:#fdeceb;border-color:#f3c4c0}
+  .mobile-receive input{min-height:44px;font-size:16px;width:100%}
+  .mr-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .mr-big{min-height:54px;font-size:15px;font-weight:700}
+  .mr-list{max-height:240px;overflow:auto;display:flex;flex-direction:column;gap:4px}
+  .mr-item{display:flex;justify-content:space-between;gap:10px;padding:6px 10px;border-radius:6px;font-size:12px}
+  .mr-item.good{background:#f1faf4;border-left:3px solid #35a25c}
+  .mr-item.bad{background:#fdf2f1;border-left:3px solid #d9544a}
+  .mr-empty{padding:10px;text-align:center;color:#93a3b4;font-size:12px}
+
+  /* ---------- ATLAS expected units ---------- */
+  small.atlas-key{display:block;font-size:10px;color:#93a3b4;font-weight:400;letter-spacing:.2px}
+  .chip-mini{display:inline-block;background:#eef4fb;border:1px solid #cfe0f2;border-radius:10px;padding:0 6px;font-size:10px;color:#4b6b8a}
+
+  /* ---------- Service Management ---------- */
+  .svc-job .record-fields{margin-bottom:10px}
+  .svc-labor-line{display:grid;grid-template-columns:1.4fr 1fr .6fr .7fr auto;gap:6px}
+  .svc-used-line,.svc-ret-line{display:grid;grid-template-columns:1.6fr .7fr auto;gap:8px;align-items:center}
+  .svc-ret-line{grid-template-columns:1.6fr .7fr 1fr}
+  .used-label{font-size:12px;color:#33475b}
+  .used-of{font-size:11px;color:#93a3b4}
+  .ret-pick{display:flex;align-items:center;gap:6px;font-size:12px}
+  .rd-line{display:grid;grid-template-columns:1fr 1fr 1fr 1.2fr;gap:6px}
+
+  /* ---------- Mobile / tablet ---------- */
+  @media (max-width:900px){
+    .blitz-scope{grid-template-columns:1fr}
+    .enterprise-columns{grid-template-columns:1fr!important}
+    .ramco-layout{display:block!important}
+    .ramco-rail{margin-top:14px}
+    .workspace-kpis{display:grid!important;grid-template-columns:repeat(2,1fr)!important;gap:8px}
+    .workspace-kpi strong{font-size:18px}
+    .operational-form.grid{display:grid!important;grid-template-columns:1fr!important}
+    .operational-form .wide{grid-column:1/-1}
+    .record-fields{display:grid!important;grid-template-columns:1fr!important}
+    .record-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+    .record-table{min-width:620px}
+    .workbench-tabs{overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch}
+    .workbench-tabs button{flex:0 0 auto}
+    .launchpad-controls{flex-wrap:wrap;gap:6px}
+    .line-editor-row,.po-line,.requisition-line,.sales-line,.svc-labor-line,.svc-used-line,.svc-ret-line,.rd-line,.liq-line{display:grid!important;grid-template-columns:1fr!important;gap:6px}
+    .mr-actions{grid-template-columns:1fr}
+    .mr-big{min-height:60px}
+    .modal-card,#modalBody{width:96vw!important;max-width:96vw!important}
+    button,.command,.table-action{min-height:38px}
+    input,select,textarea{font-size:16px}
+  }
+  @media (max-width:560px){
+    .workspace-kpis{grid-template-columns:1fr!important}
+    .blitz-wordmark{font-size:25px}
+  }
+  `;
+  var el=document.createElement('style');el.id='blitz-erp-style';el.textContent=css;
+  document.head.appendChild(el);
+  try{document.title='Blitz - ERP';}catch(e){}
+  document.addEventListener('DOMContentLoaded',function(){try{document.title='Blitz - ERP';}catch(e){}});
+  // KPI cards rendered outside bindWorkbench still become interactive
+  var kpiTimer=null;
+  var kpiObs=new MutationObserver(function(){
+    if(kpiTimer)return;
+    kpiTimer=setTimeout(function(){kpiTimer=null;try{if(typeof bindKpiCards==='function')bindKpiCards();}catch(e){}},150);
+  });
+  kpiObs.observe(document.body||document.documentElement,{childList:true,subtree:true});
 })();
