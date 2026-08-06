@@ -1,9 +1,9 @@
 {
   "name": "e88-finsys",
-  "version": "13.1.0",
+  "version": "15.0.0",
   "private": true,
   "type": "module",
-  "description": "E88 rollout-ready connected enterprise ERP v13.1 with exact item-class inventory and GitHub D1-only deployment. R2 document storage is intentionally disabled for this rollout.",
+  "description": "Blitz - ERP for E88 Ventures Inc. Connected enterprise ERP on Cloudflare Workers + D1, with Google Drive document storage and email-driven approval chains.",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "npm run predeploy && wrangler deploy",
@@ -11,13 +11,14 @@
     "test:unit": "node --test test/*.test.mjs",
     "test:integration": "node test/auth.integration.mjs",
     "test:data": "python scripts/self_test.py",
-    "test": "npm run test:unit && npm run test:data",
+    "test": "npm run test:unit && npm run test:e2e && npm run test:data",
     "build": "npm run check && npm test",
     "generate:data": "python scripts/generate_opening_data.py",
     "db:bootstrap:local": "node scripts/apply-database.mjs --local",
     "db:bootstrap:remote": "node scripts/apply-database.mjs --remote --confirm=E88_NEW_DATABASE",
     "smoke": "node scripts/smoke-test.mjs",
-    "predeploy": "node scripts/predeploy-guard.mjs"
+    "predeploy": "node scripts/predeploy-guard.mjs",
+    "test:e2e": "node test/blitz-e2e.mjs"
   },
   "dependencies": {
     "hono": "^4.6.14",
