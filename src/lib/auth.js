@@ -43,19 +43,43 @@ function isAuthorizedUser(user, env) {
   return !production || !!user.live_access;
 }
 
+// Idle timeout: a session dies after this many minutes with no API call, even
+// though the absolute 12-hour expiry has not been reached. Override per
+// deployment with the SESSION_IDLE_MINUTES setting or worker var.
+const DEFAULT_IDLE_MINUTES = 15;
+
+function idleMinutes(env) {
+  const raw = Number(env && env.SESSION_IDLE_MINUTES);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_IDLE_MINUTES;
+}
+
 async function userFromSession(c) {
   const token = readCookie(c.req.raw, 'e88_session');
   if (!token) return null;
   const tokenHash = await sha256(token);
-  const user = await first(c.env.DB,
-    `SELECT u.*, s.session_scope AS session_scope
+  const session = await first(c.env.DB,
+    `SELECT u.*, s.session_scope AS session_scope, s.last_seen_at AS last_seen_at,
+            s.created_at AS session_created_at
        FROM erp_sessions s
        JOIN erp_users u ON u.id=s.user_id
       WHERE s.token_hash=? AND julianday(s.expires_at)>julianday('now')`,
     [tokenHash]);
-  if (!isAuthorizedUser(user, c.env)) return null;
+  if (!session) return null;
+
+  // Inactivity check before anything else: an idle session is deleted outright,
+  // so the next request is a clean 401 and the browser returns to the login page.
+  const minutes = idleMinutes(c.env);
+  const lastSeen = session.last_seen_at || session.session_created_at;
+  if (lastSeen) {
+    const lastMs = Date.parse(String(lastSeen).replace(' ', 'T') + (String(lastSeen).endsWith('Z') ? '' : 'Z'));
+    if (Number.isFinite(lastMs) && Date.now() - lastMs > minutes * 60 * 1000) {
+      await run(c.env.DB, `DELETE FROM erp_sessions WHERE token_hash=?`, [tokenHash]);
+      return null;
+    }
+  }
+  if (!isAuthorizedUser(session, c.env)) return null;
   await run(c.env.DB, `UPDATE erp_sessions SET last_seen_at=datetime('now') WHERE token_hash=?`, [tokenHash]);
-  return user;
+  return session;
 }
 
 export async function loadUser(c) {
