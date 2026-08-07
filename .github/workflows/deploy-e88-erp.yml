@@ -120,6 +120,7 @@ jobs:
           npx wrangler d1 execute DB --remote --file=migrations/0041_people_and_roles.sql
           npx wrangler d1 execute DB --remote --file=migrations/0042_department_heads.sql
           npx wrangler d1 execute DB --remote --file=migrations/0043_finance_review.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0044_controls_and_count_chain.sql
 
       # ---------- Empty-database bootstrap (unchanged) ----------
       - name: Confirm D1 is empty before bootstrap
