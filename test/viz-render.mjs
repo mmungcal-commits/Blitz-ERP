@@ -10,6 +10,11 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mkdirSync } from 'node:fs';
+
+// Screenshots are evidence, not artefacts to commit - they live in an ignored dir.
+const SHOTS = fileURLToPath(new URL('./__screens__/', import.meta.url));
+mkdirSync(SHOTS, { recursive: true });
 
 const PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
 const TYPES = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.png':'image/png' };
@@ -159,7 +164,7 @@ check('every mark describes itself for hover and keyboard',
 
 check('no script errors', errors.length === 0, errors.slice(0,2).join(' | ') || 'clean');
 
-await page.screenshot({ path:'viz-cockpit.png', fullPage:false });
+await page.screenshot({ path:SHOTS+'viz-cockpit.png', fullPage:false });
 
 // And the same cockpit on a phone.
 const phone = await browser.newPage({ viewport:{ width:390, height:844 }, isMobile:true, hasTouch:true });
@@ -172,7 +177,7 @@ await phone.locator('[data-mtile="center"]').click();
 await phone.waitForSelector('.viz-tiles', { timeout:8000 });
 const phoneOverflow = await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 check('the cockpit fits a phone without sideways scroll', phoneOverflow <= 1, `${phoneOverflow}px`);
-await phone.screenshot({ path:'viz-cockpit-phone.png' });
+await phone.screenshot({ path:SHOTS+'viz-cockpit-phone.png' });
 
 await browser.close();
 server.close();

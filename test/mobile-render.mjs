@@ -11,6 +11,11 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mkdirSync } from 'node:fs';
+
+// Screenshots are evidence, not artefacts to commit - they live in an ignored dir.
+const SHOTS = fileURLToPath(new URL('./__screens__/', import.meta.url));
+mkdirSync(SHOTS, { recursive: true });
 
 const PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' };
@@ -133,7 +138,7 @@ check('the desktop still gets the enterprise map',
 
 check('no script errors on any screen', errors.length === 0, errors.join(' | ') || 'clean');
 
-await page.screenshot({ path: 'mobile-home.png' });
+await page.screenshot({ path: SHOTS+'mobile-home.png' });
 await browser.close();
 server.close();
 
