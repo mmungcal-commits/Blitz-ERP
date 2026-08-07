@@ -416,6 +416,18 @@ await t('a returned request restarts the chain', async()=>{
   return {note:'returned -> resubmitted -> DEPARTMENT signed again'};
 });
 
+await t('one person can head several departments', async()=>{
+  const rows=sqlite.prepare("SELECT department FROM erp_department_heads WHERE head_email='samuel@nrdev.ph' ORDER BY department").all();
+  const depts=rows.map(r=>r.department);
+  for(const d of ['Supply Chain','Logistics','Warehouse','After Sales','Operations & Product','Sales','Sales and Marketing']){
+    if(!depts.includes(d)) throw new Error('Samuel does not head '+d);
+  }
+  // Both spellings of Sales are present: erp_departments says 'Sales' while
+  // erp_users.department says 'Sales and Marketing', and the RFP carries either.
+  let vis; try{ who='samuel@nrdev.ph'; vis=await call('GET','/api/finance/payment-requests'); } finally { who='mmungcal@nrdev.ph'; }
+  if(vis.json?.visibility!=='DEPARTMENT') throw new Error('visibility '+vis.json?.visibility);
+  return {note:depts.length+' departments · visibility '+vis.json.visibility};
+});
 await t('the head of Finance approves Finance requests as its head', async()=>{
   const head=sqlite.prepare("SELECT head_email FROM erp_department_heads WHERE department='Finance and Accounting'").get();
   if(head?.head_email!=='mmungcal@nrdev.ph') throw new Error('Finance head is '+head?.head_email);
