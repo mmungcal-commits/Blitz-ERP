@@ -937,6 +937,73 @@ await t('a sales order carries its item lines and totals them', async()=>{
   return {note:'2 lines stored, gross 2,000, no serials assigned'};
 });
 
+await t('a collection is editable as a draft and frozen once posted', async()=>{
+  const made=await call('POST','/api/receivables/collections',{
+    stream:'MC_LEASED',txnDate:'2026-08-08',salesType:'Leased',documentNo:'OR-9001',
+    customerName:'JAMO BUSINESS SOLUTIONS',grossAmount:121706.59,vatType:'VATable',vatRate:0.12,
+    paymentMethod:'Bank Transfer',bankWallet:'BDO'});
+  if(!made.json?.ok) throw new Error(made.json?.error);
+  const id=made.json.id;
+
+  // VAT is derived from gross, never typed twice, so the parts always add up.
+  const a=sqlite.prepare('SELECT * FROM erp_ar_collections WHERE id=?').get(id);
+  if(Math.abs(a.net_amount-108666.60)>0.02) throw new Error('net '+a.net_amount);
+  if(Math.abs(a.output_vat-13039.99)>0.02) throw new Error('vat '+a.output_vat);
+  if(Math.abs((a.net_amount+a.output_vat)-a.gross_amount)>0.02) throw new Error('parts do not sum');
+  if(a.status!=='DRAFT') throw new Error('created as '+a.status);
+
+  // Editable while draft, and the VAT re-derives.
+  const ed=await call('PATCH','/api/receivables/collections/'+id,{grossAmount:200000});
+  if(!ed.json?.ok) throw new Error(ed.json?.error);
+  const b=sqlite.prepare('SELECT * FROM erp_ar_collections WHERE id=?').get(id);
+  if(Math.abs((b.net_amount+b.output_vat)-200000)>0.02) throw new Error('re-split wrong');
+
+  // Only Finance posts.
+  const prev=who;
+  try{
+    who='judy@nrdev.ph';
+    const nope=await call('POST','/api/receivables/collections/post',{ids:[id]});
+    if(nope.json?.ok) throw new Error('a non-Finance user posted a collection');
+  } finally { who=prev; }
+
+  const posted=await call('POST','/api/receivables/collections/post',{ids:[id]});
+  if(!posted.json?.ok) throw new Error(posted.json?.error);
+  if((posted.json.posted||[]).length!==1) throw new Error('posted '+JSON.stringify(posted.json));
+
+  // Posted is final: no more editing, no more deleting.
+  const late=await call('PATCH','/api/receivables/collections/'+id,{grossAmount:1});
+  if(late.json?.ok) throw new Error('a posted entry was edited');
+  const del=await call('DELETE','/api/receivables/collections/'+id);
+  if(del.json?.ok) throw new Error('a posted entry was deleted');
+
+  // It is corrected by voiding, with a reason that stays on the register.
+  const noReason=await call('POST',`/api/receivables/collections/${id}/void`,{});
+  if(noReason.json?.ok) throw new Error('voided with no reason');
+  const v=await call('POST',`/api/receivables/collections/${id}/void`,{reason:'duplicate receipt'});
+  if(!v.json?.ok) throw new Error(v.json?.error);
+  const c2=sqlite.prepare('SELECT status,void_reason FROM erp_ar_collections WHERE id=?').get(id);
+  if(c2.status!=='VOID'||c2.void_reason!=='duplicate receipt') throw new Error(JSON.stringify(c2));
+  return {note:'draft edits re-split VAT; Finance-only posting; posted is frozen and voided with a reason'};
+});
+
+await t('a sales order becomes a receivable, once', async()=>{
+  const cust=sqlite.prepare("SELECT id FROM erp_partners WHERE partner_type='CUSTOMER' LIMIT 1").get();
+  const so=await call('POST','/api/sales',{transactionType:'LEASE',customerId:cust.id,
+    orderDate:'2026-08-08',deliveryAddress:'Pasig',
+    lines:[{itemCode:'SP-0001',description:'Lease billing',qty:1,unitPrice:50000}]});
+  if(!so.json?.ok) throw new Error(so.json?.error);
+  const r=await call('POST','/api/receivables/from-sales-order/'+so.json.id,{});
+  if(!r.json?.ok) throw new Error(r.json?.error);
+  const link=sqlite.prepare('SELECT stream,sales_order_no,gross_amount,status FROM erp_ar_collections WHERE sales_order_id=?').get(so.json.id);
+  if(link.stream!=='MC_LEASED') throw new Error('stream '+link.stream);
+  if(Number(link.gross_amount)!==50000) throw new Error('gross '+link.gross_amount);
+  if(link.status!=='DRAFT') throw new Error('should arrive as a draft');
+  // The same order cannot be raised twice, or the month is counted twice.
+  const again=await call('POST','/api/receivables/from-sales-order/'+so.json.id,{});
+  if(again.json?.ok) throw new Error('the same order was raised twice');
+  return {note:'order '+link.sales_order_no+' -> receivable, drafted, and not duplicable'};
+});
+
 
 console.log('\n=== Blitz - ERP end-to-end ===');
 for (const [s, n, note] of results) console.log(`${s}  ${n}${note ? '  ·  ' + note : ''}`);

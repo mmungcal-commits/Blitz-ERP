@@ -161,12 +161,15 @@ check('every stat tile is clickable and points somewhere',
 // The activity trend spans every module, so it has no single home and stays
 // unclickable rather than pretending to lead somewhere.
 check('every card with a natural home is a way into it',
-  (await page.locator('.home-shell figure.viz-clickable').count()) === 3
-  && (await page.locator('.viz-open').count()) === 3,
+  (await page.locator('.home-shell figure.viz-clickable').count()) >= 3
+  && (await page.locator('.viz-open').count()) >= 3,
   (await page.locator('.viz-open').allTextContents()).join(' | '));
-check('a card that leads nowhere shows no false affordance',
-  (await page.locator('.home-shell figure.viz:not(.viz-clickable)').count()) === 1
-  && !(await page.locator('.home-shell figure.viz:not(.viz-clickable) .viz-open').count()));
+// Every card on the dashboard now leads somewhere, so the affordance and the
+// destination must agree exactly - no card claiming a link it does not have.
+check('every card that shows an Open affordance actually has a destination',
+  (await page.locator('.home-shell figure.viz .viz-open').count())
+    === (await page.locator('.home-shell figure.viz-clickable').count()),
+  `${await page.locator('.home-shell .viz-open').count()} affordances / ${await page.locator('.home-shell figure.viz-clickable').count()} clickable`);
 
 // Clicking a tile actually lands in the module, not just visually reacts.
 // A card opens the register the number came from, not the module's front page.
@@ -336,7 +339,13 @@ zeroHome = null;
  * is left alone in a full-width row. That is where it ballooned.
  */
 const SPARSE = JSON.parse(JSON.stringify(HOME));
-SPARSE.sections = { inventory:{ available:0, quarantine:0, unvalued:0, openCounts:2, variances:180, byClass:[] } };
+SPARSE.sections = {
+  inventory:{ available:0, quarantine:0, unvalued:0, openCounts:2, variances:180, byClass:[] },
+  management:{ period:{from:'2026-08-01',to:'2026-08-08'}, pendingApprovals:0, pendingApprovalValue:0,
+    pendingMine:0, availableUnits:0, leasedUnits:0, soldUnits:0, deployedUnits:0,
+    billed:0, collected:0, outstanding:0, invoices:0,
+    collectionPct:null, receivablesPct:null, overdue:0, overdueCount:0, aging:[] },
+};
 SPARSE.waiting = [];
 SPARSE.progress = null;
 SPARSE.trends = { all:{ series:[{label:'2026-08-02',value:1},{label:'2026-08-03',value:2},
@@ -356,10 +365,19 @@ check('the plot itself is bounded', svgBox.height <= 320, `${Math.round(svgBox.h
 
 // A daily tally is discrete: six quiet days then one busy one is a row of
 // empty columns and one tall one, not a flat line that suddenly climbs.
-check('daily activity is drawn as columns, not a line',
-  (await sparse.locator('.home-shell figure.viz .viz-bar path').count()) >= 1
-  && (await sparse.locator('.home-shell figure.viz path[stroke-width="2"]').count()) === 0,
-  `${await sparse.locator('.home-shell .viz-bar').count()} columns`);
+// The circles hold their place on an empty system: a card that vanishes reads
+// as a screen that failed to load, an empty ring reads as "none yet".
+check('the circles are still there when there is nothing in them',
+  (await sparse.locator('.home-shell .viz-donut.is-empty, .home-shell .viz-ring').count()) >= 4,
+  `${await sparse.locator('.home-shell .viz-donut, .home-shell .viz-ring').count()} circles`);
+check('an empty ring shows its track and no arc',
+  (await sparse.locator('.home-shell .viz-ring .viz-ring-arc').count()) === 0,
+  `${await sparse.locator('.home-shell .viz-ring').count()} rings, no arcs`);
+check('an empty donut draws a track and a zero, not an apology',
+  (await sparse.locator('.viz-donut.is-empty .viz-hero').first().textContent()).trim() === '0'
+  && (await sparse.locator('.home-shell').innerText()).indexOf('Nothing to show yet') === -1);
+check('the seven-day bar chart is gone',
+  (await sparse.locator('.home-shell').innerText()).indexOf('Activity across') === -1);
 
 // An empty system must say it is empty, not just show zeros.
 check('a dashboard of zeros explains itself',
