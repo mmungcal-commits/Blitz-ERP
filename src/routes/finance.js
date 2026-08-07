@@ -6,6 +6,9 @@ import { audit } from '../lib/audit.js';
 import { saveAttachments, attachmentsFor } from '../lib/attachments.js';
 import { sendMailQuiet, mailLayout, mailFacts, mailAttachments } from '../lib/mailer.js';
 import { nextCode, normalizeText } from '../lib/codes.js';
+import {
+  ACTION_STAGE, STAGE_ROLE, checkApproval, mancomMin, rfpFlag, requiredStages, nextStage,
+} from '../lib/rfp-rules.js';
 import { fixedAssetAccountsForCategory, inventoryAccountForCategory } from '../lib/transaction-rules.js';
 import {
   approveJournal,
@@ -561,7 +564,9 @@ async function rfpVisibility(c){
   const setting=await first(c.env.DB,`SELECT value FROM erp_settings WHERE key='RFP_PRIVACY_ENFORCED'`);
   if(String(setting?.value??'1')!=='1')return {where:'',args:[],level:'ALL'};
   const role=String(user.role_code||'').toUpperCase();
-  if(['FINANCE','CEO'].includes(role))return {where:'',args:[],level:'ALL'};
+  // MANCOM is an approval tier for the whole company, so it sees everything it
+  // may be asked to approve - same as Finance and the CEO.
+  if(['FINANCE','CEO','MANCOM','ADMIN','SUPER_ADMIN'].includes(role))return {where:'',args:[],level:'ALL'};
   if(['DEPT_HEAD','DEPT_MANAGER','SCM_MANAGER'].includes(role)){
     return {where:' AND (r.requestor_email=? OR r.department=?)',args:[user.email,user.department||''],level:'DEPARTMENT'};
   }
@@ -583,7 +588,10 @@ financeRoutes.get('/payment-requests', requirePermission('FINANCE', 'VIEW'), asy
     p.total_amount,p.tax_amount,p.payment_terms,p.status
     FROM erp_purchase_orders p WHERE p.status IN ('APPROVED','PARTIALLY_RECEIVED','RECEIVED')
     ORDER BY p.order_date DESC,p.id DESC LIMIT 1000`);
-  return ok(c,{rows,purchaseOrders,visibility:vis.level});
+  // The screen needs the MANCOM threshold to know which requests get the extra tier.
+  const min=await mancomMin(c.env.DB);
+  return ok(c,{rows,purchaseOrders,visibility:vis.level,mancomMin:min,
+    roleGate:await rfpFlag(c.env.DB,'rfp_role_gate','0')});
 });
 
 // One RFP with its Drive attachments and approval trail.
@@ -600,8 +608,36 @@ financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), 
   const liquidation=await first(c.env.DB,`SELECT * FROM erp_rfp_liquidations WHERE payment_request_id=?`,[id]);
   const signatures=await all(c.env.DB,`SELECT stage,decision,actor,actor_name,reason,signature,created_at
     FROM erp_rfp_approvals WHERE rfp_ref=? ORDER BY id`,[row.request_no]);
-  return ok(c,{request:row,attachments,liquidation:liquidation||null,signatures});
+  // Workflow position, so the screen knows whether MANCOM applies to this amount.
+  const min=await mancomMin(c.env.DB);
+  const workflow={mancomMin:min,mancomRequired:Number(row.net_payable||0)>=min,
+    stages:requiredStages(row.net_payable,min),nextStage:nextStage(row.net_payable,min,signatures),
+    attachmentsEditable:['DRAFT','RETURNED'].includes(String(row.status||'').toUpperCase())};
+  return ok(c,{request:row,attachments,liquidation:liquidation||null,signatures,workflow});
 });
+
+// RFP numbering, spec section 9: RFP-<DEPT><YEAR>-NNNN  e.g. RFP-OPS2026-0081.
+// The department code comes from erp_departments; anything unmatched is reduced to
+// its own letters so a free-typed department still produces a stable prefix.
+async function rfpNumber(db,department,requestDate){
+  const name=normalizeText(department);
+  let code='';
+  if(name){
+    const row=await first(db,`SELECT code FROM erp_departments
+      WHERE upper(code)=upper(?) OR upper(name)=upper(?) OR upper(name) LIKE upper(?)||'%'
+      ORDER BY length(name) LIMIT 1`,[name,name,name]);
+    code=normalizeText(row?.code);
+  }
+  if(!code){
+    const words=name.replace(/[^A-Za-z0-9 ]/g,' ').split(/\s+/).filter(Boolean);
+    code=words.length>1?words.map(w=>w[0]).join('').slice(0,4):(words[0]||'GEN').slice(0,4);
+  }
+  code=code.toUpperCase().replace(/[^A-Z0-9]/g,'')||'GEN';
+  const year=String(requestDate||'').slice(0,4).match(/^\d{4}$/)
+    ?String(requestDate).slice(0,4):new Date().toISOString().slice(0,4);
+  // One running sequence per department and year, so the NNNN restarts each year.
+  return await nextCode(db,`PAYMENT_REQUEST_${code}${year}`,`RFP-${code}${year}`,4);
+}
 
 financeRoutes.post('/payment-requests', requirePermission('FINANCE','CREATE'), async c=>{
   const b=await jsonBody(c);
@@ -620,14 +656,15 @@ financeRoutes.post('/payment-requests', requirePermission('FINANCE','CREATE'), a
   if(gross<=0)return fail(c,'Gross amount must be greater than zero.');
   const rawType=normalizeText(b.requestType||'Payment to Vendor');
   const isCashAdvance=/cash\s*advance/i.test(rawType);
-  const requestNo=await nextCode(c.env.DB,'PAYMENT_REQUEST','RFP',8);
+  const requestDate=b.requestDate||new Date().toISOString().slice(0,10);
+  const requestNo=await rfpNumber(c.env.DB,b.department,requestDate);
   const inserted=await run(c.env.DB,`INSERT INTO erp_payment_requests(
     request_no,entity_id,request_date,requestor_email,payee_partner_id,payee_name,department,
     cost_center,project_code,purpose,request_type,purchase_order_id,purchase_order_no,landed_cost_id,
     supplier_invoice_no,invoice_date,gross_amount,vat_amount,withholding_amount,net_payable,
     due_date,payment_method,status)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'DRAFT')`,[
-    requestNo,entity.id,b.requestDate||new Date().toISOString().slice(0,10),c.get('erpUser').email,
+    requestNo,entity.id,requestDate,c.get('erpUser').email,
     partner?.id||null,payee,normalizeText(b.department),normalizeText(b.costCenter),
     normalizeText(b.projectCode),normalizeText(b.purpose),normalizeText(b.requestType||'SUPPLIER_PAYMENT'),
     po?.id||null,po?.purchase_order_no||normalizeText(b.purchaseOrderNo),landedCost?.id||null,
@@ -659,6 +696,55 @@ financeRoutes.post('/payment-requests', requirePermission('FINANCE','CREATE'), a
     recordId:rfpId,recordNo:requestNo,after:{gross,vat,withholding,net,cashAdvance:isCashAdvance}});
   return ok(c,{id:rfpId,requestNo,netPayable:net,cashAdvance:isCashAdvance,
     attachments:attach.saved,attachmentErrors:attach.failed},201);
+});
+
+// ---------------------------------------------------------------------------
+// Supporting documents. Spec step 4: "attachments editable only while Draft."
+// A returned request is back in the requestor's hands, so it counts as editable
+// too - that is the whole point of returning it.
+// ---------------------------------------------------------------------------
+const RFP_EDITABLE=['DRAFT','RETURNED'];
+
+async function rfpForEdit(c,id){
+  const row=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
+  if(!row)return {error:'Payment request not found.',code:404};
+  if(!RFP_EDITABLE.includes(String(row.status||'').toUpperCase())){
+    return {error:`Supporting documents can only be changed while the request is a draft. This one is ${String(row.status).replace(/_/g,' ').toLowerCase()}.`,code:409};
+  }
+  const me=c.get('erpUser');
+  const role=String(me.role_code||'').toUpperCase();
+  if(row.requestor_email!==me.email&&!['FINANCE','CEO','ADMIN','SUPER_ADMIN'].includes(role)){
+    return {error:'You can only change documents on your own request.',code:403};
+  }
+  return {row};
+}
+
+financeRoutes.post('/payment-requests/:id/attachments', requirePermission('FINANCE','CREATE'), async c=>{
+  const id=Number(c.req.param('id'));
+  const {row,error,code}=await rfpForEdit(c,id);
+  if(error)return fail(c,error,code);
+  const b=await jsonBody(c);
+  if(!Array.isArray(b.attachments)||!b.attachments.length)return fail(c,'Choose at least one file to upload.');
+  const attach=await saveAttachments(c.env,c.env.DB,{moduleCode:'FINANCE',recordType:'PAYMENT_REQUEST',
+    recordId:id,recordNo:row.request_no,files:b.attachments,uploadedBy:c.get('erpUser').email});
+  await audit(c,{action:'ATTACH',module:'FINANCE',recordType:'PAYMENT_REQUEST',
+    recordId:id,recordNo:row.request_no,after:{files:attach.saved.length}});
+  return ok(c,{attachments:attach.saved,attachmentErrors:attach.failed});
+});
+
+financeRoutes.delete('/payment-requests/:id/attachments/:attachmentId', requirePermission('FINANCE','EDIT'), async c=>{
+  const id=Number(c.req.param('id'));
+  const {row,error,code}=await rfpForEdit(c,id);
+  if(error)return fail(c,error,code);
+  const attachmentId=Number(c.req.param('attachmentId'));
+  const att=await first(c.env.DB,`SELECT * FROM erp_attachments WHERE id=? AND record_type='PAYMENT_REQUEST' AND record_id=?`,
+    [attachmentId,id]);
+  if(!att)return fail(c,'Attachment not found on this request.',404);
+  // Soft delete: the file stays in Drive, it is simply no longer part of the RFP.
+  await run(c.env.DB,`UPDATE erp_attachments SET active=0 WHERE id=?`,[attachmentId]);
+  await audit(c,{action:'DETACH',module:'FINANCE',recordType:'PAYMENT_REQUEST',
+    recordId:id,recordNo:row.request_no,before:{file:att.file_name}});
+  return ok(c,{removed:att.file_name});
 });
 
 // Who to email at each stage. Roles are resolved from erp_users so no addresses
@@ -698,17 +784,47 @@ async function notifyRfp(c,request,{to,cc,title,subject,intro,extraFacts,footer}
 financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','EDIT'), async c=>{
   const id=Number(c.req.param('id'));const b=await jsonBody(c);
   const action=normalizeText(b.action).toUpperCase();const user=c.get('erpUser').email;
+  // Row-level privacy applies to acting on a request, not only to listing them:
+  // without this a requestor could act on someone else's RFP by guessing the id.
+  const vis=await rfpVisibility(c);
   const request=await first(c.env.DB,`SELECT r.*,e.entity_code FROM erp_payment_requests r
-    JOIN erp_legal_entities e ON e.id=r.entity_id WHERE r.id=?`,[id]);
+    JOIN erp_legal_entities e ON e.id=r.entity_id WHERE r.id=?${vis.where}`,[id,...vis.args]);
   if(!request)return fail(c,'Payment request not found.',404);
+  // Only the requestor (or Finance) puts a request into the chain.
+  if(action==='SUBMIT'&&request.requestor_email!==user
+     &&!['FINANCE','CEO','ADMIN','SUPER_ADMIN'].includes(String(c.get('erpUser').role_code||'').toUpperCase())){
+    return fail(c,'Only the requestor can submit this request for payment.',403);
+  }
+  // Does this amount need the MANCOM tier? (spec section 4)
+  const min=await mancomMin(c.env.DB);
+  const mancomRequired=Number(request.net_payable||0)>=min;
   try{
     const permission=await permissionFor(c.env.DB,c.get('erpUser'),'FINANCE');
-    if(['DEPARTMENT_APPROVE','FINANCE_VALIDATE','FINAL_APPROVE'].includes(action)&&!permission.can_approve){
+    if(Object.keys(ACTION_STAGE).includes(action)&&!permission.can_approve){
       return fail(c,'Approval permission is required.',403);
     }
     if(action==='MARK_PAID'&&!permission.can_post)return fail(c,'Posting permission is required.',403);
+
+    // ---- spec section 5, enforced before anything is written -------------
+    // e-signature mandatory, separation of duties, role gate, no double sign.
+    if(ACTION_STAGE[action]){
+      const stage=ACTION_STAGE[action];
+      const trail=await all(c.env.DB,`SELECT stage,decision,actor FROM erp_rfp_approvals WHERE rfp_ref=?`,
+        [request.request_no]);
+      const refusal=checkApproval({
+        stage,actorEmail:user,actorRole:String(c.get('erpUser').role_code||'').toUpperCase(),
+        submittedBy:request.requestor_email,amount:request.net_payable,min,
+        signature:b.signature,trail,
+        requireSignature:await rfpFlag(c.env.DB,'rfp_require_signature','1'),
+        enforceRoleGate:await rfpFlag(c.env.DB,'rfp_role_gate','0'),
+        enforceSod:await rfpFlag(c.env.DB,'rfp_separation_of_duties','1'),
+      });
+      if(refusal)return fail(c,refusal.msg,refusal.code);
+    }
+
     if(action==='SUBMIT'){
-      if(request.status!=='DRAFT')throw new Error('Only a draft request can be submitted.');
+      // A returned request goes back to the requestor and is resubmitted from here.
+      if(!['DRAFT','RETURNED'].includes(request.status))throw new Error('Only a draft or returned request can be submitted.');
       await run(c.env.DB,`UPDATE erp_payment_requests SET status='SUBMITTED',updated_at=datetime('now') WHERE id=?`,[id]);
     }else if(action==='DEPARTMENT_APPROVE'){
       if(request.status!=='SUBMITTED')throw new Error('Request is not awaiting department approval.');
@@ -719,8 +835,18 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
       if(request.status!=='DEPARTMENT_APPROVED')throw new Error('Department approval is required first.');
       await run(c.env.DB,`UPDATE erp_payment_requests SET status='FINANCE_VALIDATED',
         finance_validated_by=?,finance_validated_at=datetime('now'),updated_at=datetime('now') WHERE id=?`,[user,id]);
-    }else if(action==='FINAL_APPROVE'){
+    }else if(action==='MANCOM_APPROVE'){
+      // Spec section 4: this tier exists only at or above the threshold.
+      if(!mancomRequired)throw new Error(`MANCOM approval only applies to requests of PHP ${min.toLocaleString('en-US')} or more.`);
       if(request.status!=='FINANCE_VALIDATED')throw new Error('Finance validation is required first.');
+      await run(c.env.DB,`UPDATE erp_payment_requests SET status='MANCOM_APPROVED',updated_at=datetime('now') WHERE id=?`,[id]);
+    }else if(action==='FINAL_APPROVE'){
+      if(mancomRequired){
+        if(request.status!=='MANCOM_APPROVED')
+          throw new Error(`This request is PHP ${Number(request.net_payable).toLocaleString('en-US')} and needs MANCOM approval before final approval.`);
+      }else if(request.status!=='FINANCE_VALIDATED'){
+        throw new Error('Finance validation is required first.');
+      }
       if(request.requestor_email===user||request.finance_validated_by===user){
         throw new Error('Final approval must be performed by a different authorized user.');
       }
@@ -811,19 +937,25 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
       await run(c.env.DB,`UPDATE erp_payment_requests SET status='PAID',paid_by=?,
         paid_at=datetime('now'),updated_at=datetime('now') WHERE id=?`,[user,id]);
     }else if(action==='RETURN'||action==='CANCEL'||action==='REJECT'){
-      if(['PAID','REJECTED'].includes(request.status))throw new Error('This request can no longer be returned.');
-      const reason=normalizeText(b.reason||b.notes)||'No reason given';
-      await run(c.env.DB,`UPDATE erp_payment_requests SET status='REJECTED',updated_at=datetime('now') WHERE id=?`,[id]);
-      await run(c.env.DB,`INSERT INTO erp_rfp_approvals(rfp_ref,stage,decision,actor,reason,amount)
-        VALUES(?,?,?,?,?,?)`,[request.request_no,String(request.status),'RETURNED',user,reason,request.net_payable]);
+      if(['PAID','REJECTED','CANCELLED'].includes(request.status))throw new Error('This request can no longer be returned.');
+      // Spec section 6: the reason is mandatory and no signature is required.
+      const reason=normalizeText(b.reason||b.notes);
+      if(!reason)throw new Error('A reason is required. Pick a reason and add your remarks.');
+      // RETURN sends it back to the requestor to correct and resubmit;
+      // REJECT and CANCEL are terminal.
+      const newStatus=action==='RETURN'?'RETURNED':action==='CANCEL'?'CANCELLED':'REJECTED';
+      await run(c.env.DB,`UPDATE erp_payment_requests SET status=?,updated_at=datetime('now') WHERE id=?`,[newStatus,id]);
+      await run(c.env.DB,`INSERT INTO erp_rfp_approvals(rfp_ref,stage,decision,actor,actor_name,reason,amount)
+        VALUES(?,?,?,?,?,?,?)`,[request.request_no,String(request.status),'RETURNED',user,
+        c.get('erpUser').display_name||user,reason,request.net_payable]);
       request.__returnReason=reason;
     }else return fail(c,'Unsupported payment-request action.');
     const after=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
     // ---- e-signature trail ---------------------------------------------
     // Draw or type: DRAW arrives as a PNG data URL, TYPE as the signer's name.
-    if(normalizeText(b.signature)){
+    if(normalizeText(b.signature)&&!['RETURN','CANCEL','REJECT'].includes(action)){
       const stageMap={SUBMIT:'REQUESTOR',DEPARTMENT_APPROVE:'DEPARTMENT',FINANCE_VALIDATE:'FINANCE',
-        FINAL_APPROVE:'FINAL',MARK_PAID:'PAYMENT',CONFIRM_PAID:'PROOF'};
+        MANCOM_APPROVE:'MANCOM',FINAL_APPROVE:'FINAL',MARK_PAID:'PAYMENT',CONFIRM_PAID:'PROOF'};
       await run(c.env.DB,`INSERT INTO erp_rfp_approvals(rfp_ref,stage,decision,actor,actor_name,reason,signature,amount)
         VALUES(?,?,?,?,?,?,?,?)`,[request.request_no,stageMap[action]||action,'APPROVED',user,
         c.get('erpUser').display_name||user,normalizeText(b.notes),
@@ -836,6 +968,7 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
     const deptHeads=await roleEmails(c.env.DB,c.env,['DEPT_HEAD','DEPT_MANAGER'],dept);
     const finance=await roleEmails(c.env.DB,c.env,['FINANCE'],'');
     const ceo=await roleEmails(c.env.DB,c.env,['CEO'],'');
+    const mancom=await roleEmails(c.env.DB,c.env,['MANCOM'],'');
     let notified=null;
     try{
       if(action==='SUBMIT'){
@@ -849,10 +982,22 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
           subject:`Finance review: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
           intro:`The Department Head approved this request. It is now with Finance for review.`});
       }else if(action==='FINANCE_VALIDATE'){
+        // Above the threshold the request goes to MANCOM first, not straight to the CEO.
+        notified=mancomRequired
+          ?await notifyRfp(c,after,{to:mancom.length?mancom:ceo,cc:[...finance,...requestor],
+            title:'Finance validated - MANCOM approval required',
+            subject:`MANCOM approval: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
+            intro:`Finance validated this request. Because it is ${rfpMoney(after.net_payable)}, at or above the MANCOM threshold of ${rfpMoney(min)}, it needs MANCOM approval before it reaches the CEO.`,
+            extraFacts:[['MANCOM threshold',rfpMoney(min)]]})
+          :await notifyRfp(c,after,{to:ceo,cc:[...finance,...requestor],
+            title:'Finance validated - CEO approval required',
+            subject:`CEO approval: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
+            intro:`Finance validated this request. It is below the MANCOM threshold of ${rfpMoney(min)}, so it now needs final CEO approval.`});
+      }else if(action==='MANCOM_APPROVE'){
         notified=await notifyRfp(c,after,{to:ceo,cc:[...finance,...requestor],
-          title:'Finance validated - CEO approval required',
+          title:'MANCOM approved - CEO approval required',
           subject:`CEO approval: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
-          intro:`Finance validated this request. It now needs final CEO approval.`});
+          intro:`MANCOM approved this request. It now needs final CEO approval.`});
       }else if(action==='FINAL_APPROVE'){
         notified=await notifyRfp(c,after,{to:finance,cc:[...requestor,...deptHeads],
           title:'CEO approved - ready for payment',

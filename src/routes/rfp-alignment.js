@@ -4,39 +4,33 @@
 // proof of payment. Self-contained: talks to D1 directly (c.env.DB) and returns JSON,
 // so it does not depend on the exact signatures of the shared lib helpers.
 //
-// INTEGRATION POINTS (marked TODO) your tech should confirm on review:
-//   1. actor(c): where the signed-in user comes from (adjust to your auth middleware).
-//   2. Mount in src/index.js the same way financeRoutes is mounted (see INSTALL.md).
+// Mounted in src/index.js alongside financeRoutes: app.route('/api/finance', rfpAlignmentRoutes).
 import { Hono } from 'hono';
+import {
+  requiredStages, checkApproval, nextStage,
+  mancomMin as mancomMinFor, rfpFlag,
+} from '../lib/rfp-rules.js';
 
 export const rfpAlignmentRoutes = new Hono();
 
-const ORDER = ['DEPARTMENT', 'FINANCE', 'MANCOM', 'FINAL'];
-const STAGE_ROLE = { DEPARTMENT: 'DEPTHEAD', FINANCE: 'FINANCE', MANCOM: 'MANCOM', FINAL: 'CEO' };
-
-// TODO(auth): map to your session/user shape. Falls back gracefully.
+// The signed-in user. src/lib/auth.js puts the erp_users row on the context as
+// 'erpUser'; the other keys are fallbacks so this module still works if it is
+// lifted into another app. Resolving this is what makes the role gate and the
+// separation-of-duties checks below real rather than decorative.
 function actor(c) {
-  const s = c.get('session') || c.get('user') || c.get('auth') || {};
+  const s = c.get('erpUser') || c.get('session') || c.get('user') || c.get('auth') || {};
   return {
-    email: (s.email || s.user || s.username || 'system').toLowerCase(),
-    name: s.name || s.fullName || s.email || 'system',
-    role: String(s.role || s.roleCode || s.role_code || '').toUpperCase(),
+    email: String(s.email || s.user || s.username || 'system').toLowerCase(),
+    name: s.display_name || s.name || s.full_name || s.fullName || s.email || 'system',
+    role: String(s.role_code || s.role || s.roleCode || '').toUpperCase(),
   };
 }
 const db = (c) => c.env.DB;
-async function mancomMin(c) {
-  const r = await db(c).prepare("SELECT value FROM erp_rfp_settings WHERE key='mancom_min'").first();
-  return Number((r && r.value) || 100000);
-}
+const mancomMin = (c) => mancomMinFor(db(c));
 async function approvalsFor(c, ref) {
   const r = await db(c).prepare('SELECT stage,decision,actor,actor_name,reason,signature,created_at FROM erp_rfp_approvals WHERE rfp_ref=? ORDER BY id').bind(ref).all();
   return r.results || [];
 }
-// Which stages are required for this amount (MANCOM only above the threshold).
-function requiredStages(amount, min) {
-  return ORDER.filter(s => s !== 'MANCOM' || Number(amount) >= Number(min));
-}
-
 // GET /rfp/:ref/workflow  — current approval trail + whether MANCOM applies
 rfpAlignmentRoutes.get('/rfp/:ref/workflow', async (c) => {
   const ref = c.req.param('ref');
@@ -54,33 +48,24 @@ rfpAlignmentRoutes.post('/rfp/:ref/approve', async (c) => {
   const b = await c.req.json().catch(() => ({}));
   const me = actor(c);
   const stage = String(b.stage || '').toUpperCase();
-  if (!ORDER.includes(stage)) return c.json({ ok: false, msg: 'Unknown approval stage.' }, 400);
-  if (!b.signature || !String(b.signature).trim()) return c.json({ ok: false, msg: 'An e-signature is required to approve.' }, 400);
-
   const min = await mancomMin(c);
   const amount = Number(b.amount || 0);
-  if (stage === 'MANCOM' && amount < min)
-    return c.json({ ok: false, msg: `MANCOM approval only applies to amounts of ${min} or more.` }, 400);
-  // role gate (Admin may act on any stage)
-  if (me.role && me.role !== 'ADMIN' && STAGE_ROLE[stage] && me.role !== STAGE_ROLE[stage])
-    return c.json({ ok: false, msg: `This stage requires the ${STAGE_ROLE[stage]} role.` }, 403);
-
   const trail = await approvalsFor(c, ref);
-  // separation of duties
-  if (b.submittedBy && String(b.submittedBy).toLowerCase() === me.email)
-    return c.json({ ok: false, msg: 'You cannot approve an RFP you submitted (separation of duties).' }, 403);
-  if (trail.some(t => t.decision === 'APPROVED' && String(t.actor || '').toLowerCase() === me.email))
-    return c.json({ ok: false, msg: 'You already signed an earlier stage of this RFP (separation of duties).' }, 403);
-  if (trail.some(t => t.stage === stage && t.decision === 'APPROVED'))
-    return c.json({ ok: false, msg: `This RFP is already approved at ${stage}.` }, 409);
+
+  const refusal = checkApproval({
+    stage, actorEmail: me.email, actorRole: me.role, submittedBy: b.submittedBy,
+    amount, min, signature: b.signature, trail,
+    requireSignature: await rfpFlag(db(c), 'rfp_require_signature', '1'),
+    enforceRoleGate: await rfpFlag(db(c), 'rfp_role_gate', '0'),
+    enforceSod: await rfpFlag(db(c), 'rfp_separation_of_duties', '1'),
+  });
+  if (refusal) return c.json({ ok: false, msg: refusal.msg }, refusal.code);
 
   await db(c).prepare('INSERT INTO erp_rfp_approvals(rfp_ref,stage,decision,actor,actor_name,signature,amount) VALUES(?,?,?,?,?,?,?)')
-    .bind(ref, stage, 'APPROVED', me.email, me.name, String(b.signature), amount).run();
+    .bind(ref, stage, 'APPROVED', me.email, me.name, String(b.signature).slice(0, 300000), amount).run();
 
-  const need = requiredStages(amount, min);
-  const done = (await approvalsFor(c, ref)).filter(t => t.decision === 'APPROVED').map(t => t.stage);
-  const next = need.find(s => !done.includes(s)) || null;
-  return c.json({ ok: true, stage, nextStage: next, fullyApproved: !next });
+  const next = nextStage(amount, min, await approvalsFor(c, ref));
+  return c.json({ ok: true, stage, nextStage: next, fullyApproved: !next, stages: requiredStages(amount, min) });
 });
 
 // POST /rfp/:ref/return  { stage, reason }  — reason is mandatory
