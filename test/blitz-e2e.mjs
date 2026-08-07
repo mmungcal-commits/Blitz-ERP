@@ -180,7 +180,11 @@ await t('requestor cannot self-approve', async()=>{
 });
 await t('two approvers post the movement', async()=>{
   sqlite.exec("INSERT OR IGNORE INTO erp_users(email,display_name,role_code,active) VALUES('judy@nrdev.ph','Judy','SCM_MANAGER',1)");
-  sqlite.exec("INSERT OR IGNORE INTO erp_users(email,display_name,role_code,active) VALUES('samuel@nrdev.ph','Samuel','SCM_MANAGER',1)");
+  // Samuel is SCM_HEAD in the live database (0041). That migration's UPDATE runs
+  // before this seed, so it must be set here too or he silently loses the
+  // approval rights the DEPARTMENT stage needs.
+  sqlite.exec("INSERT OR IGNORE INTO erp_users(email,display_name,role_code,department,active) VALUES('samuel@nrdev.ph','Samuel Kniazeff','SCM_HEAD','Supply Chain',1)");
+  sqlite.exec("UPDATE erp_users SET role_code='SCM_HEAD',department='Supply Chain' WHERE email='samuel@nrdev.ph'");
   try{
     who='judy@nrdev.ph';
     const a=await call('POST',`/api/inventory/move-requests/${globalThis.__slip}/approve`,{});
@@ -273,6 +277,8 @@ sqlite.exec("UPDATE erp_rfp_settings SET value='1' WHERE key='rfp_mancom_enabled
 sqlite.exec(`
   INSERT OR IGNORE INTO erp_users(email,display_name,role_code,active) VALUES
     ('head@nrdev.ph','Dept Head','DEPT_HEAD',1),
+    ('rhonrado@nrdev.ph','Rucel Mae Honrado','FINANCE_REVIEWER',1),
+    ('checker@nrdev.ph','Finance Checker','FINANCE_REVIEWER',1),
     ('fin2@nrdev.ph','Second Finance','FINANCE',1),
     ('mancom@nrdev.ph','MANCOM Member','MANCOM',1),
     ('ceo@nrdev.ph','Chief Executive','CEO',1);
@@ -342,6 +348,9 @@ await t('MANCOM applies at or above the threshold', async()=>{
   // Department and Finance are cleared by two different people.
   const dep=await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'DEPARTMENT_APPROVE',signature:'Mark Alexis Mungcal'});
   if(!dep.json?.ok) throw new Error(dep.json?.error);
+  let chk; try{ who='checker@nrdev.ph'; chk=await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'FINANCE_REVIEW',signature:'Finance Checker'}); }
+  finally { who='mmungcal@nrdev.ph'; }
+  if(!chk.json?.ok) throw new Error('finance check: '+chk.json?.error);
   let fin; try{ who='fin2@nrdev.ph'; fin=await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'FINANCE_VALIDATE',signature:'Second Finance'}); }
   finally { who='mmungcal@nrdev.ph'; }
   if(!fin.json?.ok) throw new Error(fin.json?.error);
@@ -416,6 +425,50 @@ await t('a returned request restarts the chain', async()=>{
   return {note:'returned -> resubmitted -> DEPARTMENT signed again'};
 });
 
+await t('Finance checks before the head of Finance approves', async()=>{
+  const r=sqlite.prepare("SELECT role_code FROM erp_users WHERE email='rhonrado@nrdev.ph'").get();
+  if(r?.role_code!=='FINANCE_REVIEWER') throw new Error('Rucel is '+r?.role_code);
+  const perm=sqlite.prepare("SELECT can_approve,can_create FROM erp_role_permissions WHERE role_code='FINANCE_REVIEWER' AND module='FINANCE'").get();
+  if(perm.can_approve) throw new Error('the checker was given approval rights');
+  if(!perm.can_create) throw new Error('the checker cannot raise her own request');
+
+  sqlite.exec("INSERT OR IGNORE INTO erp_users(email,display_name,role_code,department,active) VALUES('ops1@nrdev.ph','Ops Staff','STAFF','Supply Chain',1)");
+  const ent=sqlite.prepare('SELECT entity_code FROM erp_legal_entities LIMIT 1').get();
+  let made; try{ who='ops1@nrdev.ph'; made=await call('POST','/api/finance/payment-requests',{entityCode:ent.entity_code,
+    payeeName:'Courier Co',department:'Supply Chain',purpose:'Courier charges',grossAmount:4100,supplierInvoiceNo:'CC-771'});
+    await call('POST',`/api/finance/payment-requests/${made.json.id}/action`,{action:'SUBMIT'});
+  } finally { who='mmungcal@nrdev.ph'; }
+  const rid=made.json.id;
+  const w0=(await call('GET',`/api/finance/payment-requests/${rid}`)).json.workflow;
+  if(!w0.stages.includes('FINANCE_REVIEW')) throw new Error('stages '+w0.stages.join('>'));
+
+  let dep; try{ who='samuel@nrdev.ph'; dep=await call('POST',`/api/finance/payment-requests/${rid}/action`,{action:'DEPARTMENT_APPROVE',signature:'Samuel Kniazeff'}); }
+  finally { who='mmungcal@nrdev.ph'; }
+  if(!dep.json?.ok) throw new Error('DEPT: '+dep.json?.error);
+
+  // The head of Finance cannot approve before Finance has checked it.
+  const early=await call('POST',`/api/finance/payment-requests/${rid}/action`,{action:'FINANCE_VALIDATE',signature:'Mark Alexis Mungcal'});
+  if(early.json?.ok) throw new Error('head of Finance approved before the check');
+  if(!/checked/i.test(early.json.error||'')) throw new Error('wrong reason: '+early.json.error);
+
+  let chk; try{ who='rhonrado@nrdev.ph'; chk=await call('POST',`/api/finance/payment-requests/${rid}/action`,{action:'FINANCE_REVIEW',signature:'Rucel Mae Honrado'}); }
+  finally { who='mmungcal@nrdev.ph'; }
+  if(!chk.json?.ok) throw new Error('CHECK: '+chk.json?.error);
+  if(chk.json.request.status!=='FINANCE_REVIEWED') throw new Error('status '+chk.json.request.status);
+
+  // Having checked it she cannot also approve it.
+  let both; try{ who='rhonrado@nrdev.ph'; both=await call('POST',`/api/finance/payment-requests/${rid}/action`,{action:'FINANCE_VALIDATE',signature:'Rucel Mae Honrado'}); }
+  finally { who='mmungcal@nrdev.ph'; }
+  if(both.json?.ok) throw new Error('the checker also approved');
+
+  const fin=await call('POST',`/api/finance/payment-requests/${rid}/action`,{action:'FINANCE_VALIDATE',signature:'Mark Alexis Mungcal'});
+  if(!fin.json?.ok) throw new Error('HEAD: '+fin.json?.error);
+  const w=(await call('GET',`/api/finance/payment-requests/${rid}`)).json.workflow;
+  if(w.nextStage!=='FINAL') throw new Error('next '+w.nextStage);
+  const trail=(await call('GET',`/api/finance/payment-requests/${rid}`)).json.signatures.map(x=>x.stage);
+  if(!trail.includes('FINANCE_REVIEW')) throw new Error('the check is not on the printed trail');
+  return {note:w0.stages.join(' > ')+' · checker blocked from approving'};
+});
 await t('one person can head several departments', async()=>{
   const rows=sqlite.prepare("SELECT department FROM erp_department_heads WHERE head_email='samuel@nrdev.ph' ORDER BY department").all();
   const depts=rows.map(r=>r.department);

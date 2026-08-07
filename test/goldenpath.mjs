@@ -28,11 +28,13 @@ for (const f of readdirSync(join(ROOT, 'migrations')).filter(f => /^0\d+.*\.sql$
 sqlite.exec(`
   INSERT OR IGNORE INTO erp_users(email,display_name,role_code,department,active,admin_access) VALUES
     ('mmungcal@nrdev.ph','Mark Alexis Mungcal','FINANCE','Finance and Accounting',1,1),
-    ('rhonrado@nrdev.ph','Rucel Mae Honrado','FINANCE','Finance and Accounting',1,0),
+    ('rhonrado@nrdev.ph','Rucel Mae Honrado','FINANCE_REVIEWER','Finance and Accounting',1,0),
+    ('fin2@nrdev.ph','Second Finance','FINANCE','Finance and Accounting',1,0),
     ('judy@nrdev.ph','Judy Joy Rosare','SCM_MANAGER','Supply Chain',1,0),
     ('samuel@nrdev.ph','Samuel Kniazeff','SCM_HEAD','Supply Chain',1,0),
     ('erapatan@nrdev.ph','Emmanuelle Rapatan','STAFF','Sales and Marketing',1,0);
   UPDATE erp_users SET role_code='SCM_HEAD',department='Supply Chain' WHERE email='samuel@nrdev.ph';
+  UPDATE erp_users SET role_code='FINANCE_REVIEWER' WHERE email='rhonrado@nrdev.ph';
   INSERT OR IGNORE INTO erp_locations(code,name,location_type) VALUES('WH-MAIN','Main Warehouse','WAREHOUSE');
   -- The vendor master record. Finance picks the payee from this droplist rather
   -- than free-typing a name, which is what links the RFP to the subledger.
@@ -69,7 +71,8 @@ const NAMES = {
   'samuel@nrdev.ph': 'Samuel Kniazeff (Department Head, Supply Chain)',
   'mmungcal@nrdev.ph': 'Mark Alexis Mungcal (Finance)',
   'francis@nrdev.ph': 'Francis (CEO)',
-  'rhonrado@nrdev.ph': 'Rucel Mae Honrado (Finance)',
+  'rhonrado@nrdev.ph': 'Rucel Mae Honrado (Finance, checker)',
+  'fin2@nrdev.ph': 'Second Finance',
 };
 let step = 0, failed = 0;
 function log(who, what, detail) {
@@ -82,7 +85,7 @@ function boom(what, err) { failed += 1; console.log(`\n  ✗ ${what}\n    ${err}
 
 console.log('='.repeat(74));
 console.log(' Blitz - ERP  ·  golden path');
-console.log(' Requestor -> Department Head -> Finance -> CEO -> Payment -> Proof');
+console.log(' Requestor -> Dept Head -> Finance check -> Head of Finance -> CEO -> Paid');
 console.log('='.repeat(74));
 
 // ---------------------------------------------------------------- configuration
@@ -149,10 +152,29 @@ const twoStages = await as('samuel@nrdev.ph', 'POST', `/api/finance/payment-requ
 log('samuel@nrdev.ph', 'Try to also sign the Finance stage', twoStages?.ok ? '!! ALLOWED' : twoStages.error);
 if (twoStages?.ok) failed += 1;
 
+const headEarly = await as('mmungcal@nrdev.ph', 'POST', `/api/finance/payment-requests/${id}/action`, {
+  action: 'FINANCE_VALIDATE', signature: 'Mark Alexis Mungcal' });
+log('mmungcal@nrdev.ph', 'Try to approve as head of Finance before it has been checked',
+  headEarly?.ok ? '!! ALLOWED' : headEarly.error);
+if (headEarly?.ok) failed += 1;
+
+const chk = await as('rhonrado@nrdev.ph', 'POST', `/api/finance/payment-requests/${id}/action`, {
+  action: 'FINANCE_REVIEW', signature: 'Rucel Mae Honrado', signatureType: 'TYPE',
+  notes: 'Quotation, invoice and department approval all present.' });
+if (!chk?.ok) boom('finance check', chk?.error);
+else log('rhonrado@nrdev.ph', 'Finance checks the documents and the department approval',
+  `status ${chk.request.status} · head of Finance notified`);
+
+const checkerApproves = await as('rhonrado@nrdev.ph', 'POST', `/api/finance/payment-requests/${id}/action`, {
+  action: 'FINANCE_VALIDATE', signature: 'Rucel Mae Honrado' });
+log('rhonrado@nrdev.ph', 'Try to approve the request she just checked',
+  checkerApproves?.ok ? '!! ALLOWED' : checkerApproves.error);
+if (checkerApproves?.ok) failed += 1;
+
 const fin = await as('mmungcal@nrdev.ph', 'POST', `/api/finance/payment-requests/${id}/action`, {
-  action: 'FINANCE_VALIDATE', signature: 'Mark Alexis Mungcal', signatureType: 'TYPE', notes: 'Invoice, PO and OR checked.' });
-if (!fin?.ok) boom('finance validation', fin?.error);
-else log('mmungcal@nrdev.ph', 'Finance validation', `status ${fin.request.status} · CEO notified`);
+  action: 'FINANCE_VALIDATE', signature: 'Mark Alexis Mungcal', signatureType: 'TYPE', notes: 'Approved for payment.' });
+if (!fin?.ok) boom('head of Finance approval', fin?.error);
+else log('mmungcal@nrdev.ph', 'Head of Finance approval', `status ${fin.request.status} · CEO notified`);
 
 const wf = await as('mmungcal@nrdev.ph', 'GET', `/api/finance/payment-requests/${id}`);
 log('mmungcal@nrdev.ph', 'Check what is still outstanding', `stages ${wf.workflow.stages.join(' > ')} · next ${wf.workflow.nextStage} · attachments locked: ${!wf.workflow.attachmentsEditable}`);
@@ -179,7 +201,10 @@ async function postJournalFor(docId, label) {
   if (!doc?.journal_id) return `no journal on ${label}`;
   const j = doc.journal_id;
   const st = () => sqlite.prepare('SELECT journal_no,status,created_by,submitted_by FROM erp_journal_headers WHERE id=?').get(j);
-  const FIN = ['mmungcal@nrdev.ph', 'rhonrado@nrdev.ph'];
+  // Whoever counter-signs a journal must be able to POST it. Rucel checks RFPs
+  // but holds no ledger posting rights, so the second signer has to be another
+  // Finance approver.
+  const FIN = ['mmungcal@nrdev.ph', 'fin2@nrdev.ph'];
   const preparer = st().created_by;
   const submitter = FIN.find(u => u !== preparer) || FIN[0];
   if (st().status === 'DRAFT') await as(submitter, 'POST', `/api/finance/journals/${j}/action`, { action: 'SUBMIT' });
@@ -251,6 +276,7 @@ if (early?.ok) failed += 1;
 
 await as('judy@nrdev.ph', 'POST', `/api/finance/payment-requests/${ca.id}/action`, { action: 'SUBMIT', signature: 'Judy Joy Rosare' });
 await as('samuel@nrdev.ph', 'POST', `/api/finance/payment-requests/${ca.id}/action`, { action: 'DEPARTMENT_APPROVE', signature: 'Samuel Kniazeff' });
+await as('rhonrado@nrdev.ph', 'POST', `/api/finance/payment-requests/${ca.id}/action`, { action: 'FINANCE_REVIEW', signature: 'Rucel Mae Honrado' });
 await as('mmungcal@nrdev.ph', 'POST', `/api/finance/payment-requests/${ca.id}/action`, { action: 'FINANCE_VALIDATE', signature: 'Mark Alexis Mungcal' });
 const caCeo = await as('francis@nrdev.ph', 'POST', `/api/finance/payment-requests/${ca.id}/action`, { action: 'FINAL_APPROVE', signature: 'Francis' });
 log('francis@nrdev.ph', 'Advance approved through the same chain', caCeo?.ok ? `status ${caCeo.request.status}` : caCeo.error);
