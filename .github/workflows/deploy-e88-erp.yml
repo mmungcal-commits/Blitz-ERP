@@ -125,6 +125,7 @@ jobs:
           npx wrangler d1 execute DB --remote --file=migrations/0046_sales_register_2026.sql
           npx wrangler d1 execute DB --remote --file=migrations/0047_ar_collections_received.sql
           npx wrangler d1 execute DB --remote --file=migrations/0048_preferred_names.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0049_ar_statements.sql
 
       # ---------- Empty-database bootstrap (unchanged) ----------
       - name: Confirm D1 is empty before bootstrap
