@@ -65,6 +65,42 @@ dashboardRoutes.get('/home', async (c) => {
     can[m] = !!(await permissionFor(db, user, m)).can_view;
   }
 
+  /*
+   * A management report needs a period. Default to month-to-date, because that
+   * is the question somebody actually opens this with; ?from=&to= overrides it.
+   */
+  const today = new Date().toISOString().slice(0,10);
+  const monthStart = today.slice(0,8) + '01';
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(c.req.query('from')||'') ? c.req.query('from') : monthStart;
+  const to   = /^\d{4}-\d{2}-\d{2}$/.test(c.req.query('to')||'')   ? c.req.query('to')   : today;
+
+  /*
+   * The dashboard leads with what this department actually runs on. Permission
+   * still decides what may be shown at all; department decides the order, so
+   * Finance opens on the money and the warehouse opens on the stock.
+   */
+  const dept = String(user.department || '').toUpperCase();
+  const FOCUS = {
+    FINANCE:            ['management','finance','inventory','procurement','service'],
+    ACCOUNTING:         ['management','finance','inventory','procurement'],
+    'SUPPLY CHAIN':     ['inventory','procurement','service','management'],
+    LOGISTICS:          ['inventory','procurement','service'],
+    WAREHOUSE:          ['inventory','procurement'],
+    OPERATIONS:         ['inventory','service','procurement','management'],
+    'AFTER SALES':      ['service','inventory','procurement'],
+    'SALES AND MARKETING':['service','inventory','finance'],
+    SALES:              ['service','inventory','finance'],
+    HR:                 ['management'],
+    TECH:               ['inventory','service'],
+  };
+  const BY_ROLE = {
+    CEO:      ['management','finance','inventory','procurement','service'],
+    MANCOM:   ['management','finance','inventory'],
+    FINANCE:  ['management','finance','inventory','procurement','service'],
+    SCM_HEAD: ['inventory','procurement','service','management'],
+  };
+  const focus = FOCUS[dept] || BY_ROLE[role] || ['inventory','procurement','finance','service','management'];
+
   const sections = {};
   const num = r => Number((r && (r.n ?? r.total)) || 0);
   // A dashboard is a summary, not a transaction. If one panel's query fails -
@@ -109,6 +145,61 @@ dashboardRoutes.get('/home', async (c) => {
       all(db,   `SELECT status label, COUNT(*) value FROM erp_payment_requests GROUP BY status ORDER BY value DESC`),
     ]);
     sections.finance = { open:num(rfpOpen), mine:num(rfpMine), byStage:byStage||[] };
+  });
+
+  /*
+   * Finance reads this as a management report, so it wants position and rate
+   * side by side: what is out on lease, what has been sold, what is still
+   * available, and how much of what was billed has actually come in.
+   *
+   * Collection % is cash against what was billed in the period. Receivables %
+   * is what is still outstanding on it. They are two halves of the same number,
+   * from the same rows, so they cannot disagree.
+   */
+  if (can.FINANCE) await attempt('management', async () => {
+    const AR = `('CUSTOMER_INVOICE','LEASE_BILLING')`;
+    const [units, billed, outstanding, overdue, aging] = await Promise.all([
+      first(db, `SELECT
+          COUNT(CASE WHEN current_status IN ('AVAILABLE','IN_STOCK','AVAILABLE_FOR_SALE','AVAILABLE_FOR_LEASE') THEN 1 END) available,
+          COUNT(CASE WHEN current_status IN ('LEASED','ON_LEASE') THEN 1 END) leased,
+          COUNT(CASE WHEN current_status='SOLD' THEN 1 END) sold,
+          COUNT(CASE WHEN current_status IN ('DEMO','PILOT_TEST','ASSIGNED','EMPLOYEE_ASSIGNED','INTERNAL_ASSIGNED') THEN 1 END) deployed
+        FROM erp_assets WHERE active=1`),
+      first(db, `SELECT COALESCE(SUM(gross_amount),0) v, COUNT(*) n FROM erp_subledger_documents
+        WHERE document_type IN ${AR} AND status<>'CANCELLED' AND document_date BETWEEN ? AND ?`, [from, to]),
+      first(db, `SELECT COALESCE(SUM(open_balance),0) v FROM erp_subledger_documents
+        WHERE document_type IN ${AR} AND status<>'CANCELLED' AND document_date BETWEEN ? AND ?`, [from, to]),
+      first(db, `SELECT COALESCE(SUM(open_balance),0) v, COUNT(*) n FROM erp_subledger_documents
+        WHERE document_type IN ${AR} AND status<>'CANCELLED' AND open_balance>0
+          AND due_date IS NOT NULL AND due_date<>'' AND due_date < date('now')`),
+      all(db, `SELECT
+          CASE WHEN due_date IS NULL OR due_date='' OR due_date>=date('now') THEN 'Current'
+               WHEN due_date>=date('now','-30 days') THEN '1-30 days'
+               WHEN due_date>=date('now','-60 days') THEN '31-60 days'
+               WHEN due_date>=date('now','-90 days') THEN '61-90 days'
+               ELSE 'Over 90 days' END label,
+          COALESCE(SUM(open_balance),0) value
+        FROM erp_subledger_documents
+        WHERE document_type IN ${AR} AND status<>'CANCELLED' AND open_balance>0
+        GROUP BY label`),
+    ]);
+    const billedV = Number(billed?.v || 0);
+    const openV = Number(outstanding?.v || 0);
+    const collected = Math.max(0, billedV - openV);
+    sections.management = {
+      period: { from, to },
+      availableUnits: Number(units?.available || 0),
+      leasedUnits: Number(units?.leased || 0),
+      soldUnits: Number(units?.sold || 0),
+      deployedUnits: Number(units?.deployed || 0),
+      billed: billedV, collected, outstanding: openV, invoices: Number(billed?.n || 0),
+      // Undefined, not zero, when nothing was billed - 0% collection on no
+      // invoices would read as a failure rather than as no activity.
+      collectionPct: billedV > 0 ? (collected / billedV) * 100 : null,
+      receivablesPct: billedV > 0 ? (openV / billedV) * 100 : null,
+      overdue: Number(overdue?.v || 0), overdueCount: Number(overdue?.n || 0),
+      aging: aging || [],
+    };
   });
 
   if (can.CUSTOMERS) await attempt('service', async () => {
@@ -186,7 +277,7 @@ dashboardRoutes.get('/home', async (c) => {
   });
 
   return ok(c, { user:{ name:user.display_name||user.email, role, email:user.email },
-    sections, waiting, activity, trends: trends||{}, progress: progress||null, failures });
+    period:{from,to}, department:dept||null, focus, sections, waiting, activity, trends: trends||{}, progress: progress||null, failures });
 });
 
 dashboardRoutes.get('/detail/:metric', async (c) => {
