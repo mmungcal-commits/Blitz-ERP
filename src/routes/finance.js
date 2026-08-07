@@ -10,6 +10,9 @@ import {
   ACTION_STAGE, STAGE_ROLE, STAGE_ROLE_ALIASES, checkApproval, mancomMin, rfpFlag,
   requiredStages, nextStage,
 } from '../lib/rfp-rules.js';
+
+// Finance checks every request before it reaches the head of Finance.
+const financeReviewOn=db=>rfpFlag(db,'rfp_finance_review','1');
 import { fixedAssetAccountsForCategory, inventoryAccountForCategory } from '../lib/transaction-rules.js';
 import {
   approveJournal,
@@ -591,7 +594,9 @@ async function rfpVisibility(c){
   const role=String(user.role_code||'').toUpperCase();
   // MANCOM is an approval tier for the whole company, so it sees everything it
   // may be asked to approve - same as Finance and the CEO.
-  if(['FINANCE','CEO','MANCOM','ADMIN','SUPER_ADMIN'].includes(role))return {where:'',args:[],level:'ALL'};
+  // FINANCE_REVIEWER checks every request before it reaches the head of Finance,
+  // so like Finance, MANCOM and the CEO she has to be able to see them all.
+  if(['FINANCE','FINANCE_REVIEWER','CEO','MANCOM','ADMIN','SUPER_ADMIN'].includes(role))return {where:'',args:[],level:'ALL'};
   // Anyone who approves at the DEPARTMENT stage must be able to SEE their
   // department's requests, or the approval screen shows them nothing and the
   // action endpoint answers "Payment request not found". SCM_HEAD was missing
@@ -626,6 +631,7 @@ financeRoutes.get('/payment-requests', requirePermission('FINANCE', 'VIEW'), asy
   const min=await mancomMin(c.env.DB);
   return ok(c,{rows,purchaseOrders,visibility:vis.level,
     mancomEnabled:Number.isFinite(min),mancomMin:Number.isFinite(min)?min:null,
+    financeReview:await financeReviewOn(c.env.DB),
     roleGate:await rfpFlag(c.env.DB,'rfp_role_gate','0')});
 });
 
@@ -645,9 +651,11 @@ financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), 
     FROM erp_rfp_approvals WHERE rfp_ref=? ORDER BY id`,[row.request_no]);
   // Workflow position, so the screen knows whether MANCOM applies to this amount.
   const min=await mancomMin(c.env.DB);
+  const review=await financeReviewOn(c.env.DB);
   const workflow={mancomEnabled:Number.isFinite(min),mancomMin:Number.isFinite(min)?min:null,
-    mancomRequired:Number(row.net_payable||0)>=min,
-    stages:requiredStages(row.net_payable,min),nextStage:nextStage(row.net_payable,min,signatures),
+    mancomRequired:Number(row.net_payable||0)>=min,financeReview:review,
+    stages:requiredStages(row.net_payable,min,review),
+    nextStage:nextStage(row.net_payable,min,signatures,review),
     attachmentsEditable:['DRAFT','RETURNED'].includes(String(row.status||'').toUpperCase())};
   return ok(c,{request:row,attachments,liquidation:liquidation||null,signatures,workflow});
 });
@@ -836,8 +844,14 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
   const mancomRequired=Number(request.net_payable||0)>=min;
   try{
     const permission=await permissionFor(c.env.DB,c.get('erpUser'),'FINANCE');
-    if(Object.keys(ACTION_STAGE).includes(action)&&!permission.can_approve){
+    // FINANCE_REVIEW is a check, not an approval: the whole point of the role is
+    // that it carries no approval rights, so gating it on can_approve would make
+    // the step impossible for the only people meant to perform it.
+    if(Object.keys(ACTION_STAGE).includes(action)&&action!=='FINANCE_REVIEW'&&!permission.can_approve){
       return fail(c,'Approval permission is required.',403);
+    }
+    if(action==='FINANCE_REVIEW'&&!permission.can_edit){
+      return fail(c,'Finance review permission is required.',403);
     }
     if(action==='MARK_PAID'&&!permission.can_post)return fail(c,'Posting permission is required.',403);
 
@@ -873,8 +887,20 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
       if(request.requestor_email===user)throw new Error('The requester cannot approve the same request.');
       await run(c.env.DB,`UPDATE erp_payment_requests SET status='DEPARTMENT_APPROVED',
         department_approved_by=?,department_approved_at=datetime('now'),updated_at=datetime('now') WHERE id=?`,[user,id]);
-    }else if(action==='FINANCE_VALIDATE'){
+    }else if(action==='FINANCE_REVIEW'){
+      // Finance checks the requestor's paperwork and the department head's
+      // approval, then passes it to the head of Finance. A check, not an approval.
+      if(!(await financeReviewOn(c.env.DB)))throw new Error('The Finance review step is switched off.');
       if(request.status!=='DEPARTMENT_APPROVED')throw new Error('Department approval is required first.');
+      await run(c.env.DB,`UPDATE erp_payment_requests SET status='FINANCE_REVIEWED',updated_at=datetime('now') WHERE id=?`,[id]);
+    }else if(action==='FINANCE_VALIDATE'){
+      const reviewNeeded=await financeReviewOn(c.env.DB);
+      if(reviewNeeded){
+        if(request.status!=='FINANCE_REVIEWED')
+          throw new Error('Finance has not checked this request yet. It must pass Finance review before the head of Finance approves it.');
+      }else if(request.status!=='DEPARTMENT_APPROVED'){
+        throw new Error('Department approval is required first.');
+      }
       await run(c.env.DB,`UPDATE erp_payment_requests SET status='FINANCE_VALIDATED',
         finance_validated_by=?,finance_validated_at=datetime('now'),updated_at=datetime('now') WHERE id=?`,[user,id]);
     }else if(action==='MANCOM_APPROVE'){
@@ -997,7 +1023,8 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
     // ---- e-signature trail ---------------------------------------------
     // Draw or type: DRAW arrives as a PNG data URL, TYPE as the signer's name.
     if(normalizeText(b.signature)&&!['RETURN','CANCEL','REJECT'].includes(action)){
-      const stageMap={SUBMIT:'REQUESTOR',DEPARTMENT_APPROVE:'DEPARTMENT',FINANCE_VALIDATE:'FINANCE',
+      const stageMap={SUBMIT:'REQUESTOR',DEPARTMENT_APPROVE:'DEPARTMENT',
+        FINANCE_REVIEW:'FINANCE_REVIEW',FINANCE_VALIDATE:'FINANCE',
         MANCOM_APPROVE:'MANCOM',FINAL_APPROVE:'FINAL',MARK_PAID:'PAYMENT',CONFIRM_PAID:'PROOF'};
       await run(c.env.DB,`INSERT INTO erp_rfp_approvals(rfp_ref,stage,decision,actor,actor_name,reason,signature,amount)
         VALUES(?,?,?,?,?,?,?,?)`,[request.request_no,stageMap[action]||action,'APPROVED',user,
@@ -1014,6 +1041,9 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
     const roleHeads=await roleEmails(c.env.DB,c.env,['DEPT_HEAD','DEPT_MANAGER','SCM_HEAD'],dept);
     const deptHeads=namedHead?[namedHead,...roleHeads.filter(e=>e!==namedHead)]:roleHeads;
     const finance=await roleEmails(c.env.DB,c.env,['FINANCE'],'');
+    const financeReviewers=await roleEmails(c.env.DB,c.env,['FINANCE_REVIEWER'],'');
+    const financeHead=await departmentHeadEmail(c.env.DB,'Finance and Accounting');
+    const financeApprovers=financeHead?[financeHead]:finance;
     const ceo=await roleEmails(c.env.DB,c.env,['CEO'],'');
     const mancom=await roleEmails(c.env.DB,c.env,['MANCOM'],'');
     let notified=null;
@@ -1024,10 +1054,16 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
           subject:`Approval needed: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
           intro:`${after.requestor_email} submitted a request for payment for your approval as Department Head. The supporting documents are linked below.`});
       }else if(action==='DEPARTMENT_APPROVE'){
-        notified=await notifyRfp(c,after,{to:finance,cc:requestor,
-          title:'Department approved - Finance review required',
-          subject:`Finance review: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
-          intro:`The Department Head approved this request. It is now with Finance for review.`});
+        // Goes to whoever checks for Finance, not straight to the head of Finance.
+        notified=await notifyRfp(c,after,{to:financeReviewers.length?financeReviewers:finance,cc:requestor,
+          title:'Department approved - Finance check required',
+          subject:`Finance check: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
+          intro:`The Department Head approved this request. Finance now checks the supporting documents and the approval before it goes to the head of Finance.`});
+      }else if(action==='FINANCE_REVIEW'){
+        notified=await notifyRfp(c,after,{to:financeApprovers,cc:requestor,
+          title:'Checked by Finance - your approval required',
+          subject:`Finance approval: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
+          intro:`${user} checked the requestor's documents and the department head's approval. It is now with you as head of Finance.`});
       }else if(action==='FINANCE_VALIDATE'){
         // Above the threshold the request goes to MANCOM first, not straight to the CEO.
         notified=mancomRequired
