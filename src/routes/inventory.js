@@ -4,7 +4,7 @@ import { ok, fail, jsonBody, pageParams, numberValue } from '../lib/http.js';
 import { requirePermission } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
 import { normalizeSerial, normalizeText, ensureLocation, nextCode } from '../lib/codes.js';
-import { postMovement } from '../lib/inventory.js';
+import { postMovement, createAssetFromReceipt } from '../lib/inventory.js';
 import { captureFinanceEvent } from '../lib/finance.js';
 import { inventoryAccountForCategory } from '../lib/transaction-rules.js';
 
@@ -467,8 +467,24 @@ inventoryRoutes.post('/cycle-counts/:id/scan', requirePermission('INVENTORY','CR
         scan_method,scanned_by,scanned_at,notes)
       VALUES(?,?,?,?, 'VARIANCE',?,?,?,datetime('now'),?)`,
       [id,asset?.id||null,serial,asset?.current_location_id||null,varianceType,method,user,
-       asset?'Serial belongs to another registered location.':'Serial is not registered in inventory.']);
-    result={lineId:inserted.meta.last_row_id,serial,countStatus:'VARIANCE',varianceType};
+       asset?'Serial belongs to another registered location.':'Counted on the floor but not yet registered - will be created when the count is posted.']);
+    const lineId=inserted.meta.last_row_id;
+    // A unit that is not in the system at all is what a first physical count is
+    // mostly made of. Keep whatever the counter can tell us about it so that
+    // posting the count registers it rather than discarding it.
+    if(!asset){
+      await run(c.env.DB,`INSERT OR REPLACE INTO erp_cycle_count_new_units(
+        line_id,item_code,item_name,category,serial_type,secondary_serial,motor_no,
+        unit_cost,condition_code,status,captured_by)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+        [lineId,normalizeText(b.itemCode),normalizeText(b.itemName),
+         normalizeText(b.category||count.category)||'OTH',
+         normalizeText(b.serialType)||'SERIAL',normalizeText(b.secondarySerial),normalizeText(b.motorNo),
+         Number(b.unitCost)||0,normalizeText(b.conditionCode)||'GOOD',
+         normalizeText(b.status)||'AVAILABLE',user]);
+    }
+    result={lineId,serial,countStatus:'VARIANCE',varianceType,
+      willRegister:!asset,needsItemDetail:!asset&&!normalizeText(b.itemCode)};
   }
   const totals=await first(c.env.DB,`
     SELECT COUNT(CASE WHEN actual_serial_no IS NOT NULL THEN 1 END) counted,
@@ -533,11 +549,47 @@ inventoryRoutes.post('/cycle-counts/:id/post-adjustments', requirePermission('IN
     FROM erp_cycle_count_lines ccl
     LEFT JOIN erp_assets a ON a.id=COALESCE(ccl.actual_asset_id,ccl.expected_asset_id)
     WHERE ccl.cycle_count_id=? AND ccl.variance_type IS NOT NULL AND ccl.variance_type!=''`,[id]);
-  let decrease=0;let moved=0;let unresolved=0;
+  let decrease=0;let moved=0;let unresolved=0;let registered=0;const registeredSerials=[];
   const user=c.get('erpUser').email;
   for(const line of lines){
     const assetId=line.actual_asset_id||line.expected_asset_id;
     const asset=assetId?await first(c.env.DB,`SELECT * FROM erp_assets WHERE id=?`,[assetId]):null;
+    // A unit counted on the floor that the system has never seen. This is the
+    // whole point of an opening count: register it, at the location where it was
+    // actually found, so the physical count becomes the system record.
+    if(!asset&&line.actual_serial_no&&line.variance_type==='UNKNOWN_SERIAL'){
+      const detail=await first(c.env.DB,`SELECT * FROM erp_cycle_count_new_units WHERE line_id=?`,[line.id])||{};
+      const itemRow=detail.item_code
+        ? await first(c.env.DB,`SELECT id,item_name,category FROM erp_items WHERE item_code=?`,[detail.item_code])
+        : null;
+      const outcome=await createAssetFromReceipt(c.env.DB,{
+        serialNo:line.actual_serial_no,
+        serialType:detail.serial_type||'SERIAL',
+        itemId:itemRow?.id||null,
+        itemCode:detail.item_code||'',
+        itemName:detail.item_name||itemRow?.item_name||'',
+        category:detail.category||itemRow?.category||count.category||'OTH',
+        secondarySerial:detail.secondary_serial||'',
+        motorNo:detail.motor_no||'',
+        locationId:count.location_id,
+        locationCode:count.location_code,
+        status:detail.status||'AVAILABLE',
+        unitCost:Number(detail.unit_cost||0),
+        conditionCode:detail.condition_code||'GOOD',
+        // Anything counted without an item code is real stock with incomplete
+        // master data: it must be visible for cleanup, not quietly "CLEAR".
+        reconciliationStatus:detail.item_code?'CLEAR':'FOR_REVIEW',
+        sourceSystem:'PHYSICAL_COUNT',
+        sourceKey:count.count_no,
+      });
+      if(!outcome.duplicate){
+        await run(c.env.DB,`UPDATE erp_cycle_count_lines SET actual_asset_id=?,
+          notes='Registered from the physical count.' WHERE id=?`,[outcome.asset.id,line.id]);
+        registered+=1;
+        if(registeredSerials.length<50)registeredSerials.push(outcome.asset.serial_no);
+      }
+      continue;
+    }
     if(line.variance_type==='MISSING'&&asset){
       await postMovement(c.env.DB,{
         serialNo:asset.serial_no,movementType:'CYCLE_COUNT_ADJUSTMENT',
@@ -570,8 +622,9 @@ inventoryRoutes.post('/cycle-counts/:id/post-adjustments', requirePermission('IN
   }
   await run(c.env.DB,`UPDATE erp_cycle_counts SET status='POSTED' WHERE id=?`,[id]);
   await audit(c,{action:'POST_CYCLE_COUNT_ADJUSTMENTS',module:'INVENTORY',recordType:'CYCLE_COUNT',
-    recordId:id,recordNo:count.count_no,after:{decrease,moved,unresolved}});
-  return ok(c,{status:'POSTED',financialDecrease:decrease,locationCorrections:moved,unresolved});
+    recordId:id,recordNo:count.count_no,after:{decrease,moved,unresolved,registered}});
+  return ok(c,{status:'POSTED',financialDecrease:decrease,locationCorrections:moved,unresolved,
+    registered,registeredSerials});
 });
 
 inventoryRoutes.get('/cycle-counts/:id/variances', requirePermission('INVENTORY','VIEW'), async(c)=>{

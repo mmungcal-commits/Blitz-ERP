@@ -564,6 +564,26 @@ financeRoutes.get('/aging/:ledger', requirePermission('FINANCE', 'VIEW'), async 
 // that may sign the DEPARTMENT stage must also be able to read that department.
 const DEPARTMENT_APPROVER_ROLES=STAGE_ROLE_ALIASES.DEPARTMENT;
 
+// Who heads which department (erp_department_heads, migration 0042). Being head
+// of Finance is not the same as holding the FINANCE role: Mark validates
+// payments as Finance AND approves his own department's requests as its head,
+// and those are two different signatures on the same form.
+async function departmentHeadEmail(db,department){
+  if(!normalizeText(department))return '';
+  try{
+    const row=await first(db,`SELECT head_email FROM erp_department_heads
+      WHERE upper(department)=upper(?)`,[normalizeText(department)]);
+    return String(row?.head_email||'').toLowerCase();
+  }catch(e){return '';}
+}
+async function departmentsHeadedBy(db,email){
+  if(!email)return [];
+  try{
+    const rows=await all(db,`SELECT department FROM erp_department_heads WHERE lower(head_email)=lower(?)`,[email]);
+    return rows.map(r=>r.department);
+  }catch(e){return [];}
+}
+
 async function rfpVisibility(c){
   const user=c.get('erpUser')||{};
   const setting=await first(c.env.DB,`SELECT value FROM erp_settings WHERE key='RFP_PRIVACY_ENFORCED'`);
@@ -576,8 +596,13 @@ async function rfpVisibility(c){
   // department's requests, or the approval screen shows them nothing and the
   // action endpoint answers "Payment request not found". SCM_HEAD was missing
   // here when the role was introduced, which silently stranded Supply Chain.
-  if(DEPARTMENT_APPROVER_ROLES.includes(role)){
-    return {where:' AND (r.requestor_email=? OR r.department=?)',args:[user.email,user.department||''],level:'DEPARTMENT'};
+  const headed=await departmentsHeadedBy(c.env.DB,user.email);
+  if(headed.length||DEPARTMENT_APPROVER_ROLES.includes(role)){
+    const depts=[...new Set([...(headed||[]),user.department||''].filter(Boolean))];
+    if(!depts.length)return {where:' AND r.requestor_email=?',args:[user.email],level:'OWN'};
+    const placeholders=depts.map(()=>'?').join(',');
+    return {where:` AND (r.requestor_email=? OR r.department IN (${placeholders}))`,
+      args:[user.email,...depts],level:'DEPARTMENT'};
   }
   return {where:' AND r.requestor_email=?',args:[user.email],level:'OWN'};
 }
@@ -822,8 +847,14 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
       const stage=ACTION_STAGE[action];
       const trail=await all(c.env.DB,`SELECT stage,decision,actor FROM erp_rfp_approvals WHERE rfp_ref=?`,
         [request.request_no]);
+      // An appointed department head satisfies the DEPARTMENT stage for their own
+      // department whatever role code they carry - which is how the head of
+      // Finance signs as a department head rather than as Finance.
+      const headOfThis=stage==='DEPARTMENT'
+        && (await departmentHeadEmail(c.env.DB,request.department))===String(user).toLowerCase();
       const refusal=checkApproval({
-        stage,actorEmail:user,actorRole:String(c.get('erpUser').role_code||'').toUpperCase(),
+        stage,actorEmail:user,
+        actorRole:headOfThis?'DEPT_HEAD':String(c.get('erpUser').role_code||'').toUpperCase(),
         submittedBy:request.requestor_email,amount:request.net_payable,min,
         signature:b.signature,trail,
         requireSignature:await rfpFlag(c.env.DB,'rfp_require_signature','1'),
@@ -977,7 +1008,11 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
     // ---- notifications -------------------------------------------------
     const dept=after.department||'';
     const requestor=[after.requestor_email];
-    const deptHeads=await roleEmails(c.env.DB,c.env,['DEPT_HEAD','DEPT_MANAGER'],dept);
+    // The appointed head of this department comes first; the role lookup is the
+    // fallback for a department that has no head recorded yet.
+    const namedHead=await departmentHeadEmail(c.env.DB,dept);
+    const roleHeads=await roleEmails(c.env.DB,c.env,['DEPT_HEAD','DEPT_MANAGER','SCM_HEAD'],dept);
+    const deptHeads=namedHead?[namedHead,...roleHeads.filter(e=>e!==namedHead)]:roleHeads;
     const finance=await roleEmails(c.env.DB,c.env,['FINANCE'],'');
     const ceo=await roleEmails(c.env.DB,c.env,['CEO'],'');
     const mancom=await roleEmails(c.env.DB,c.env,['MANCOM'],'');
