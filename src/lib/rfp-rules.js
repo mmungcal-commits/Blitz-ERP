@@ -24,7 +24,7 @@ export const STAGE_ROLE = {
 // satisfied by any role in its list. Kept generous on purpose: a Department
 // Manager standing in for the Department Head is normal practice here.
 export const STAGE_ROLE_ALIASES = {
-  DEPARTMENT: ['DEPTHEAD', 'DEPT_HEAD', 'DEPT_MANAGER', 'DEPARTMENT_HEAD', 'DEPARTMENT_MANAGER', 'SCM_MANAGER'],
+  DEPARTMENT: ['DEPTHEAD', 'DEPT_HEAD', 'DEPT_MANAGER', 'DEPARTMENT_HEAD', 'DEPARTMENT_MANAGER', 'SCM_HEAD', 'SCM_MANAGER'],
   FINANCE: ['FINANCE', 'FINANCE_MANAGER', 'ACCOUNTING', 'CONTROLLER'],
   MANCOM: ['MANCOM', 'MANCOM_MEMBER', 'MANAGEMENT_COMMITTEE'],
   FINAL: ['CEO', 'PRESIDENT', 'CHIEF_EXECUTIVE'],
@@ -67,7 +67,19 @@ export async function rfpSetting(db, key, fallback) {
   return fallback;
 }
 
+/**
+ * The MANCOM threshold, or Infinity when the tier is switched off.
+ *
+ * E88 discuss high-value spend in the MANCOM meeting *before* it is recorded in
+ * the ERP, so the in-system tier is disabled (erp_rfp_settings.rfp_mancom_enabled
+ * = '0'). Returning Infinity makes every downstream rule fall out naturally:
+ * requiredStages() drops MANCOM, mancomRequired is never true, and an attempt to
+ * approve the MANCOM stage is refused. Re-enable with:
+ *   UPDATE erp_rfp_settings SET value='1' WHERE key='rfp_mancom_enabled';
+ */
 export async function mancomMin(db) {
+  const enabled = String(await rfpSetting(db, 'rfp_mancom_enabled', '0')) === '1';
+  if (!enabled) return Infinity;
   return Number(await rfpSetting(db, 'mancom_min', '100000')) || 100000;
 }
 
@@ -115,7 +127,12 @@ export function checkApproval({
 
   // MANCOM tiering
   if (stage === 'MANCOM' && Number(amount || 0) < Number(min || 0)) {
-    return { msg: `MANCOM approval only applies to requests of PHP ${Number(min).toLocaleString('en-US')} or more.`, code: 400 };
+    return {
+      msg: Number.isFinite(Number(min))
+        ? `MANCOM approval only applies to requests of PHP ${Number(min).toLocaleString('en-US')} or more.`
+        : 'The MANCOM stage is switched off. High-value spend is agreed in the MANCOM meeting before it is recorded here.',
+      code: 400,
+    };
   }
 
   // role gate
