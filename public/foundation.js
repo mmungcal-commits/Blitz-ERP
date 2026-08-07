@@ -1,4 +1,4 @@
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R21.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R22.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -404,6 +404,48 @@ function setHeader(title,subtitle=''){
   $('#pageTitle').textContent=title;
   $('#pageSubtitle').textContent=subtitle;
 }
+/* ===================================================================
+ * Mobile tile launcher.
+ *
+ * On a phone the eleven-column module rail is unusable, so a module opens as a
+ * grid of large tap targets - the handful of things somebody actually does
+ * standing in a warehouse, not the whole desktop navigation. Inventory first,
+ * because that is where the phone gets used.
+ * =================================================================== */
+const MOBILE_TILES={
+  'ip-warehouse-management':{
+    title:'Inventory',
+    tiles:[
+      {key:'count',label:'Physical Count',sub:'Scan and count units',tone:'orange',icon:'clipboard',section:'approvals'},
+      {key:'stock',label:'Stock Lookup',sub:'Find a serial, see its status',tone:'slate',icon:'box',section:'center'},
+      {key:'plans',label:'Count Plans',sub:'Open or create a count sheet',tone:'green',icon:'truck',section:'records'},
+      {key:'variance',label:'Variances',sub:'Review count differences',tone:'blue',icon:'check',section:'reports'}
+    ]
+  }
+};
+const TILE_ICONS={
+  clipboard:'<path d="M9 3h6v3H9z"/><rect x="5" y="5" width="14" height="16" rx="2"/><path d="M8 12h8M8 16h5"/>',
+  box:'<path d="M3 8l9-4 9 4-9 4-9-4z"/><path d="M3 8v8l9 4 9-4V8"/><path d="M12 12v8"/>',
+  truck:'<rect x="2" y="7" width="12" height="9" rx="1"/><path d="M14 10h4l3 3v3h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
+  check:'<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 12l3 3 5-6"/>'
+};
+function isPhone(){return !!(window.matchMedia&&window.matchMedia('(max-width: 720px)').matches);}
+function renderMobileTiles(module){
+  const spec=MOBILE_TILES[module.code];
+  if(!spec)return false;
+  content.innerHTML='<div class="mtile-wrap"><div class="mtile-head"><h2>'+esc(spec.title)+'</h2>'
+    +'<span>'+esc(module.groupTitle||'')+'</span></div><div class="mtile-grid">'
+    +spec.tiles.map(function(t){
+      return '<button type="button" class="mtile '+esc(t.tone)+'" data-mtile="'+esc(t.section)+'">'
+        +'<svg viewBox="0 0 24 24" aria-hidden="true">'+(TILE_ICONS[t.icon]||'')+'</svg>'
+        +'<b>'+esc(t.label)+'</b><small>'+esc(t.sub)+'</small><i class="mtile-go">&rsaquo;</i></button>';
+    }).join('')
+    +'</div><button type="button" class="command mtile-full" id="mtileFull">Open the full desktop view</button></div>';
+  $$('[data-mtile]').forEach(function(b){b.onclick=function(){openSection(b.dataset.mtile);};});
+  $('#mtileFull').onclick=function(){openSection('center');};
+  return true;
+}
+
 async function openWorkspace(code){
   const module=moduleByCode(code);
   if(!module||!canWorkspace(code))return toast('This module is not assigned to your account.','error');
@@ -414,6 +456,8 @@ async function openWorkspace(code){
   document.body.classList.add('workbench-view');
   setHeader(module.label,module.groupTitle);
   renderSidebar();
+  // A phone gets the tile launcher instead of the desktop rail.
+  if(isPhone()&&renderMobileTiles(module))return;
   await openSection('center');
 }
 async function openSection(section){
@@ -3561,7 +3605,7 @@ async function renderCyclePlans(){
         </form>
       </section>
       <section class="workspace-card"><header><h2>Cycle Count Register</h2><span>${data.total} plans</span></header>
-        ${operationalTable(['Count No.','Date','Location','Type','Category','Assigned To','Expected','Status'],rows)}</section>
+        ${operationalTable(['Count No.','Date','Location','Type','Category','Assigned To','Expected','Status',''],rows)}</section>
       </div><aside class="ramco-rail"><section><header>Count Sheet</header><div class="control-note"><b>System snapshot</b><p>The plan freezes the expected serial list for printing or mobile QR counting.</p></div></section></aside></div>`;
     content.innerHTML=workbenchShell(body,'records');bindOperationalShell();
     $('#cyclePlanForm').onsubmit=async event=>{
@@ -3569,7 +3613,29 @@ async function renderCyclePlans(){
       try{const result=await api('/inventory/cycle-counts',{method:'POST',body:JSON.stringify(formDataObject(event.currentTarget))});toast(`${result.countNo} created with ${result.expectedUnits} units`);state.cycleCount=result.id;await renderPhysicalCount(result.id);}
       catch(error){toast(error.message,'error');}
     };
-    $$('[data-cycle]').forEach(row=>row.onclick=()=>{state.cycleCount=Number(row.dataset.cycle);renderPhysicalCount(state.cycleCount);});
+    $$('[data-cycle]').forEach(row=>row.onclick=event=>{
+      if(event.target.closest('[data-drop-count]'))return;
+      state.cycleCount=Number(row.dataset.cycle);renderPhysicalCount(state.cycleCount);});
+    // An open plan raised by mistake can be deleted; a submitted one is history.
+    $$('[data-drop-count]').forEach(b=>b.onclick=event=>{
+      event.stopPropagation();
+      const cid=b.dataset.dropCount;const cno=b.dataset.dropNo;
+      modal('Remove '+esc(cno)+'?',
+        `<div class="operational-form"><p>This plan will be cancelled and disappear from the register.
+          Nothing is erased - what was counted against it is kept, so the record of who scanned what stays intact.
+          Only an open plan can be removed this way.</p>
+        <div class="modal-actions"><button type="button" class="command primary" id="dcYes">Remove plan</button>
+        <button type="button" class="command" id="dcNo">Keep it</button></div></div>`);
+      const mb=$('#modalBody');
+      mb.querySelector('#dcNo').onclick=()=>closeModal();
+      mb.querySelector('#dcYes').onclick=async()=>{
+        try{await api('/inventory/cycle-counts/'+cid,{method:'DELETE'});
+          closeModal();toast(cno+' removed from the register');
+          if(state.cycleCount===Number(cid))state.cycleCount=null;
+          await renderCyclePlans();}
+        catch(error){toast(error.message,'error');}
+      };
+    });
   }catch(error){showWorkspaceError(error);}
 }
 
@@ -3637,6 +3703,73 @@ function identifyCountedUnit(countId,line,opts){
   });
 }
 
+/* ===================================================================
+ * Count sheet upload: a team with a clipboard types the serials into a
+ * spreadsheet. Preview first, so nothing is written until it looks right.
+ * =================================================================== */
+const COUNT_TEMPLATE_COLUMNS=['serial_no','item_code','item_name','category','serial_type',
+  'secondary_serial','motor_no','unit_cost','condition','remarks'];
+
+function downloadCountTemplate(header){
+  const rows=[COUNT_TEMPLATE_COLUMNS.join(','),
+    'LC6PAGA13R0099001,MC-0001,E88 Cruiser,MC,FRAME,,MTR-88231,78000,GOOD,example row - delete me',
+    '519110002370AAX001,BAT-0001,E88 Battery 72V,BAT,BARCODE,ICCID-0001,,24000,GOOD,'];
+  const blob=new Blob([rows.join('\n')],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='count-sheet-'+((header&&header.count_no)||'template')+'.csv';
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(function(){URL.revokeObjectURL(a.href);},2000);
+}
+
+function openCountUpload(countId,header){
+  const tone={COUNTED:'good',NEW_UNIT:'new',LOCATION_MISMATCH:'warn',
+    DUPLICATE:'bad',ALREADY_COUNTED:'warn',SKIPPED:'bad'};
+  modal('Upload count sheet · '+esc((header&&header.count_no)||''),
+    '<div class="operational-form">'
+    +'<p class="form-note">One row per physical unit. Only <b>serial_no</b> is required - everything else fills in '
+    +'what the "identify this unit" question would have asked. Nothing is written until you press Import.</p>'
+    +'<p><button type="button" class="command" id="cuTemplate">Download template (.csv)</button></p>'
+    +'<label class="wide"><span>Count sheet file (.csv)</span><input id="cuFile" type="file" accept=".csv,text/csv"></label>'
+    +'<div id="cuPreview"></div>'
+    +'<div class="modal-actions wide">'
+    +'<button type="button" class="command primary" id="cuImport" disabled>Import</button>'
+    +'<button type="button" class="command" id="cuClose">Close</button>'
+    +'</div></div>','Re-uploading the same file adds nothing - counted serials are skipped');
+  const mb=$('#modalBody');
+  let csvText='';
+  mb.querySelector('#cuTemplate').onclick=function(){downloadCountTemplate(header);};
+  mb.querySelector('#cuClose').onclick=function(){closeModal();renderPhysicalCount(countId);};
+  mb.querySelector('#cuFile').onchange=async function(event){
+    const file=event.target.files&&event.target.files[0];
+    if(!file)return;
+    csvText=await file.text();
+    try{
+      const r=await api('/inventory/cycle-counts/'+countId+'/import',{method:'POST',body:JSON.stringify({csv:csvText})});
+      const counts=Object.entries(r.summary||{}).map(function(kv){
+        return '<span class="cu-chip '+esc(tone[kv[0]]||'')+'">'+esc(String(kv[0]).replace(/_/g,' ').toLowerCase())+': '+kv[1]+'</span>';
+      }).join('');
+      const rows=(r.rows||[]).slice(0,300).map(function(x){
+        return '<tr class="'+esc(tone[x.status]||'')+'"><td>'+x.rowNo+'</td><td><b>'+esc(x.serial||'-')+'</b></td>'
+          +'<td>'+esc(x.itemCode||'-')+'</td><td>'+esc(String(x.status).replace(/_/g,' ').toLowerCase())+'</td>'
+          +'<td>'+esc(x.message||'')+'</td></tr>';
+      });
+      const willAdd=(r.rows||[]).filter(function(x){return ['COUNTED','NEW_UNIT','LOCATION_MISMATCH'].indexOf(x.status)>=0;}).length;
+      mb.querySelector('#cuPreview').innerHTML='<div class="cu-summary">'+counts+'</div>'
+        +'<p class="form-note">'+willAdd+' of '+r.totalRows+' row(s) will be added.'
+        +((r.rows||[]).length>300?' Showing the first 300.':'')+'</p>'
+        +'<div class="cu-table">'+operationalTable(['Row','Serial','Item','Result','Note'],rows)+'</div>';
+      mb.querySelector('#cuImport').disabled=willAdd===0;
+    }catch(error){toast(error.message,'error');}
+  };
+  mb.querySelector('#cuImport').onclick=async function(){
+    try{
+      const r=await api('/inventory/cycle-counts/'+countId+'/import',{method:'POST',body:JSON.stringify({csv:csvText,commit:true})});
+      closeModal();toast(r.added+' unit(s) added to the count sheet');await renderPhysicalCount(countId);
+    }catch(error){toast(error.message,'error');}
+  };
+}
+
 async function renderPhysicalCount(countId=state.cycleCount){
   content.innerHTML='<div class="workspace-loading">Loading physical count…</div>';
   try{
@@ -3661,7 +3794,8 @@ async function renderPhysicalCount(countId=state.cycleCount){
       ${data?`<div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
         <header><div><h2>${esc(data.header.count_no)} · Physical Count</h2><span>${esc(data.header.location_code)} - ${esc(data.header.location_name)}</span></div>${statusBadge(data.header.status)}</header>
         <div class="scan-entry"><input id="countSerial" placeholder="Scan or enter physical serial"><button class="command primary" id="countAdd">Count Serial</button>
-          <button class="command" id="countCamera">Scan QR</button><button class="command" id="countMobile">Mobile count</button></div>
+          <button class="command" id="countCamera">Scan QR</button><button class="command" id="countMobile">Mobile count</button>
+          <button class="command" id="countUpload">Upload count sheet</button></div>
         <div class="scan-summary">${kpi('Expected',data.summary.expected)}${kpi('Scanned',data.summary.counted)}${kpi('Variances',data.summary.variances)}
           ${kpi('Missing',data.summary.missing)}${kpi('Location Mismatch',data.summary.locationMismatch)}</div>
         ${operationalTable(['Item','Description','Expected Serial','Actual Serial','Count Status','Variance','Actual Location',''],rows)}
@@ -3690,6 +3824,7 @@ async function renderPhysicalCount(countId=state.cycleCount){
     $('#countSerial').onkeydown=event=>{if(event.key==='Enter')scan('');};
     $('#countCamera').onclick=()=>scanQrWithCamera(scan);
     $('#countMobile').onclick=()=>openMobileCount(id,data);
+    if($('#countUpload'))$('#countUpload').onclick=()=>openCountUpload(id,data.header);
     $$('[data-edit-line]').forEach(b=>b.onclick=async()=>{
       const line=(data.lines||[]).find(x=>String(x.id)===b.dataset.editLine);
       if(!line)return;
@@ -5695,6 +5830,33 @@ init();
   .mr-newunit label i{color:#8b97a8;font-style:italic}
   .mr-newunit input,.mr-newunit select{width:100%;padding:8px 9px;border:1px solid #dbe4ee;border-radius:8px;font-size:13px}
   /* A counted row that still needs identifying stands out on the sheet. */
+  /* Count sheet upload preview */
+  .cu-summary{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+  .cu-chip{font-size:11px;padding:3px 9px;border-radius:999px;background:#eef2f7;color:#42506a}
+  .cu-chip.good{background:#e9f8ee;color:#1d6b39}.cu-chip.new{background:#e8f2fe;color:#12508f}
+  .cu-chip.warn{background:#fff6e5;color:#7a5300}.cu-chip.bad{background:#fdecec;color:#8f2226}
+  .cu-table{max-height:320px;overflow:auto;border:1px solid #e3e9f1;border-radius:8px}
+  .cu-table tr.bad td{background:#fdf3f3}.cu-table tr.warn td{background:#fffaf0}
+  .cu-table tr.new td{background:#f4f9ff}
+
+  /* Mobile tile launcher */
+  .mtile-wrap{padding:14px}
+  .mtile-head h2{margin:0;font-size:19px;color:var(--blitz-1)}
+  .mtile-head span{font-size:11.5px;color:#7c8b9c;text-transform:uppercase;letter-spacing:.6px}
+  .mtile-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+  .mtile{position:relative;display:flex;flex-direction:column;gap:6px;align-items:flex-start;
+    min-height:132px;padding:14px;border:0;border-radius:14px;color:#fff;text-align:left;cursor:pointer;
+    box-shadow:0 2px 10px rgba(10,34,57,.16)}
+  .mtile svg{width:34px;height:34px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;opacity:.95}
+  .mtile b{font-size:15px;line-height:1.15}
+  .mtile small{font-size:11.5px;opacity:.9;line-height:1.25}
+  .mtile-go{position:absolute;right:12px;bottom:10px;font-size:22px;font-style:normal;opacity:.85}
+  .mtile.orange{background:linear-gradient(140deg,#f08a24,#e0741a)}
+  .mtile.slate{background:linear-gradient(140deg,#3d4854,#2b333c)}
+  .mtile.green{background:linear-gradient(140deg,#4aa564,#358a4d)}
+  .mtile.blue{background:linear-gradient(140deg,#2a86dd,#1a68b5)}
+  .mtile-full{width:100%;margin-top:14px}
+  @media (min-width:721px){.mtile-wrap{display:none}}
   .row-needs-item{background:#fffaf0}
   .needs-item{color:#b06f00;font-weight:600;font-size:11.5px}
   .table-action.danger{color:#a4282b;border-color:#e7c3c4}
