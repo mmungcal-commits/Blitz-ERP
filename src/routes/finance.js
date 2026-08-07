@@ -598,7 +598,9 @@ financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), 
   if(!row)return fail(c,'Payment request not found.',404);
   const attachments=await attachmentsFor(c.env.DB,'PAYMENT_REQUEST',id,row.request_no);
   const liquidation=await first(c.env.DB,`SELECT * FROM erp_rfp_liquidations WHERE payment_request_id=?`,[id]);
-  return ok(c,{request:row,attachments,liquidation:liquidation||null});
+  const signatures=await all(c.env.DB,`SELECT stage,decision,actor,actor_name,reason,signature,created_at
+    FROM erp_rfp_approvals WHERE rfp_ref=? ORDER BY id`,[row.request_no]);
+  return ok(c,{request:row,attachments,liquidation:liquidation||null,signatures});
 });
 
 financeRoutes.post('/payment-requests', requirePermission('FINANCE','CREATE'), async c=>{
@@ -643,6 +645,13 @@ financeRoutes.post('/payment-requests', requirePermission('FINANCE','CREATE'), a
     requestType:rawType,cashAdvance:isCashAdvance?1:0,
     signature:normalizeText(b.requestorSignature),signatureType:normalizeText(b.signatureType)||'TYPE'};
   try{await run(c.env.DB,`INSERT OR REPLACE INTO erp_rfp_settings(key,value) VALUES(?,?)`,['rfp_doc:'+requestNo,JSON.stringify(extras)]);}catch(e){}
+  // The requestor's e-signature opens the approval trail.
+  if(normalizeText(b.requestorSignature)){
+    await run(c.env.DB,`INSERT INTO erp_rfp_approvals(rfp_ref,stage,decision,actor,actor_name,signature,amount)
+      VALUES(?,?,?,?,?,?,?)`,[requestNo,'REQUESTOR','SIGNED',c.get('erpUser').email,
+      normalizeText(b.requestorName)||c.get('erpUser').display_name||'',
+      String(b.requestorSignature).slice(0,300000),net]);
+  }
   // Supporting documents -> Google Drive / Payables Management / <RFP no>
   const attach=await saveAttachments(c.env,c.env.DB,{moduleCode:'FINANCE',recordType:'PAYMENT_REQUEST',
     recordId:rfpId,recordNo:requestNo,files:b.attachments,uploadedBy:c.get('erpUser').email});
@@ -810,6 +819,17 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
       request.__returnReason=reason;
     }else return fail(c,'Unsupported payment-request action.');
     const after=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
+    // ---- e-signature trail ---------------------------------------------
+    // Draw or type: DRAW arrives as a PNG data URL, TYPE as the signer's name.
+    if(normalizeText(b.signature)){
+      const stageMap={SUBMIT:'REQUESTOR',DEPARTMENT_APPROVE:'DEPARTMENT',FINANCE_VALIDATE:'FINANCE',
+        FINAL_APPROVE:'FINAL',MARK_PAID:'PAYMENT',CONFIRM_PAID:'PROOF'};
+      await run(c.env.DB,`INSERT INTO erp_rfp_approvals(rfp_ref,stage,decision,actor,actor_name,reason,signature,amount)
+        VALUES(?,?,?,?,?,?,?,?)`,[request.request_no,stageMap[action]||action,'APPROVED',user,
+        c.get('erpUser').display_name||user,normalizeText(b.notes),
+        String(b.signature).slice(0,300000),after.net_payable]);
+    }
+
     // ---- notifications -------------------------------------------------
     const dept=after.department||'';
     const requestor=[after.requestor_email];
