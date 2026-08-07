@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
-  from './viz.js?v=20260808-r35';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R35.0';
+  from './viz.js?v=20260808-r37';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R37.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -190,6 +190,10 @@ function workspaceTabs(code=state.module?.code){
     ['center','Overview'],['records','Unit Visibility'],['approvals','Stock Movement'],
     ['reports','QR Trace'],['setup','Locations'],
   ];
+  if(code==='fa-receivables-management')return [
+    ['center','Receivables Center'],['records','Collections'],['approvals','For Posting'],
+    ['reports','Revenue Reports'],['setup','Lists'],
+  ];
   if(code==='ip-cycle-counting')return [
     ['center','Overview'],['records','Count Plans'],['approvals','Physical Count'],
     ['reports','Variance Reports'],['setup','Setup'],
@@ -242,7 +246,7 @@ function showAuth(mode='login'){
     const startScope=state.scope==='ADMIN'?'ADMIN':'OPERATIONS';
     host.innerHTML=`<div class="blitz-auth">
       <div class="blitz-auth-brand">
-        <img class="blitz-mark" src="/logo-white.png?v=20260808-r35" alt="E88 Ventures Inc.">
+        <img class="blitz-mark" src="/logo-white.png?v=20260808-r37" alt="E88 Ventures Inc.">
         <div class="blitz-charge" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
       </div>
       <div class="auth-heading"><h1>Welcome back</h1><p>Sign in to continue.</p></div>
@@ -443,19 +447,18 @@ async function renderHomeDashboard(){
        sub:m.receivablesPct==null?'nothing outstanding':money(m.outstanding)+' outstanding',
        module:'fa-receivables-payables#records'}
     ]);
-    if(m.collectionPct!=null)
-      cards.push(vizRing(m.collectionPct,{title:'Collection rate',
-        subtitle:money(m.collected)+' of '+money(m.billed)+' billed',caption:'collected',
+    cards.push(vizRing(m.collectionPct==null?0:m.collectionPct,{title:'Collection rate',
+        subtitle:m.collectionPct==null?'nothing billed in this period':money(m.collected)+' of '+money(m.billed)+' billed',
+        caption:'collected',valueLabel:m.collectionPct==null?'0%':undefined,
         tipLabel:'Collected against billed',open:'fa-receivables-payables#records',
         openLabel:'Open the payment requests',
-        tone:m.collectionPct>=80?'good':m.collectionPct>=50?'warning':'critical'}));
+        tone:m.collectionPct==null?null:(m.collectionPct>=80?'good':m.collectionPct>=50?'warning':'critical')}));
     if((m.aging||[]).some(r=>Number(r.value)>0))
       cards.push(vizBars(m.aging.map(r=>({label:r.label,value:Number(r.value)||0})).filter(r=>r.value>0),
         {title:'Receivables ageing',money:true,color:VIZ.status.serious,
          keyLabel:'Bucket',valueLabel:'Outstanding',labelWidth:104,
          open:'fa-receivables-payables#records',openLabel:'Open the receivables'}));
-    if(m.availableUnits+m.leasedUnits+m.soldUnits+m.deployedUnits>0)
-      cards.push(vizDonut([
+    cards.push(vizDonut([
         {label:'Available',value:m.availableUnits},{label:'Leased',value:m.leasedUnits},
         {label:'Sold',value:m.soldUnits},{label:'Deployed',value:m.deployedUnits}],
         {title:'Where the fleet is',totalLabel:'Units',keyLabel:'State',valueLabel:'Units',
@@ -478,36 +481,29 @@ async function renderHomeDashboard(){
        module:'ip-cycle-counting#reports'}
     ]);
     if(!tiles)tiles=invTiles;
-    if((i.byClass||[]).length)
-      cards.push(vizDonut(i.byClass.map(r=>({label:r.label||'Unclassified',value:Number(r.value)||0})),
+    cards.push(vizDonut((i.byClass||[]).map(r=>({label:r.label||'Unclassified',value:Number(r.value)||0})),
         {title:'Inventory by class',totalLabel:'Units',keyLabel:'Class',valueLabel:'Units',
          open:'ip-warehouse-management#records',openLabel:'Open unit visibility'}));
-    const pg=d.progress;
-    if(pg&&pg.pct!=null)
-      cards.push(vizRing(pg.pct,{title:'Counting progress',
-        subtitle:compact(pg.counted)+' of '+compact(pg.expected)+' expected units',
+    const pg=d.progress||{};
+    cards.push(vizRing(pg.pct||0,{title:'Counting progress',
+        subtitle:pg.expected?compact(pg.counted)+' of '+compact(pg.expected)+' expected units':'no count in progress',
         caption:'counted',tipLabel:'Counted against expected',
         open:'ip-cycle-counting#approvals',openLabel:'Open the physical count',
-        tone:pg.pct>=100?'good':pg.pct>=50?'warning':'serious'}));
+        tone:pg.pct==null?null:(pg.pct>=100?'good':pg.pct>=50?'warning':'serious')}));
   }
   if(sec.procurement&&(sec.procurement.topVendors||[]).length)
     cards.push(vizBars(sec.procurement.topVendors.map(r=>({label:r.label||'-',value:Number(r.value)||0})),
       {title:'Committed spend by vendor',money:true,color:VIZ.series[1],
        keyLabel:'Vendor',valueLabel:'Amount',limit:6,labelWidth:120,
        open:'ip-inbound-logistics#records',openLabel:'Open purchase orders'}));
-  if(sec.finance&&(sec.finance.byStage||[]).length)
-    cards.push(vizDonut(sec.finance.byStage.map(r=>({label:String(r.label||'').replace(/_/g,' '),value:Number(r.value)||0})),
+  if(sec.finance)
+    cards.push(vizDonut((sec.finance.byStage||[]).map(r=>({label:String(r.label||'').replace(/_/g,' '),value:Number(r.value)||0})),
       {title:'Payment requests by stage',totalLabel:'Requests',keyLabel:'Stage',valueLabel:'Requests',
        open:'fa-receivables-payables#records',openLabel:'Open the payment requests'}));
   if(sec.service&&(sec.service.byStatus||[]).length)
     cards.push(vizDonut(sec.service.byStatus.map(r=>({label:String(r.label||'').replace(/_/g,' '),value:Number(r.value)||0})),
       {title:'Service jobs by stage',totalLabel:'Jobs',keyLabel:'Stage',valueLabel:'Jobs',
        open:'sd-service-management#records',openLabel:'Open the job orders'}));
-
-  if(tr.all&&tr.all.series)
-    cards.push(vizColumns(tr.all.series.map(p=>(
-      {label:new Date(p.label+'T00:00:00').toLocaleDateString('en-US',{weekday:'short'}),value:p.value})),
-      {title:'Activity across the last 7 days',keyLabel:'Day',valueLabel:'Events'}));
 
   /*
    * The period control. A management figure without a period is not a figure,
@@ -784,6 +780,7 @@ async function openSection(section){
   return out;
 }
 async function renderSectionBody(section){
+  if(state.module.code==='fa-receivables-management')return renderReceivablesWorkspace(section);
   if(state.module.code.startsWith('fa-'))return renderFinanceWorkspace(section);
   if(state.module.code==='ip-inbound-logistics')return renderInboundWorkspace(section);
   if(state.module.code==='ip-warehouse-management')return renderWarehouseWorkspace(section);
@@ -3916,6 +3913,298 @@ async function renderLocationMaster(){
   }catch(error){showWorkspaceError(error);}
 }
 
+
+/* ===================================================================
+ * Receivables Management.
+ *
+ * Everything on the revenue side: who paid, for what, how, and whether it
+ * cleared. Built to the shape of E88's own sales monitoring workbook so the
+ * people who keep that spreadsheet recognise the screen.
+ *
+ * A row is editable while it is a draft and frozen the moment it is posted -
+ * posting is what turns a record into money. A posted row is corrected by
+ * voiding it with a reason, never by quietly editing it.
+ * =================================================================== */
+const AR_STREAMS={MC_SOLD:'Motorcycle sold',MC_LEASED:'Motorcycle leased',
+  BATTERY_SWAP:'Battery swapping',AFTERSALES:'After-sales',WAREHOUSE_SERVICE:'Warehouse service'};
+state.ar={stream:'',status:'',from:'',to:'',q:'',page:1,selected:new Set()};
+
+async function renderReceivablesWorkspace(section){
+  if(section==='records')return renderArCollections();
+  if(section==='approvals')return renderArCollections('DRAFT');
+  if(section==='reports')return renderArReports();
+  if(section==='setup')return renderArLists();
+  return renderArCenter();
+}
+
+async function renderArCenter(){
+  content.innerHTML='<div class="workspace-loading">Loading receivables\u2026</div>';
+  try{
+    const s=await api('/receivables/summary');
+    const t=s.totals||{};
+    const tiles=vizTiles([
+      {label:'Collected',value:Number(t.gross||0),suffix:'',sub:'gross, this register',module:'fa-receivables-management#records'},
+      {label:'Posted',value:Number(t.posted||0),tone:'good',sub:'final',module:'fa-receivables-management#records'},
+      {label:'For posting',value:Number(t.draftCount||0),tone:Number(t.draftCount)?'warning':'good',
+       sub:money(t.draft)+' in draft',module:'fa-receivables-management#approvals'},
+      {label:'Net of VAT',value:Number(t.net||0),sub:'revenue',module:'fa-receivables-management#reports'},
+      {label:'Output VAT',value:Number(t.vat||0),sub:'payable',module:'fa-receivables-management#reports'}
+    ]);
+    const cards=[
+      vizDonut((s.byStream||[]).map(r=>({label:AR_STREAMS[r.label]||r.label,value:Number(r.value)||0})),
+        {title:'Revenue by stream',totalLabel:'Collected',keyLabel:'Stream',valueLabel:'Amount',
+         open:'fa-receivables-management#records',openLabel:'Open the collections'}),
+      vizBars((s.byCustomer||[]).map(r=>({label:r.label||'-',value:Number(r.value)||0})),
+        {title:'Top customers',money:true,color:VIZ.series[2],keyLabel:'Customer',valueLabel:'Collected',
+         limit:8,labelWidth:130,open:'fa-receivables-management#records',openLabel:'Open the collections'}),
+      vizColumns((s.byMonth||[]).map(r=>({label:String(r.label||'').slice(5),value:Number(r.value)||0})),
+        {title:'Collections by month',money:true,keyLabel:'Month',valueLabel:'Collected',
+         open:'fa-receivables-management#reports',openLabel:'Open the reports'}),
+    ];
+    content.innerHTML=workbenchShell(tiles+'<div class="viz-grid">'+cards.join('')+'</div>'
+      +`<section class="workspace-card"><header><div><h2>Receivables Management</h2>
+        <span>${Number(t.n||0)} entries \u00b7 ${money(t.gross)} collected \u00b7 ${money(t.net)} net of VAT</span></div>
+        <button class="ramco-primary" data-section-link="records">Open collections</button></header></section>`,'center');
+    bindOperationalShell();
+    bindViz(content,null,dest=>{const [code,sec]=String(dest).split('#');
+      if(code===state.module.code&&sec)return openSection(sec);
+      openWorkspace(code);});
+  }catch(error){showWorkspaceError(error);}
+}
+
+async function renderArCollections(forceStatus){
+  const f=state.ar;
+  if(forceStatus!==undefined)f.status=forceStatus;
+  content.innerHTML='<div class="workspace-loading">Loading collections\u2026</div>';
+  try{
+    const qs=new URLSearchParams({page:String(f.page),size:'50'});
+    if(f.stream)qs.set('stream',f.stream);
+    if(f.status)qs.set('status',f.status);
+    if(f.from)qs.set('from',f.from);
+    if(f.to)qs.set('to',f.to);
+    if(f.q)qs.set('q',f.q);
+    const [data,lists]=await Promise.all([api('/receivables/collections?'+qs),api('/receivables/lists')]);
+    const t=data.totals||{};
+    const rows=(data.rows||[]).map(r=>{
+      const draft=r.status==='DRAFT';
+      return `<tr data-ar="${r.id}" class="${r.status==='VOID'?'is-void':''}">
+        <td>${draft?`<input type="checkbox" class="ar-pick" value="${r.id}">`:''}</td>
+        <td><b>${esc(r.entry_no)}</b></td><td>${date(r.txn_date)}</td>
+        <td>${esc(AR_STREAMS[r.stream]||r.stream)}</td>
+        <td>${esc(r.customer_name)}</td>
+        <td>${esc(r.document_no||'-')}</td>
+        <td>${esc(r.description||r.contract_ref||'-')}</td>
+        <td class="num">${money(r.gross_amount)}</td>
+        <td class="num">${money(r.net_amount)}</td>
+        <td class="num">${money(r.output_vat)}</td>
+        <td>${esc(r.payment_method||'-')}</td>
+        <td>${statusBadge(r.cleared_status||'PENDING')}</td>
+        <td>${statusBadge(r.status)}</td>
+        <td>${draft?`<button class="table-action" data-ar-edit="${r.id}">Edit</button>
+             <button class="table-action" data-ar-post="${r.id}">Post</button>
+             <button class="table-action danger" data-ar-del="${r.id}">Remove</button>`
+            :(r.status==='POSTED'?`<button class="table-action danger" data-ar-void="${r.id}">Void</button>`:'-')}</td>
+      </tr>`;});
+
+    const streamOpts=['<option value="">All streams</option>']
+      .concat(Object.keys(AR_STREAMS).map(k=>`<option value="${k}" ${f.stream===k?'selected':''}>${esc(AR_STREAMS[k])}</option>`)).join('');
+    const statusOpts=['','DRAFT','POSTED','VOID']
+      .map(v=>`<option value="${v}" ${f.status===v?'selected':''}>${v||'All statuses'}</option>`).join('');
+
+    const body=`<div class="workspace-commandbar">
+        <label class="inline-control"><span>Stream</span><select id="arStream">${streamOpts}</select></label>
+        <label class="inline-control"><span>Status</span><select id="arStatus">${statusOpts}</select></label>
+        <label class="inline-control"><span>From</span><input type="date" id="arFrom" value="${esc(f.from)}"></label>
+        <label class="inline-control"><span>To</span><input type="date" id="arTo" value="${esc(f.to)}"></label>
+        <input id="arQ" placeholder="Customer, entry or receipt no." value="${esc(f.q)}">
+        <button class="command" id="arApply">Apply</button>
+        <span class="command-spacer"></span>
+        <button class="command primary" id="arNew">New collection</button>
+        <button class="command" id="arPostSelected">Post selected</button></div>
+      <section class="workspace-card">
+        <header><div><h2>Collections</h2><span>${Number(t.n||0)} entries \u00b7 ${money(t.gross)} gross \u00b7
+          ${money(t.posted)} posted \u00b7 ${money(t.draft)} still in draft</span></div></header>
+        ${operationalTable(['','Entry','Date','Stream','Customer','Receipt','Description',
+          'Gross','Net of VAT','Output VAT','Method','Cleared','Status','Action'],rows,
+          {emptyMessage:'No collections match this filter.'})}
+      </section>`;
+    content.innerHTML=workbenchShell(body,f.status==='DRAFT'?'approvals':'records');
+    bindOperationalShell();
+
+    const apply=()=>{f.stream=$('#arStream').value;f.status=$('#arStatus').value;
+      f.from=$('#arFrom').value;f.to=$('#arTo').value;f.q=$('#arQ').value;f.page=1;renderArCollections();};
+    $('#arApply').onclick=apply;
+    $('#arQ').onkeydown=e=>{if(e.key==='Enter')apply();};
+    $('#arNew').onclick=()=>openArForm(null,lists);
+    $$('[data-ar-edit]').forEach(b=>b.onclick=()=>{
+      const row=(data.rows||[]).find(x=>String(x.id)===b.dataset.arEdit);
+      openArForm(row,lists);});
+    $$('[data-ar-post]').forEach(b=>b.onclick=()=>arPost([Number(b.dataset.arPost)]));
+    $$('[data-ar-del]').forEach(b=>b.onclick=()=>arRemove(Number(b.dataset.arDel)));
+    $$('[data-ar-void]').forEach(b=>b.onclick=()=>arVoid(Number(b.dataset.arVoid)));
+    $('#arPostSelected').onclick=()=>{
+      const ids=$$('.ar-pick:checked').map(x=>Number(x.value));
+      if(!ids.length)return toast('Tick the entries you want to post.','error');
+      arPost(ids);};
+  }catch(error){showWorkspaceError(error);}
+}
+
+/* Posting is final, so it asks once and says exactly how many and how much. */
+function arPost(ids){
+  modal(ids.length===1?'Post this collection?':`Post ${ids.length} collections?`,
+    `<div class="operational-form"><p>Posting makes the entry final. It can no longer be edited \u2014
+      a posted entry is corrected by voiding it with a reason, which stays on the register.</p>
+     <div class="modal-actions"><button type="button" class="command primary" id="arPostYes">
+       ${ids.length===1?'Post it':'Post all '+ids.length}</button>
+     <button type="button" class="command" id="arPostNo">Not yet</button></div></div>`);
+  const mb=$('#modalBody');
+  mb.querySelector('#arPostNo').onclick=()=>closeModal();
+  mb.querySelector('#arPostYes').onclick=async()=>{
+    try{
+      const r=await api('/receivables/collections/post',{method:'POST',body:JSON.stringify({ids})});
+      closeModal();
+      toast(`${(r.posted||[]).length} posted${(r.skipped||[]).length?', '+r.skipped.length+' skipped':''}`,
+        (r.posted||[]).length?'success':'error');
+      await renderArCollections();
+    }catch(error){toast(error.message,'error');}
+  };
+}
+
+function arRemove(id){
+  modal('Remove this draft?',
+    `<div class="operational-form"><p>A draft that was entered in error can be removed outright.
+      Anything already posted is voided instead, so the register keeps the history.</p>
+     <div class="modal-actions"><button type="button" class="command primary" id="arDelYes">Remove it</button>
+     <button type="button" class="command" id="arDelNo">Keep it</button></div></div>`);
+  const mb=$('#modalBody');
+  mb.querySelector('#arDelNo').onclick=()=>closeModal();
+  mb.querySelector('#arDelYes').onclick=async()=>{
+    try{await api('/receivables/collections/'+id,{method:'DELETE'});closeModal();
+      toast('Removed');await renderArCollections();}
+    catch(error){toast(error.message,'error');}
+  };
+}
+
+function arVoid(id){
+  modal('Void this posted entry?',
+    `<form id="arVoidForm" class="operational-form">
+      <p>The entry stays on the register marked void, with your reason against it.</p>
+      <label class="wide"><span>Reason</span><input name="reason" required placeholder="Duplicate receipt, wrong customer\u2026"></label>
+      <div class="modal-actions"><button type="submit" class="command primary">Void it</button>
+      <button type="button" class="command" id="arVoidNo">Cancel</button></div></form>`);
+  const mb=$('#modalBody');
+  mb.querySelector('#arVoidNo').onclick=()=>closeModal();
+  mb.querySelector('#arVoidForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{await api(`/receivables/collections/${id}/void`,{method:'POST',
+      body:JSON.stringify(formDataObject(e.currentTarget))});
+      closeModal();toast('Voided');await renderArCollections();}
+    catch(error){toast(error.message,'error');}
+  };
+}
+
+/* One form for new and for edit; VAT is computed, never typed twice. */
+function openArForm(row,lists){
+  row=row||{};
+  const L=(lists&&lists.lists)||{};
+  const opt=(arr,val)=>['<option value=""></option>'].concat((arr||[]).map(v=>
+    `<option value="${esc(v)}" ${String(val||'')===v?'selected':''}>${esc(v)}</option>`)).join('');
+  modal(row.id?('Edit '+esc(row.entry_no)):'New collection',
+    `<form id="arForm" class="operational-form grid">
+      <label><span>Stream</span><select name="stream" required>${
+        Object.keys(AR_STREAMS).map(k=>`<option value="${k}" ${row.stream===k?'selected':''}>${esc(AR_STREAMS[k])}</option>`).join('')
+      }</select></label>
+      <label><span>Transaction date</span><input name="txnDate" type="date" required value="${esc(row.txn_date||new Date().toISOString().slice(0,10))}"></label>
+      <label><span>Sales type</span><select name="salesType">${opt(L.SALES_TYPE,row.sales_type)}</select></label>
+      <label><span>Receipt / SI / OR no.</span><input name="documentNo" value="${esc(row.document_no||'')}"></label>
+      <label class="wide"><span>Customer / rider</span><input name="customerName" required value="${esc(row.customer_name||'')}" list="arCustomers">
+        <datalist id="arCustomers">${((lists&&lists.customers)||[]).map(x=>`<option value="${esc(x.name)}">`).join('')}</datalist></label>
+      <label><span>Contract / unit / batch</span><input name="contractRef" value="${esc(row.contract_ref||'')}"></label>
+      <label><span>No. of units</span><input name="unitCount" type="number" min="0" step="1" value="${Number(row.unit_count||0)}"></label>
+      <label class="wide"><span>Description</span><input name="description" value="${esc(row.description||'')}"></label>
+      <label><span>Gross amount</span><input name="grossAmount" id="arGross" type="number" min="0" step="0.01" required value="${Number(row.gross_amount||0)}"></label>
+      <label><span>VAT type</span><select name="vatType" id="arVatType">${
+        ['VATable','VAT Exempt','Zero Rated'].map(v=>`<option value="${v}" ${String(row.vat_type||'VATable')===v?'selected':''}>${v}</option>`).join('')
+      }</select></label>
+      <label><span>VAT rate</span><input name="vatRate" id="arVatRate" type="number" min="0" max="1" step="0.01" value="${row.vat_rate!=null?Number(row.vat_rate):0.12}"></label>
+      <div class="wide ar-vat-preview">Net of VAT <b id="arNet">0.00</b> &nbsp;&nbsp; Output VAT <b id="arVat">0.00</b></div>
+      <label><span>Payment method</span><select name="paymentMethod">${opt(L.PAYMENT_METHOD,row.payment_method)}</select></label>
+      <label><span>Bank / wallet</span><select name="bankWallet">${opt(L.BANK,row.bank_wallet)}</select></label>
+      <label><span>Bank reference</span><input name="bankRef" value="${esc(row.bank_ref||'')}"></label>
+      <label><span>Other reference</span><input name="otherRef" value="${esc(row.other_ref||'')}"></label>
+      <label><span>Deposit / settlement</span><input name="settlementDate" type="date" value="${esc(row.settlement_date||'')}"></label>
+      <label><span>Cleared</span><select name="clearedStatus">${
+        ['PENDING','CLEARED','BOUNCED'].map(v=>`<option value="${v}" ${String(row.cleared_status||'PENDING')===v?'selected':''}>${v}</option>`).join('')
+      }</select></label>
+      <label><span>Cost center</span><select name="costCenter">${opt(L.COST_CENTER,row.cost_center)}</select></label>
+      <label><span>Account title</span><select name="accountTitle">${opt(L.ACCOUNT_TITLE,row.account_title)}</select></label>
+      <label class="wide"><span>Notes</span><input name="notes" value="${esc(row.notes||'')}"></label>
+      <div class="modal-actions wide"><button type="submit" class="command primary">${row.id?'Save changes':'Create as draft'}</button>
+      <button type="button" class="command" id="arCancel">Cancel</button></div>
+    </form>`,'A collection stays editable until it is posted');
+  const mb=$('#modalBody');
+  // Show the split as it will be stored, so nobody has to trust the arithmetic.
+  const recalc=()=>{
+    const g=Number(mb.querySelector('#arGross').value)||0;
+    const rate=mb.querySelector('#arVatType').value==='VATable'?(Number(mb.querySelector('#arVatRate').value)||0):0;
+    const net=rate?g/(1+rate):g;
+    mb.querySelector('#arNet').textContent=money(net);
+    mb.querySelector('#arVat').textContent=money(g-net);
+  };
+  ['#arGross','#arVatType','#arVatRate'].forEach(sel=>{
+    const el=mb.querySelector(sel); if(el){el.oninput=recalc;el.onchange=recalc;}});
+  recalc();
+  mb.querySelector('#arCancel').onclick=()=>closeModal();
+  mb.querySelector('#arForm').onsubmit=async e=>{
+    e.preventDefault();
+    const payload=formDataObject(e.currentTarget);
+    try{
+      if(row.id)await api('/receivables/collections/'+row.id,{method:'PATCH',body:JSON.stringify(payload)});
+      else await api('/receivables/collections',{method:'POST',body:JSON.stringify(payload)});
+      closeModal();toast(row.id?'Saved':'Draft created');await renderArCollections();
+    }catch(error){toast(error.message,'error');}
+  };
+}
+
+async function renderArReports(){
+  content.innerHTML='<div class="workspace-loading">Loading revenue reports\u2026</div>';
+  try{
+    const s=await api('/receivables/summary');
+    const t=s.totals||{};
+    const rows=(s.byStream||[]).map(r=>`<tr><td>${esc(AR_STREAMS[r.label]||r.label)}</td>
+      <td class="num">${money(r.value)}</td></tr>`);
+    const months=(s.byMonth||[]).map(r=>`<tr><td>${esc(r.label)}</td><td class="num">${money(r.value)}</td></tr>`);
+    content.innerHTML=workbenchShell(
+      '<div class="viz-grid">'
+      +vizDonut((s.byStream||[]).map(r=>({label:AR_STREAMS[r.label]||r.label,value:Number(r.value)||0})),
+        {title:'Revenue by stream',totalLabel:'Collected',keyLabel:'Stream',valueLabel:'Amount'})
+      +vizColumns((s.byMonth||[]).map(r=>({label:String(r.label||'').slice(5),value:Number(r.value)||0})),
+        {title:'Collections by month',money:true,keyLabel:'Month',valueLabel:'Collected'})
+      +'</div>'
+      +`<section class="workspace-card"><header><div><h2>Revenue by stream</h2>
+        <span>${money(t.gross)} gross \u00b7 ${money(t.net)} net \u00b7 ${money(t.vat)} output VAT</span></div></header>
+        ${operationalTable(['Stream','Collected'],rows)}</section>`
+      +`<section class="workspace-card"><header><h2>Collections by month</h2></header>
+        ${operationalTable(['Month','Collected'],months)}</section>`,'reports');
+    bindOperationalShell();bindViz(content);
+  }catch(error){showWorkspaceError(error);}
+}
+
+async function renderArLists(){
+  content.innerHTML='<div class="workspace-loading">Loading lists\u2026</div>';
+  try{
+    const d=await api('/receivables/lists');
+    const L=d.lists||{};
+    const block=(title,key)=>`<section class="workspace-card"><header><h2>${esc(title)}</h2></header>
+      ${operationalTable([title],(L[key]||[]).map(v=>`<tr><td>${esc(v)}</td></tr>`))}</section>`;
+    content.innerHTML=workbenchShell(
+      block('Sales types','SALES_TYPE')+block('Payment methods','PAYMENT_METHOD')
+      +block('Banks and wallets','BANK')+block('Account titles','ACCOUNT_TITLE')
+      +block('Cost centers','COST_CENTER'),'setup');
+    bindOperationalShell();
+  }catch(error){showWorkspaceError(error);}
+}
+
 async function renderCycleWorkspace(section){
   if(section==='records')return renderCyclePlans();
   if(section==='approvals')return renderPhysicalCount();
@@ -6481,6 +6770,11 @@ init();
     background:#fff;color:#42506a;font-size:12.5px;
     box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
 
+  .ar-vat-preview{padding:9px 11px;border-radius:8px;background:#f5f8fb;border:1px solid #e3e9f1;
+    font-size:12px;color:#42506a}
+  .ar-vat-preview b{color:#0a2239;font-variant-numeric:tabular-nums}
+  tr.is-void td{opacity:.55;text-decoration:line-through}
+  .ar-pick{width:15px;height:15px}
   .home-empty{margin-bottom:14px;padding:14px 16px;border:1px solid #e8eef4;border-radius:10px;background:#fff;
     box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
   .home-empty b{display:block;font-size:13px;color:#0a2239;margin-bottom:3px}
