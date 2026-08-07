@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, bindViz, compact }
-  from './viz.js?v=20260807-r25';
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R25.0';
+  from './viz.js?v=20260807-r26';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R26.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -5483,18 +5483,32 @@ function openUserForm(data,user=null,options={}){
       state.accessUserId=result.user.id;
       toast(user?'User updated':'User created');
       await renderAccessAdmin();
-      if(result.activationLink)showCredentialLink('Account activation',result.activationLink);
+      if(result.activationLink)showCredentialLink('Account activation',result.activationLink,result);
+      if(result.activationLink)toast(result.emailed?('Activation email sent to '+result.emailedTo):'Account created, but the activation email did not send',result.emailed?'success':'error');
     }catch(error){toast(error.message,'error');}
   };
   if($('#issueCredential'))$('#issueCredential').onclick=async()=>{
     try{
       const result=await api(`/admin/users/${user.id}/${user.activated?'reset':'activation'}`,{method:'POST',body:'{}'});
-      showCredentialLink(user.activated?'Password reset':'Account activation',result.resetLink||result.activationLink);
+      showCredentialLink(user.activated?'Password reset':'Account activation',result.resetLink||result.activationLink,result);
+      toast(result.emailed?('Email sent to '+result.emailedTo):'The email did not send - use the link',result.emailed?'success':'error');
     }catch(error){toast(error.message,'error');}
   };
 }
-function showCredentialLink(title,link){
-  modal(title,`<div class="credential-link"><input value="${esc(link)}" readonly><button class="command primary" id="copyCredential">Copy Link</button></div>`);
+/*
+ * The link is emailed to the person it belongs to. It is still shown here as a
+ * fallback, but the dialog says plainly whether the email actually left - a
+ * silent copyable link is how six accounts ended up never activated.
+ */
+function showCredentialLink(title,link,delivery){
+  delivery=delivery||{};
+  const banner=delivery.emailed
+    ? `<p class="cred-sent">Sent to <b>${esc(delivery.emailedTo||'')}</b>. They can activate straight from the email - you do not need to send anything.</p>`
+    : `<p class="cred-failed"><b>The email did not go out.</b>${delivery.emailError?' '+esc(delivery.emailError):''}
+        Send them the link below yourself, then check the mail settings.</p>`;
+  modal(title,`${banner}
+    <p class="cred-hint">${delivery.emailed?'Backup link, in case they cannot find the email:':'Activation link:'}</p>
+    <div class="credential-link"><input value="${esc(link)}" readonly><button class="command primary" id="copyCredential">Copy Link</button></div>`);
   $('#copyCredential').onclick=async()=>{await navigator.clipboard.writeText(link);toast('Link copied');};
 }
 
@@ -6058,6 +6072,10 @@ init();
   .mtile.green{background:linear-gradient(140deg,#4aa564,#358a4d)}
   .mtile.blue{background:linear-gradient(140deg,#2a86dd,#1a68b5)}
   .mtile-full{width:100%;margin-top:14px}
+  /* Activation / reset: say whether the email actually left. */
+  .cred-sent{margin:0 0 10px;padding:9px 11px;border-radius:6px;background:#e9f8ee;color:#1d6b39;font-size:12.5px}
+  .cred-failed{margin:0 0 10px;padding:9px 11px;border-radius:6px;background:#fdecec;color:#8f2226;font-size:12.5px}
+  .cred-hint{margin:0 0 6px;color:#657586;font-size:11.5px}
   .mtile-back{display:block;width:100%;text-align:left;margin:0 0 12px;padding:10px 12px;border:1px solid #d7e0ea;
     border-radius:10px;background:#f5f8fb;color:var(--blitz-1);font-size:14px;font-weight:600;cursor:pointer}
   .mtile-home-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
