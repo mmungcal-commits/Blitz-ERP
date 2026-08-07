@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
-  from './viz.js?v=20260807-r30';
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R30.0';
+  from './viz.js?v=20260807-r31';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R31.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -241,15 +241,20 @@ function showAuth(mode='login'){
     const startScope=state.scope==='ADMIN'?'ADMIN':'OPERATIONS';
     host.innerHTML=`<div class="blitz-auth">
       <div class="blitz-auth-brand">
-        <img class="blitz-mark" src="/logo-white.png" alt="E88 Ventures Inc.">
-        <h1 class="blitz-wordmark">Blitz <i>-</i> ERP</h1>
-        <p class="blitz-tagline">E88 Ventures Inc.</p>
+        <img class="blitz-mark" src="/logo-white.png?v=20260807-r31" alt="E88 Ventures Inc.">
         <div class="blitz-charge" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
       </div>
-      <div class="auth-heading"><h1>Sign in</h1></div>
-      <div class="blitz-scope" role="group" aria-label="Sign-in scope">
-        <button type="button" class="blitz-scope-btn ${startScope==='OPERATIONS'?'active':''}" data-scope-pick="OPERATIONS">Operations</button>
-        <button type="button" class="blitz-scope-btn ${startScope==='ADMIN'?'active':''}" data-scope-pick="ADMIN">System Administration</button>
+      <div class="auth-heading"><h1>Welcome back</h1><p>Sign in to continue.</p></div>
+      <!--
+        Operations is what almost everybody signs in as, so it is simply the
+        default rather than a choice to make every morning. Administration is
+        the exception, and reads as one.
+      -->
+      <div class="blitz-scope-note">
+        <button type="button" id="scopeAdminToggle" class="${startScope==='ADMIN'?'on':''}"
+          aria-pressed="${startScope==='ADMIN'?'true':'false'}">
+          <span class="dot" aria-hidden="true"></span>Sign in to System Administration instead</button>
+        <small>Setup, users and backup. Approvals are blocked in this scope.</small>
       </div>
       <form id="loginForm" class="auth-form">
         <input type="hidden" name="scope" id="loginScope" value="${esc(startScope)}">
@@ -260,11 +265,15 @@ function showAuth(mode='login'){
       <div id="authMessage" class="auth-message"></div>
       <div class="auth-links"><button type="button" data-auth="activate">Activate account</button><button type="button" data-auth="reset">Reset password</button></div>
     </div>`;
-    $$('[data-scope-pick]').forEach(btn=>btn.onclick=()=>{
-      $$('[data-scope-pick]').forEach(other=>other.classList.remove('active'));
-      btn.classList.add('active');
-      $('#loginScope').value=btn.dataset.scopePick;
-    });
+    const scopeBtn=$('#scopeAdminToggle');
+    if(scopeBtn)scopeBtn.onclick=()=>{
+      const on=$('#loginScope').value!=='ADMIN';
+      $('#loginScope').value=on?'ADMIN':'OPERATIONS';
+      scopeBtn.classList.toggle('on',on);
+      scopeBtn.setAttribute('aria-pressed',on?'true':'false');
+      document.querySelector('.blitz-auth').classList.toggle('is-admin',on);
+    };
+    if(startScope==='ADMIN')document.querySelector('.blitz-auth').classList.add('is-admin');
     $('#loginForm').onsubmit=async event=>{
       event.preventDefault();
       const button=event.currentTarget.querySelector('button');
@@ -6143,25 +6152,95 @@ init();
   #login:before{content:"";position:absolute;inset:-40% -20%;background:conic-gradient(from 0deg,transparent 0deg,rgba(30,136,229,.16) 40deg,transparent 90deg,rgba(255,196,0,.10) 160deg,transparent 220deg);animation:blitzSpin 26s linear infinite;pointer-events:none}
   @keyframes blitzSpin{to{transform:rotate(360deg)}}
   #authContent{position:relative;z-index:2}
+  /*
+   * BLITZ - ERP as the room rather than a line on the card: set huge and very
+   * faint behind everything, so the name is present without competing with
+   * the one thing on screen you are meant to do.
+   */
+  #login:after{content:"BLITZ - ERP";position:absolute;inset:0;z-index:1;display:flex;
+    align-items:center;justify-content:center;pointer-events:none;user-select:none;
+    font-size:clamp(64px,17vw,260px);font-weight:800;letter-spacing:.06em;white-space:nowrap;
+    color:transparent;-webkit-text-stroke:1px rgba(255,255,255,.055);
+    background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.012));
+    -webkit-background-clip:text;background-clip:text;
+    animation:blitzMarkDrift 24s ease-in-out infinite}
+  @keyframes blitzMarkDrift{0%,100%{transform:translateY(-6px) scale(1)}50%{transform:translateY(6px) scale(1.015)}}
+  @media (prefers-reduced-motion:reduce){#login:after{animation:none}}
   /* the shell card is replaced by the Blitz card below */
   #login .auth-card{background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;width:auto!important;max-width:none!important}
   #login .auth-brand,#login .auth-copyright{display:none!important}
-  .blitz-auth{width:min(430px,92vw);margin:0 auto;background:rgba(255,255,255,.97);border-radius:18px;overflow:hidden;box-shadow:0 30px 70px rgba(0,0,0,.45);animation:blitzRise .5s cubic-bezier(.2,.8,.25,1) both}
-  .blitz-auth>*:not(.blitz-auth-brand){padding-left:26px;padding-right:26px}
-  .blitz-auth>.auth-links{padding-bottom:20px}
+  /*
+   * The sign-in card.
+   *
+   * Glass on the animated deep-navy field rather than a white slab: the card
+   * belongs to the background instead of sitting on top of it. Everything is
+   * centred and every child shares one horizontal padding - the heading used
+   * to reset its own to zero, which is why 'Sign in' hung outside the box.
+   */
+  .blitz-auth{width:min(430px,92vw);margin:0 auto;border-radius:22px;overflow:hidden;
+    background:linear-gradient(180deg,rgba(23,52,84,.78),rgba(11,28,48,.86));
+    border:1px solid rgba(255,255,255,.13);
+    box-shadow:0 34px 80px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.10);
+    backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+    animation:blitzRise .5s cubic-bezier(.2,.8,.25,1) both;color:#eaf2fb}
+  /* One padding for every child, the brand block included. */
+  .blitz-auth>*{padding-left:28px;padding-right:28px}
+  .blitz-auth>.auth-links{padding-bottom:22px}
   @keyframes blitzRise{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:none}}
-  .blitz-auth-brand{text-align:center;padding:22px 26px 18px;margin-bottom:6px;color:#fff;
-    background:radial-gradient(120% 140% at 50% -20%,#1b4f8a 0%,#0a2239 62%);position:relative;overflow:hidden}
-  .blitz-auth-brand:after{content:"";position:absolute;left:-30%;right:-30%;bottom:-70%;height:120%;
-    background:radial-gradient(closest-side,rgba(30,136,229,.35),transparent);animation:blitzGlow 5s ease-in-out infinite}
-  @keyframes blitzGlow{0%,100%{opacity:.5;transform:translateY(6px)}50%{opacity:1;transform:translateY(-4px)}}
-  .blitz-mark{display:block;position:relative;z-index:1;margin:0 auto;height:52px;width:auto;object-fit:contain;animation:blitzMark .7s cubic-bezier(.2,.8,.25,1) both}
+  .blitz-auth-brand{text-align:center;padding-top:34px;padding-bottom:4px;color:#fff;position:relative}
+  .blitz-auth-brand:after{content:"";position:absolute;left:50%;top:-46px;width:220px;height:110px;
+    transform:translateX(-50%);pointer-events:none;
+    background:radial-gradient(closest-side,rgba(120,190,255,.40),transparent);
+    animation:blitzGlow 5s ease-in-out infinite}
+  @keyframes blitzGlow{0%,100%{opacity:.55;transform:translateX(-50%) translateY(4px)}
+    50%{opacity:1;transform:translateX(-50%) translateY(-4px)}}
+  /* Sized against the card, not a fixed pixel height, so it scales with the
+     card on a phone and cannot be shrunk by a stray image rule. */
+  .blitz-auth-brand .blitz-mark{display:block;position:relative;z-index:1;margin:0 auto;
+    width:min(210px,62%);height:auto;max-height:none;object-fit:contain;
+    animation:blitzMark .7s cubic-bezier(.2,.8,.25,1) both}
   @keyframes blitzMark{from{opacity:0;transform:translateY(-6px) scale(.94)}to{opacity:1;transform:none}}
-  .blitz-wordmark{position:relative;z-index:1;margin:12px 0 0;font-size:27px;letter-spacing:2px;font-weight:800;color:#fff;text-transform:uppercase}
-  .blitz-wordmark i{font-style:normal;color:#4fa8f5}
-  .blitz-tagline{position:relative;z-index:1;margin:3px 0 0;font-size:11px;letter-spacing:2.5px;text-transform:uppercase;color:rgba(255,255,255,.7)}
-  .blitz-auth .auth-heading{padding:16px 0 10px}
-  .blitz-auth .auth-heading h1{font-size:20px}
+  .blitz-wordmark{position:relative;z-index:1;margin:14px 0 0;font-size:25px;letter-spacing:2px;font-weight:800;color:#fff;text-transform:uppercase}
+  .blitz-wordmark i{font-style:normal;color:#5cb0f7}
+  .blitz-tagline{position:relative;z-index:1;margin:4px 0 0;font-size:10.5px;letter-spacing:2.5px;text-transform:uppercase;color:rgba(255,255,255,.55)}
+
+  /* The heading keeps the card's padding rather than resetting it. */
+  .blitz-auth .auth-heading{padding-top:18px;padding-bottom:14px;text-align:center}
+  .blitz-auth .auth-heading h1{margin:0;font-size:23px;font-weight:700;color:#fff;letter-spacing:-.2px}
+  .blitz-auth .auth-heading p{margin:5px 0 0;font-size:12.5px;color:rgba(234,242,251,.62)}
+
+  /* Fields sit on the glass, not on white. */
+  .blitz-auth .auth-field span{color:rgba(234,242,251,.72);font-size:11.5px;font-weight:600}
+  .blitz-auth .auth-field input{min-height:48px;padding:12px 14px;border-radius:12px;
+    border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#fff;font-size:14px}
+  .blitz-auth .auth-field input::placeholder{color:rgba(234,242,251,.35)}
+  .blitz-auth .auth-field input:focus{outline:none;border-color:#5cb0f7;
+    background:rgba(255,255,255,.10);box-shadow:0 0 0 3px rgba(92,176,247,.20)}
+  .blitz-auth .auth-submit{min-height:48px;margin-top:8px;border:0;border-radius:12px;font-size:14.5px;font-weight:700;
+    background:linear-gradient(180deg,#3d9bf0,#1e6fc4);color:#fff;
+    box-shadow:0 8px 20px rgba(30,111,196,.38);transition:transform .16s ease,box-shadow .16s ease}
+  .blitz-auth .auth-submit:hover{transform:translateY(-1px);box-shadow:0 12px 26px rgba(30,111,196,.46)}
+  .blitz-auth .auth-submit:disabled{opacity:.6;transform:none;box-shadow:none}
+  .blitz-auth .auth-message{color:#ffb4ad;text-align:center}
+  .blitz-auth .auth-message.info{color:#8fc9ff}
+  .blitz-auth .auth-links{border-top:1px solid rgba(255,255,255,.10);padding-top:16px}
+  .blitz-auth .auth-links button{color:#8fc9ff;font-size:12.5px}
+  .blitz-auth .auth-links button:hover{color:#bfe0ff;text-decoration:underline}
+  .blitz-auth .password-rule{color:rgba(234,242,251,.5)}
+
+  /* Administration is the exception, so it reads as one rather than as half
+     of a choice you have to make every morning. */
+  .blitz-scope-note{padding-top:0;padding-bottom:16px;text-align:center}
+  .blitz-scope-note button{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;
+    border:1px solid rgba(255,255,255,.16);border-radius:999px;background:rgba(255,255,255,.04);
+    color:rgba(234,242,251,.72);font-size:12px;cursor:pointer;transition:all .16s ease}
+  .blitz-scope-note button:hover{border-color:rgba(255,255,255,.3);color:#fff}
+  .blitz-scope-note button .dot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.25)}
+  .blitz-scope-note button.on{border-color:var(--blitz-accent);color:#ffe08a;background:rgba(255,196,0,.10)}
+  .blitz-scope-note button.on .dot{background:var(--blitz-accent)}
+  .blitz-scope-note small{display:block;margin-top:7px;font-size:10.5px;color:rgba(234,242,251,.42)}
+  .blitz-auth.is-admin{border-color:rgba(255,196,0,.34);box-shadow:0 34px 80px rgba(0,0,0,.55),0 0 0 1px rgba(255,196,0,.18)}
+
   .blitz-charge{position:relative;z-index:1;display:flex;gap:5px;justify-content:center;margin-top:14px}
   .blitz-charge i{width:26px;height:4px;border-radius:3px;background:rgba(255,255,255,.25);animation:blitzCharge 1.6s ease-in-out infinite}
   .blitz-charge i:nth-child(2){animation-delay:.12s}.blitz-charge i:nth-child(3){animation-delay:.24s}
@@ -6264,12 +6343,6 @@ init();
   .mr-status.warn{background:#fff6e5;color:#7a5300}
   .mr-item.new{border-left:3px solid #1e88e5}
   .mr-item.warn{border-left:3px solid #e8a33d}
-  .blitz-scope{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:4px 0 14px;align-items:stretch}
-  .blitz-scope-btn{display:flex;align-items:center;justify-content:center;text-align:center;
-    min-height:44px;padding:10px 12px;border:1.5px solid #dbe4ee;border-radius:10px;background:#fff;
-    cursor:pointer;transition:.16s;font-size:12.5px;font-weight:600;line-height:1.25;color:var(--blitz-1)}
-  .blitz-scope-btn:hover{border-color:#bcd0e4;transform:translateY(-1px)}
-  .blitz-scope-btn.active{border-color:var(--blitz-3);background:#f2f8ff;box-shadow:0 0 0 3px rgba(30,136,229,.12)}
   .auth-submit{background:linear-gradient(135deg,var(--blitz-2),var(--blitz-3));border:0}
 
   /* ---------- Launchpad brand ---------- */
@@ -6357,7 +6430,6 @@ init();
 
   /* ---------- Mobile / tablet ---------- */
   @media (max-width:900px){
-    .blitz-scope{grid-template-columns:1fr}
     .enterprise-columns{grid-template-columns:1fr!important}
     .ramco-layout{display:block!important}
     .ramco-rail{margin-top:14px}
