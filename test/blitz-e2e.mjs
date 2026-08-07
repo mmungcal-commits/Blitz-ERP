@@ -258,6 +258,17 @@ await t('RFP return sends it back to the requestor', async()=>{
 });
 
 // ---- RFP workflow, against the spec ("E88 RFP & Payments" sections 3-6, 9)
+// The MANCOM tier ships switched off (0041). Prove that first, then switch it on
+// for the rest of the block so the tiering rules are still exercised.
+await t('MANCOM tier is off by default', async()=>{
+  const r=await call('GET','/api/finance/payment-requests');
+  if(!r.json?.ok) throw new Error(r.json?.error);
+  if(r.json.mancomEnabled) throw new Error('MANCOM is enabled out of the box');
+  if(r.json.mancomMin!==null) throw new Error('mancomMin should be null when off');
+  return {note:'chain is Dept Head > Finance > CEO at every amount'};
+});
+sqlite.exec("UPDATE erp_rfp_settings SET value='1' WHERE key='rfp_mancom_enabled'");
+
 // One user per approval stage, so separation of duties can actually be exercised.
 sqlite.exec(`
   INSERT OR IGNORE INTO erp_users(email,display_name,role_code,active) VALUES
@@ -367,6 +378,27 @@ await t('attachments are editable only while draft', async()=>{
   const del=await call('DELETE',`/api/finance/payment-requests/${draft.id}/attachments/${attId}`);
   if(!del.json?.ok) throw new Error(del.json?.error);
   return {note:blocked.json.error.slice(0,44)+' · draft add+remove ok'};
+});
+await t('the people from 0041 exist with the right roles', async()=>{
+  const rows=sqlite.prepare("SELECT email,role_code,department FROM erp_users WHERE email IN ('francis@nrdev.ph','haide@nrdev.ph','ferdinand@nrdev.ph') ORDER BY email").all();
+  if(rows.length!==3) throw new Error('expected 3 new accounts, got '+rows.length);
+  const by=Object.fromEntries(rows.map(r=>[r.email,r]));
+  if(by['francis@nrdev.ph'].role_code!=='CEO') throw new Error('francis is '+by['francis@nrdev.ph'].role_code);
+  if(by['haide@nrdev.ph'].department!=='Human Resources') throw new Error('haide dept');
+  if(by['ferdinand@nrdev.ph'].department!=='Technology') throw new Error('ardee dept');
+  const creds=sqlite.prepare("SELECT COUNT(*) n FROM erp_user_credentials c JOIN erp_users u ON u.id=c.user_id WHERE u.email LIKE '%@nrdev.ph'").get();
+  if(!creds.n) throw new Error('no credential rows, activation links cannot be issued');
+  return {note:'francis CEO · haide HR · ardee Technology · '+creds.n+' credential rows'};
+});
+await t('SCM_HEAD approves RFPs without losing the warehouse', async()=>{
+  // Plain DEPT_HEAD cannot create or post inventory. Samuel needs both.
+  const p=Object.fromEntries(sqlite.prepare("SELECT module,can_create||can_post||can_approve k FROM erp_role_permissions WHERE role_code='SCM_HEAD'").all().map(r=>[r.module,r.k]));
+  if(p.INVENTORY!=='111') throw new Error('SCM_HEAD inventory rights '+p.INVENTORY);
+  const fin=sqlite.prepare("SELECT can_approve FROM erp_role_permissions WHERE role_code='SCM_HEAD' AND module='FINANCE'").get();
+  if(!fin?.can_approve) throw new Error('SCM_HEAD cannot approve at the DEPARTMENT stage');
+  const admin=sqlite.prepare("SELECT can_manage FROM erp_role_permissions WHERE role_code='FINANCE' AND module='ADMIN'").get();
+  if(!admin?.can_manage) throw new Error('nobody can administer users');
+  return {note:'inventory create+post+approve kept · FINANCE approve gained · ADMIN manage granted'};
 });
 await t('a returned request restarts the chain', async()=>{
   const id=globalThis.__twoStage;
