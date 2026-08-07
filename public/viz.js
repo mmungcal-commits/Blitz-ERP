@@ -292,6 +292,51 @@ export function vizLine(series, opts){
       labels.map((l,i)=>[l].concat(sets.map(s=>fmt(s.points[i]?s.points[i].value:0))))) });
 }
 
+
+/* -------------------------------------------------------------- ring */
+/*
+ * One proportion, read as a figure. The track is a light step of the fill's
+ * own ramp so the whole arc carries state, and the number sits in the middle
+ * where the eye already is.
+ */
+export function vizRing(pct, opts){
+  opts = opts||{};
+  const id = nextId();
+  const v = Math.max(0, Math.min(100, Number(pct)||0));
+  const tone = opts.tone && VIZ.status[opts.tone] ? VIZ.status[opts.tone] : (opts.color || VIZ.series[0]);
+  const R = 52, C = 2*Math.PI*R, cx = 64, cy = 64;
+  const dash = (v/100)*C;
+  const body = '<svg viewBox="0 0 128 128" class="viz-svg viz-ring" role="img" aria-label="'
+    +esc((opts.title||'Progress')+': '+Math.round(v)+'%')+'"'
+    +' tabindex="0" data-viz-tip="'+esc(opts.tipLabel||opts.title||'Progress')+': '+Math.round(v)+'%">'
+    +'<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="'+(opts.track||'#e8eef4')+'" stroke-width="12"/>'
+    +'<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="'+tone+'" stroke-width="12"'
+    +' stroke-linecap="round" stroke-dasharray="'+dash.toFixed(1)+' '+(C-dash).toFixed(1)+'"'
+    +' transform="rotate(-90 '+cx+' '+cy+')" class="viz-ring-arc"/>'
+    +'<text x="'+cx+'" y="'+(cy+(opts.caption?0:7))+'" class="viz-ring-value" text-anchor="middle">'
+      +esc(opts.valueLabel!=null?opts.valueLabel:Math.round(v)+'%')+'</text>'
+    +(opts.caption?'<text x="'+cx+'" y="'+(cy+18)+'" class="viz-heroSub" text-anchor="middle">'+esc(opts.caption)+'</text>':'')
+    +'</svg>';
+  return figure({ id, title:opts.title, subtitle:opts.subtitle, body,
+    table: tableOf([opts.keyLabel||'Measure','Value'], [[opts.title||'Progress', Math.round(v)+'%']]) });
+}
+
+/* A 12-point sparkline for a stat tile. Trend only - it carries no axis, so
+   it never pretends to be readable as values. */
+function sparkline(points, color){
+  const data = (points||[]).map(p=>Number(p&&p.value!=null?p.value:p)||0);
+  if (data.length < 2) return '';
+  const max = Math.max.apply(null, data.concat([1]));
+  const W = 74, H = 22, band = W/data.length;
+  const bars = data.map((v,i)=>{
+    const h = Math.max(2, (v/max)*H);
+    const x = i*band, w = Math.max(2, band-2);
+    return '<rect x="'+x.toFixed(1)+'" y="'+(H-h).toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+h.toFixed(1)
+      +'" rx="1.5" fill="'+color+'" opacity="'+(i===data.length-1?1:0.42)+'"/>';
+  }).join('');
+  return '<svg viewBox="0 0 '+W+' '+H+'" class="viz-spark" aria-hidden="true">'+bars+'</svg>';
+}
+
 /* ------------------------------------------------------- status tiles */
 /*
  * The coloured row across the top of a cockpit. Each tile is a state, so it
@@ -305,12 +350,24 @@ export function vizTiles(tiles, opts){
   return '<div class="viz-tiles">'+list.map(t=>{
     const tone = t.tone && VIZ.status[t.tone] ? t.tone : 'neutral';
     const pct = t.pct==null ? '' : '<b class="viz-tile-pct">'+Math.round(t.pct)+'%</b>';
+    const spark = t.spark ? sparkline(t.spark, (t.tone&&VIZ.status[t.tone])||VIZ.series[0]) : '';
+    // A delta is signed, named against a period, and coloured by whether the
+    // direction is good here - not by whether the arrow points up.
+    let delta = '';
+    if (t.delta && t.delta.value != null && t.delta.value !== 0) {
+      const up = Number(t.delta.value) > 0;
+      const good = t.delta.upIsGood === false ? !up : up;
+      delta = '<small class="viz-tile-delta '+(good?'up':'down')+'">'
+        + (up?'\u2191':'\u2193') + ' ' + esc(Math.abs(Number(t.delta.value)).toFixed(1)) + '% '
+        + '<i>' + esc(t.delta.period || 'vs last period') + '</i></small>';
+    }
     return '<button type="button" class="viz-tile '+tone+'"'
       + (t.section?' data-viz-go="'+esc(t.section)+'"':'')
       + (t.match?' data-viz-match="'+esc(t.match)+'"':'')
       + '><span class="viz-tile-label">'+esc(t.label)+'</span>'
+      + (spark?'<span class="viz-tile-spark">'+spark+'</span>':'')
       + '<span class="viz-tile-row"><b class="viz-tile-value">'+esc(compact(t.value))+'</b>'+pct+'</span>'
-      + (t.sub?'<small>'+esc(t.sub)+'</small>':'')+'</button>';
+      + (delta || (t.sub?'<small>'+esc(t.sub)+'</small>':''))+'</button>';
   }).join('')+'</div>';
 }
 
@@ -393,7 +450,8 @@ export function bindViz(root, onNavigate){
 
 /* ----------------------------------------------------------- the CSS */
 export const VIZ_CSS = `
-.viz{margin:0;padding:12px 13px 10px;background:#fff;border:1px solid #d8e2ea;border-radius:6px;min-width:0}
+.viz{margin:0;padding:13px 15px 11px;background:#fff;border:1px solid #e8eef4;border-radius:10px;min-width:0;
+  box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
 .viz figcaption{display:flex;align-items:baseline;gap:8px;margin-bottom:10px}
 .viz-title{font-size:12.5px;font-weight:700;color:#0b0b0b}
 .viz-sub{font-size:10.5px;color:${VIZ.muted}}
@@ -422,18 +480,35 @@ export const VIZ_CSS = `
 .viz-table td.num{text-align:right;font-variant-numeric:tabular-nums}
 
 .viz-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:8px;margin-bottom:10px}
-.viz-tile{display:flex;flex-direction:column;gap:3px;padding:9px 11px;border:1px solid #d8e2ea;
-  border-left:4px solid ${VIZ.muted};border-radius:6px;background:#fff;text-align:left;cursor:pointer}
-.viz-tile:hover{background:#f7fafc}
-.viz-tile.good{border-left-color:${VIZ.status.good}}
-.viz-tile.warning{border-left-color:${VIZ.status.warning}}
-.viz-tile.serious{border-left-color:${VIZ.status.serious}}
-.viz-tile.critical{border-left-color:${VIZ.status.critical}}
-.viz-tile-label{font-size:10px;font-weight:700;color:${VIZ.ink2};text-transform:uppercase;letter-spacing:.5px}
+/* Depth, not a coloured rule: the tiles are one calm surface and the number
+   carries the weight. State still reads - it is on the dot beside the label,
+   so the tile never leans on colour alone. */
+.viz-tile{display:flex;flex-direction:column;gap:3px;padding:11px 13px;border:1px solid #e8eef4;
+  border-radius:10px;background:#fff;text-align:left;cursor:pointer;
+  box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05);
+  transition:transform .16s ease,box-shadow .16s ease}
+.viz-tile:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(10,34,57,.06),0 10px 24px rgba(10,34,57,.10)}
+.viz-tile-label{display:flex;align-items:center;gap:6px;font-size:10px;font-weight:700;
+  color:${VIZ.ink2};text-transform:uppercase;letter-spacing:.5px}
+.viz-tile-label:before{content:"";width:7px;height:7px;border-radius:50%;background:#c9d4de;flex:0 0 auto}
+.viz-tile.good .viz-tile-label:before{background:${VIZ.status.good}}
+.viz-tile.warning .viz-tile-label:before{background:${VIZ.status.warning}}
+.viz-tile.serious .viz-tile-label:before{background:${VIZ.status.serious}}
+.viz-tile.critical .viz-tile-label:before{background:${VIZ.status.critical}}
 .viz-tile-row{display:flex;align-items:baseline;justify-content:space-between;gap:6px}
 .viz-tile-value{font-size:22px;font-weight:700;color:${VIZ.ink};line-height:1.05}
 .viz-tile-pct{font-size:11px;font-weight:700;color:${VIZ.ink2}}
 .viz-tile small{font-size:10px;color:${VIZ.muted}}
+
+.viz-ring{max-width:172px;margin:0 auto;display:block}
+.viz-ring-arc{transition:stroke-dasharray .6s cubic-bezier(.2,.8,.25,1)}
+.viz-ring-value{font-size:23px;font-weight:700;fill:${VIZ.ink}}
+.viz-spark{display:block;width:74px;height:22px;margin:2px 0 1px}
+.viz-tile-spark{display:block}
+.viz-tile-delta{display:block;font-size:10.5px;font-weight:700}
+.viz-tile-delta.up{color:#0d7a34}
+.viz-tile-delta.down{color:#a52a2a}
+.viz-tile-delta i{font-style:normal;font-weight:400;color:${VIZ.muted}}
 
 .viz-meters{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px}
 .viz-meters li{display:flex;flex-direction:column;gap:4px}

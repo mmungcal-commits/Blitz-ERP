@@ -1,6 +1,6 @@
-import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, bindViz, compact }
-  from './viz.js?v=20260807-r27';
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R27.0';
+import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
+  from './viz.js?v=20260807-r28';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R28.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -358,7 +358,13 @@ async function renderHomeDashboard(){
   content.innerHTML='<div class="workspace-loading">Loading your dashboard\u2026</div>';
   let d;
   try{ d=await api('/dashboard/home'); }
-  catch(err){ return renderLaunchpad(); }   // never trap someone on a broken home
+  catch(err){
+    // Fall through to the module map - and set the flag first, or renderLaunchpad
+    // routes straight back here and the loading message spins forever.
+    state.showModuleMap=true;
+    toast('Could not load the dashboard. Opening the modules instead.','error');
+    return renderLaunchpad();
+  }
   const sec=d.sections||{};
   const who=(d.user&&d.user.name)||'';
   const hour=new Date().getHours();
@@ -373,12 +379,17 @@ async function renderHomeDashboard(){
     : '<div class="home-clear">Nothing is waiting on you right now.</div>';
 
   // Tiles run the full width above the charts; they are a status row, not a card.
+  const tr=d.trends||{};
+  const sparkOf=k=>(tr[k]&&tr[k].series)||null;
+  const deltaOf=(k,upIsGood)=>(tr[k]&&tr[k].delta!=null)
+    ? {value:tr[k].delta,period:'vs the 3 days before',upIsGood:upIsGood!==false} : null;
   let tiles='';
   const cards=[];
   if(sec.inventory){
     const i=sec.inventory;
     tiles=vizTiles([
-      {label:'Available',value:i.available,tone:'good',sub:'ready to move',module:'ip-warehouse-management'},
+      {label:'Available',value:i.available,tone:'good',sub:'ready to move',module:'ip-warehouse-management',
+       spark:sparkOf('inventory'),delta:deltaOf('inventory')},
       {label:'Quarantine',value:i.quarantine,tone:i.quarantine?'serious':'good',sub:'held back'},
       {label:'Missing cost',value:i.unvalued,tone:i.unvalued?'critical':'good',sub:'unvalued units'},
       {label:'Open counts',value:i.openCounts,tone:i.openCounts?'warning':'good',sub:'being counted'},
@@ -387,6 +398,12 @@ async function renderHomeDashboard(){
     if((i.byClass||[]).length)
       cards.push(vizDonut(i.byClass.map(r=>({label:r.label||'Unclassified',value:Number(r.value)||0})),
         {title:'Inventory by class',totalLabel:'Units',keyLabel:'Class',valueLabel:'Units'}));
+    const pg=d.progress;
+    if(pg&&pg.pct!=null)
+      cards.push(vizRing(pg.pct,{title:'Counting progress',
+        subtitle:compact(pg.counted)+' of '+compact(pg.expected)+' expected units',
+        caption:'counted',tipLabel:'Counted against expected',
+        tone:pg.pct>=100?'good':pg.pct>=50?'warning':'serious'}));
   }
   if(sec.procurement&&(sec.procurement.topVendors||[]).length)
     cards.push(vizBars(sec.procurement.topVendors.map(r=>({label:r.label||'-',value:Number(r.value)||0})),
@@ -398,6 +415,11 @@ async function renderHomeDashboard(){
   if(sec.service&&(sec.service.byStatus||[]).length)
     cards.push(vizDonut(sec.service.byStatus.map(r=>({label:String(r.label||'').replace(/_/g,' '),value:Number(r.value)||0})),
       {title:'Service jobs by stage',totalLabel:'Jobs',keyLabel:'Stage',valueLabel:'Jobs'}));
+
+  if(tr.all&&tr.all.series)
+    cards.push(vizLine([{label:'Activity',points:tr.all.series.map(p=>(
+      {label:new Date(p.label+'T00:00:00').toLocaleDateString('en-US',{weekday:'short'}),value:p.value}))}],
+      {title:'Activity across the last 7 days',keyLabel:'Day',valueLabel:'Events'}));
 
   const feed=(d.activity||[]).map(a=>
     '<li><b>'+esc(String(a.action||'').replace(/_/g,' ').toLowerCase())+'</b>'
@@ -6183,18 +6205,21 @@ init();
   .home-hello p{margin:3px 0 0;color:#7c8b9c;font-size:12.5px}
 
   .home-waiting{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:9px;margin-bottom:14px}
-  .home-wait{display:flex;align-items:center;gap:12px;padding:13px 15px;border:1px solid #d8e2ea;
-    border-left:4px solid #eb6834;border-radius:8px;background:#fff;text-align:left;cursor:pointer;
+  .home-wait{display:flex;align-items:center;gap:12px;padding:14px 16px;border:1px solid #e8eef4;
+    border-radius:10px;background:#fff;text-align:left;cursor:pointer;
+    box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05);
     transition:transform .16s ease,box-shadow .16s ease}
-  .home-wait:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(10,34,57,.10)}
+  .home-wait:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(10,34,57,.06),0 10px 24px rgba(10,34,57,.10)}
   .home-wait b{font-size:26px;font-weight:700;color:#0a2239;line-height:1}
   .home-wait span{flex:1;font-size:12.5px;color:#42506a;line-height:1.3}
   .home-wait i{font-style:normal;font-size:20px;color:#9fb0c0}
-  .home-clear{margin-bottom:14px;padding:13px 15px;border:1px solid #cfe8d8;border-radius:8px;
-    background:#f2fbf6;color:#1d6b39;font-size:12.5px}
+  .home-clear{margin-bottom:14px;padding:14px 16px;border:1px solid #e8eef4;border-radius:10px;
+    background:#fff;color:#42506a;font-size:12.5px;
+    box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
 
   .home-grid{margin-bottom:14px}
-  .home-feed{padding:13px 15px;border:1px solid #d8e2ea;border-radius:8px;background:#fff}
+  .home-feed{padding:13px 15px;border:1px solid #e8eef4;border-radius:10px;background:#fff;
+    box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
   .home-feed h2{margin:0 0 9px;font-size:12.5px;color:#0a2239}
   .home-feed ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
   .home-feed li{display:flex;align-items:baseline;gap:9px;font-size:12px;color:#42506a;
