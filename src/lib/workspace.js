@@ -17,6 +17,7 @@ export const WORKSPACE_GROUPS = [
   ]},
   { code:'sd', title:'Sales & Distribution', items:[
     item('sd-crm','CRM','CUSTOMERS'),
+    item('sd-demand-planning','Demand Planning','PLANNING'),
     item('sd-order-management','Order Management','SALES'),
     item('sd-lease-contract-management','Lease Contract Management','SALES'),
     item('sd-outbound-logistics','Outbound Logistics','DELIVERIES'),
@@ -29,6 +30,8 @@ export const WORKSPACE_GROUPS = [
     item('ip-inbound-logistics','Inbound Logistics','SHIPMENTS'),
     item('ip-warehouse-management','Warehouse Management','INVENTORY'),
     item('ip-cycle-counting','Inventory & Cycle Counting','INVENTORY'),
+    item('ip-sourcing-purchasing','Sourcing & Purchasing','PROCUREMENT'),
+    item('ip-subcontracting','Subcontracting','PROCUREMENT'),
     item('ip-inventory-analysis','Reports','INVENTORY'),
   ]},
   { code:'mf', title:'Manufacturing', items:[
