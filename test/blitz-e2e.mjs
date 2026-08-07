@@ -986,6 +986,76 @@ await t('a collection is editable as a draft and frozen once posted', async()=>{
   return {note:'draft edits re-split VAT; Finance-only posting; posted is frozen and voided with a reason'};
 });
 
+/*
+ * The Collection action. A bill and its payment are separate facts: the bill is
+ * posted once, the money can arrive in parts on other dates, and either can be
+ * reversed without disturbing the other. What is tested here is that the
+ * balance is always the arithmetic of those two and never a stored guess.
+ */
+await t('a collection is recorded against a posted entry, never a draft', async()=>{
+  const made=await call('POST','/api/receivables/collections',{
+    stream:'MC_SOLD',txnDate:'2026-08-08',salesType:'Sold',documentNo:'SI-7001',
+    customerName:'ANGKAS RIDERS INC',grossAmount:100000,vatType:'VATable',vatRate:0.12});
+  if(!made.json?.ok) throw new Error(made.json?.error);
+  const id=made.json.id;
+
+  // Nothing to collect against a draft: it has not billed anybody yet.
+  const early=await call('POST',`/api/receivables/collections/${id}/collect`,
+    {receiptDate:'2026-08-09',amount:1000});
+  if(early.json?.ok) throw new Error('a draft accepted a collection');
+
+  const posted=await call('POST','/api/receivables/collections/post',{ids:[id]});
+  if(!posted.json?.ok) throw new Error(posted.json?.error);
+
+  // Part payment moves the balance by exactly what came in.
+  const p1=await call('POST',`/api/receivables/collections/${id}/collect`,
+    {receiptDate:'2026-08-09',amount:40000,paymentMethod:'Bank Transfer',bankWallet:'BDO',
+     bankRef:'BDO-77123',clearedStatus:'CLEARED'});
+  if(!p1.json?.ok) throw new Error(p1.json?.error);
+  if(Math.abs(p1.json.balance-60000)>0.005) throw new Error('balance '+p1.json.balance);
+
+  // Overpayment is a different transaction and is refused, not absorbed.
+  const over=await call('POST',`/api/receivables/collections/${id}/collect`,
+    {receiptDate:'2026-08-10',amount:60000.01});
+  if(over.json?.ok) throw new Error('the register accepted more than was billed');
+
+  const p2=await call('POST',`/api/receivables/collections/${id}/collect`,
+    {receiptDate:'2026-08-10',amount:60000,paymentMethod:'GCash'});
+  if(!p2.json?.ok) throw new Error(p2.json?.error);
+  if(Math.abs(p2.json.balance)>0.005) throw new Error('balance after settlement '+p2.json.balance);
+
+  // Settled means settled: nothing more can be taken against it.
+  const extra=await call('POST',`/api/receivables/collections/${id}/collect`,
+    {receiptDate:'2026-08-11',amount:0.5});
+  if(extra.json?.ok) throw new Error('a settled entry took another collection');
+
+  // Reversing a receipt puts the balance back rather than deleting the history.
+  const rc=sqlite.prepare("SELECT id,receipt_no FROM erp_ar_receipts WHERE collection_id=? ORDER BY id").all(id);
+  if(rc.length!==2) throw new Error('receipts stored '+rc.length);
+  const noReason=await call('POST',`/api/receivables/receipts/${rc[1].id}/void`,{});
+  if(noReason.json?.ok) throw new Error('reversed with no reason');
+  const rev=await call('POST',`/api/receivables/receipts/${rc[1].id}/void`,{reason:'cheque bounced'});
+  if(!rev.json?.ok) throw new Error(rev.json?.error);
+  const back=await call('GET',`/api/receivables/collections/${id}/receipts`);
+  if(Math.abs(back.json.collection.balance-60000)>0.005)
+    throw new Error('balance after reversal '+back.json.collection.balance);
+  if((back.json.receipts||[]).length!==2) throw new Error('a reversed receipt was erased');
+  return {note:`${rc[0].receipt_no} + ${rc[1].receipt_no}; part payment, overpayment refused, reversal restores the balance`};
+});
+
+await t('collection % is measured against what was actually posted', async()=>{
+  const s=await call('GET','/api/receivables/summary');
+  if(!s.json?.ok) throw new Error(s.json?.error);
+  const {billed,collected,outstanding,collectionPct,receivablesPct}=s.json;
+  if(!(billed>0)) throw new Error('nothing posted, so the rate cannot be checked');
+  if(Math.abs((collected+outstanding)-billed)>0.02)
+    throw new Error(`collected+outstanding ${collected+outstanding} != billed ${billed}`);
+  // The two rates are the same pair of numbers from either end.
+  if(Math.abs((collectionPct+receivablesPct)-100)>0.02)
+    throw new Error(`rates sum to ${collectionPct+receivablesPct}`);
+  return {note:`billed ${billed}, collected ${collected}, ${Math.round(collectionPct)}% collected`};
+});
+
 await t('a sales order becomes a receivable, once', async()=>{
   const cust=sqlite.prepare("SELECT id FROM erp_partners WHERE partner_type='CUSTOMER' LIMIT 1").get();
   const so=await call('POST','/api/sales',{transactionType:'LEASE',customerId:cust.id,

@@ -4,7 +4,7 @@ import { MODULE_PROFILE_COUNT, definitionFor } from '../src/lib/module-definitio
 import { WORKSPACE_MODULES } from '../src/lib/workspace.js';
 
 test('every enterprise module has a specific functional definition', () => {
-  assert.equal(WORKSPACE_MODULES.length, 83);
+  assert.equal(WORKSPACE_MODULES.length, 84);
   assert.equal(MODULE_PROFILE_COUNT, WORKSPACE_MODULES.length);
   for (const module of WORKSPACE_MODULES) {
     const definition = definitionFor(module);
