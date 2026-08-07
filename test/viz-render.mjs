@@ -21,6 +21,9 @@ const TYPES = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css',
 
 const GROUPS = [{ code:'ip', title:'Inventory & Procurement', items:[
   { code:'ip-cycle-counting', label:'Inventory & Cycle Counting', permission:'INVENTORY', action:'VIEW' },
+  { code:'ip-warehouse-management', label:'Warehouse Management', permission:'INVENTORY', action:'VIEW' },
+]},{ code:'fa', title:'Finance & Accounting', items:[
+  { code:'fa-receivables-payables', label:'Payables Management', permission:'FINANCE', action:'VIEW' },
 ]}];
 
 const SESSION = {
@@ -94,7 +97,10 @@ const server = createServer(async (req,res)=>{
       return res.end(JSON.stringify(HOME));
     }
     if (path.includes('/definition')) return res.end(JSON.stringify({ ok:true, definition:{ fields:[], statuses:[] } }));
-    return res.end(JSON.stringify({ ok:true, rows:[], data:[], counts:[], summary:{} }));
+    // A generic stub still has to carry the shapes the screens destructure,
+    // or a passing navigation looks like a failure.
+    return res.end(JSON.stringify({ ok:true, rows:[], data:[], counts:[], items:[],
+      byLocation:[], summary:{}, total:0, lines:[] }));
   }
   try{
     const name = path === '/' ? 'index.html' : path.slice(1);
@@ -122,6 +128,8 @@ check('signing in lands on a dashboard, not the module map',
 check('the queue with your name on it leads, biggest first',
   (await page.locator('.home-wait b').allTextContents()).join(',') === '3,2',
   (await page.locator('.home-wait span').allTextContents()).join(' | '));
+check('the activity feed is gone from the landing page',
+  (await page.locator('.home-feed').count()) === 0);
 check('the dashboard carries live charts',
   (await page.locator('.home-shell figure.viz').count()) >= 3,
   `${await page.locator('.home-shell figure.viz').count()} figures`);
@@ -138,6 +146,43 @@ check('the delta is signed and named against its period',
   (await page.locator('.viz-tile-delta').first().innerText()).replace(/\s+/g,' ').trim());
 check('a waiting item opens the module it belongs to',
   (await page.locator('[data-home-go="ip-cycle-counting"]').count()) === 1);
+
+// A number you cannot click is a dead end.
+check('every stat tile is clickable and points somewhere',
+  (await page.locator('.viz-tile.is-clickable').count()) === 5,
+  `${await page.locator('.viz-tile.is-clickable').count()} of ${await page.locator('.viz-tile').count()}`);
+// The activity trend spans every module, so it has no single home and stays
+// unclickable rather than pretending to lead somewhere.
+check('every card with a natural home is a way into it',
+  (await page.locator('.home-shell figure.viz-clickable').count()) === 3
+  && (await page.locator('.viz-open').count()) === 3,
+  (await page.locator('.viz-open').allTextContents()).join(' | '));
+check('a card that leads nowhere shows no false affordance',
+  (await page.locator('.home-shell figure.viz:not(.viz-clickable)').count()) === 1
+  && !(await page.locator('.home-shell figure.viz:not(.viz-clickable) .viz-open').count()));
+
+// Clicking a tile actually lands in the module, not just visually reacts.
+await page.locator('.viz-tile[data-viz-open="ip-cycle-counting"]').first().click();
+await page.waitForFunction(() => document.body.classList.contains('workbench-view'), { timeout:8000 });
+check('clicking a tile opens its module',
+  (await page.locator('#pageTitle').textContent()).includes('Cycle Counting'),
+  await page.locator('#pageTitle').textContent());
+await page.goto(base, { waitUntil:'networkidle' });
+await page.waitForSelector('.home-shell', { timeout:8000 });
+
+// And so does the card, without the Table toggle hijacking it.
+await page.locator('figure.viz-clickable').first().locator('.viz-tbl-toggle').click();
+check('the table toggle inside a clickable card does not navigate',
+  await page.locator('.home-shell').isVisible());
+await page.locator('figure.viz-clickable').first().locator('.viz-tbl-toggle').click();
+const card = page.locator('figure[data-viz-open="ip-warehouse-management"]');
+await card.locator('.viz-title').click();
+await page.waitForFunction(() => document.body.classList.contains('workbench-view'), { timeout:8000 });
+check('clicking a chart card opens its module',
+  (await page.locator('#pageTitle').textContent()).includes('Warehouse'),
+  await page.locator('#pageTitle').textContent());
+await page.goto(base, { waitUntil:'networkidle' });
+await page.waitForSelector('.home-shell', { timeout:8000 });
 
 // The map is one button away, and still there.
 await page.screenshot({ path:SHOTS+'home-cockpit.png' });
