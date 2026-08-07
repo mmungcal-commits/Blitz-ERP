@@ -6,6 +6,7 @@ import { audit } from '../lib/audit.js';
 import { ensureLocation, nextCode, normalizeSerial, normalizeText } from '../lib/codes.js';
 import { getAsset, postMovement } from '../lib/inventory.js';
 import { captureFinanceEvent, entityByCode, ensureAccountingPeriod } from '../lib/finance.js';
+import { sendMailQuiet, mailLayout } from '../lib/mailer.js';
 import { cogsAccountForCategory, inventoryAccountForCategory } from '../lib/transaction-rules.js';
 
 export const returnRoutes = new Hono();
@@ -327,6 +328,33 @@ returnRoutes.post('/:id/post', requirePermission('RETURNS','POST'), async(c)=>{
   await audit(c,{action:'POST_RETURN',module:'RETURNS',recordType:'RETURN',recordId:id,
     recordNo:header.return_no,after:{posted,returnType:header.return_type,restockCost,
       customerCreditEventId,inventoryReturnEventId}});
+  // A posted return moves stock and money, so Finance and the department head
+  // are told without anybody having to remember to tell them. Quiet send: a
+  // mail outage must never roll back a posted return.
+  try{
+    const notify=await first(c.env.DB,`SELECT value FROM erp_settings WHERE key='notify_on_return_posted'`);
+    if(String(notify&&notify.value!=null?notify.value:'1')==='1'){
+      const financeTo=(await first(c.env.DB,
+        `SELECT email FROM erp_users WHERE UPPER(role_code)='FINANCE' AND active=1 ORDER BY id LIMIT 1`))?.email;
+      const heads=await all(c.env.DB,
+        `SELECT DISTINCT email FROM erp_users WHERE active=1 AND UPPER(role_code) IN
+         ('DEPTHEAD','DEPT_HEAD','DEPARTMENT_HEAD','SCM_HEAD','DEPT_MANAGER')`);
+      const to=[financeTo].concat(heads.map(h=>h.email)).filter(Boolean);
+      if(to.length){
+        await sendMailQuiet(c.env,{ to:to.join(','),
+          subject:`Goods return posted · ${header.return_no}`,
+          html:mailLayout('Goods return posted',
+            `<p><b>${header.return_no}</b> has been posted.</p>
+             <table cellpadding="6" style="border-collapse:collapse;font-size:13px">
+               <tr><td><b>Type</b></td><td>${String(header.return_type||'-')}</td></tr>
+               <tr><td><b>Units returned</b></td><td>${posted}</td></tr>
+               <tr><td><b>Restock cost</b></td><td>${Number(restockCost||0).toFixed(2)}</td></tr>
+               <tr><td><b>Posted by</b></td><td>${String(c.get('erpUser').email)}</td></tr>
+             </table>`,
+            'Blitz - ERP sent this automatically when the return was posted.') });
+      }
+    }
+  }catch(e){ /* notification is not part of the transaction */ }
   return ok(c,{posted,returnType:header.return_type,restockCost,customerCreditEventId,inventoryReturnEventId});
 });
 

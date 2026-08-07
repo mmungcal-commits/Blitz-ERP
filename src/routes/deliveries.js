@@ -46,7 +46,9 @@ deliveryRoutes.post('/:id/release', requirePermission('DELIVERIES','POST'), asyn
   for(const asset of assets){
     if(asset.reconciliation_status!=='CLEAR')return fail(c,`Serial ${asset.serial_no} has an unresolved reconciliation case`,409);
     const check=await first(c.env.DB,`SELECT * FROM erp_pre_release_checks WHERE serial_no=? ORDER BY id DESC LIMIT 1`,[asset.serial_no]);
-    if(asset.category==='MC'&&(!check||check.result!=='PASSED'))return fail(c,`Serial ${asset.serial_no} requires a passed pre-release checklist`,409);
+    // Pre-release is required on everything that leaves, not only motorcycles.
+    // A battery or a charger going out unchecked is the same exposure.
+    if(!check||check.result!=='PASSED')return fail(c,`Serial ${asset.serial_no} requires a passed pre-release checklist`,409);
     try{
       await postMovement(c.env.DB,{
         serialNo:asset.serial_no,movementType:'GOODS_ISSUANCE',movementDate:b.releaseDate||new Date().toISOString(),

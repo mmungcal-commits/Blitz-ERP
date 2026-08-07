@@ -29,6 +29,12 @@ procurementRoutes.post('/purchase-orders', requirePermission('PROCUREMENT','CREA
   const b=await jsonBody(c); if(!b.vendorName)return fail(c,'Vendor is required');
   const lines=(Array.isArray(b.lines)?b.lines:[]).filter(x=>normalizeText(x.description||x.itemName||x.itemCode)&&numberValue(x.qty)>0);
   if(!lines.length)return fail(c,'At least one purchase-order line is required');
+  // The approved quotation or invoice is mandatory. The browser asks for it too,
+  // but a control that only exists in the browser is not a control - anything
+  // calling the API directly would have walked straight past it.
+  if(!(Array.isArray(b.attachments)&&b.attachments.filter(f=>f&&(f.data||f.url||f.driveFileId)).length)){
+    return fail(c,'Attach the approved quotation or invoice before saving this purchase order.');
+  }
   const vendor=await ensurePartner(c.env.DB,{name:b.vendorName,type:'VENDOR',address:b.vendorAddress||'',sourceSystem:'E88_FINSYS'});
   const no=normalizeText(b.purchaseOrderNo)||await nextCode(c.env.DB,'PURCHASE_ORDER','PO',6);
   const subtotal=lines.reduce((s,x)=>s+numberValue(x.qty)*numberValue(x.unitCost),0); const tax=numberValue(b.taxAmount); const total=subtotal+tax;

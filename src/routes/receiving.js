@@ -68,9 +68,22 @@ receivingRoutes.get('/reports/discrepancies', requirePermission('RECEIVING','VIE
   return ok(c,{rows,total:rows.length});
 });
 
+/*
+ * A receiving discrepancy is a money question, so Finance clears it and the
+ * department head acknowledges - two people, in that order. Anyone with
+ * generic receiving rights used to be able to close it on their own.
+ */
+const FINANCE_ROLES=['FINANCE','FINANCE_MANAGER','CONTROLLER','ACCOUNTING'];
+const DEPT_HEAD_ROLES=['DEPTHEAD','DEPT_HEAD','DEPARTMENT_HEAD','DEPT_MANAGER',
+  'DEPARTMENT_MANAGER','SCM_HEAD','SCM_MANAGER'];
+
 receivingRoutes.post('/variances/:id/resolve', requirePermission('RECEIVING','APPROVE'), async(c)=>{
   const id=Number(c.req.param('id'));
   const b=await jsonBody(c);
+  const user=c.get('erpUser');
+  const role=String(user.role_code||user.role||'').toUpperCase();
+  if(!FINANCE_ROLES.includes(role))
+    return fail(c,'Only Finance can clear a receiving discrepancy.',403);
   const before=await first(c.env.DB,`SELECT * FROM erp_receiving_variances WHERE id=?`,[id]);
   if(!before)return fail(c,'Receiving variance not found',404);
   if(before.status!=='OPEN')return fail(c,'Only an open discrepancy can be resolved',409);
@@ -78,9 +91,33 @@ receivingRoutes.post('/variances/:id/resolve', requirePermission('RECEIVING','AP
   await run(c.env.DB,`
     UPDATE erp_receiving_variances
     SET status='RESOLVED',resolution=?,approved_by=?,approved_at=datetime('now')
-    WHERE id=?`,[String(b.resolution).trim(),c.get('erpUser').email,id]);
+    WHERE id=?`,[String(b.resolution).trim(),user.email,id]);
   const after=await first(c.env.DB,`SELECT * FROM erp_receiving_variances WHERE id=?`,[id]);
   await audit(c,{action:'RESOLVE_VARIANCE',module:'RECEIVING',recordType:'RECEIVING_VARIANCE',
+    recordId:id,recordNo:after.variance_no,before,after});
+  return ok(c,{variance:after,awaitingAcknowledgement:true});
+});
+
+// The department head signs off on what Finance decided. Until this happens the
+// discrepancy is resolved but not closed, so it still shows on the register.
+receivingRoutes.post('/variances/:id/acknowledge', requirePermission('RECEIVING','APPROVE'), async(c)=>{
+  const id=Number(c.req.param('id'));
+  const b=await jsonBody(c).catch(()=>({}));
+  const user=c.get('erpUser');
+  const role=String(user.role_code||user.role||'').toUpperCase();
+  if(!DEPT_HEAD_ROLES.includes(role))
+    return fail(c,'Only a department head can acknowledge a resolved discrepancy.',403);
+  const before=await first(c.env.DB,`SELECT * FROM erp_receiving_variances WHERE id=?`,[id]);
+  if(!before)return fail(c,'Receiving variance not found',404);
+  if(before.status!=='RESOLVED')
+    return fail(c,'Finance must clear this discrepancy before it can be acknowledged.',409);
+  if(String(before.approved_by||'').toLowerCase()===String(user.email).toLowerCase())
+    return fail(c,'The person who cleared a discrepancy cannot also acknowledge it.',409);
+  await run(c.env.DB,`INSERT OR REPLACE INTO erp_receiving_variance_acks(variance_id,acknowledged_by,acknowledged_at,note)
+    VALUES(?,?,datetime('now'),?)`,[id,user.email,String(b.note||'').trim()]);
+  await run(c.env.DB,`UPDATE erp_receiving_variances SET status='CLOSED' WHERE id=?`,[id]);
+  const after=await first(c.env.DB,`SELECT * FROM erp_receiving_variances WHERE id=?`,[id]);
+  await audit(c,{action:'ACKNOWLEDGE_VARIANCE',module:'RECEIVING',recordType:'RECEIVING_VARIANCE',
     recordId:id,recordNo:after.variance_no,before,after});
   return ok(c,{variance:after});
 });

@@ -800,16 +800,81 @@ inventoryRoutes.post('/cycle-counts/:id/submit', requirePermission('INVENTORY','
     UPDATE erp_cycle_counts
     SET status='SUBMITTED',counted_units=?,variance_units=?,submitted_by=?,submitted_at=datetime('now')
     WHERE id=?`,[totals?.counted||0,totals?.variances||0,c.get('erpUser').email,id]);
+  // Submitting starts the chain rather than handing the count straight to one
+  // approver. A resubmitted count gets a clean set of steps.
+  const chain=await countChainOn(c.env.DB);
+  if(chain){
+    await run(c.env.DB,`DELETE FROM erp_cycle_count_approvals WHERE cycle_count_id=?`,[id]);
+    for(let i=0;i<COUNT_CHAIN.length;i+=1){
+      await run(c.env.DB,`INSERT INTO erp_cycle_count_approvals(cycle_count_id,step_no,stage)
+        VALUES(?,?,?)`,[id,i+1,COUNT_CHAIN[i]]);
+    }
+  }
   await audit(c,{action:'SUBMIT_CYCLE_COUNT',module:'INVENTORY',recordType:'CYCLE_COUNT',
     recordId:id,recordNo:count.count_no,after:totals});
-  return ok(c,{status:'SUBMITTED',totals});
+  return ok(c,{status:'SUBMITTED',totals,chain:chain?COUNT_CHAIN:null});
+});
+
+/*
+ * A submitted count is signed by three people before anything posts:
+ * Department Manager, then Department Head, then Finance. The count only
+ * becomes APPROVED - and therefore postable - when the last step signs.
+ */
+const COUNT_CHAIN = ['DEPT_MANAGER','DEPT_HEAD','FINANCE'];
+const COUNT_CHAIN_ROLES = {
+  DEPT_MANAGER:['DEPT_MANAGER','DEPARTMENT_MANAGER','SCM_MANAGER','SCM_HEAD','DEPTHEAD','DEPT_HEAD','DEPARTMENT_HEAD'],
+  DEPT_HEAD:['DEPTHEAD','DEPT_HEAD','DEPARTMENT_HEAD','SCM_HEAD'],
+  FINANCE:['FINANCE','FINANCE_MANAGER','CONTROLLER','ACCOUNTING'],
+};
+async function countChainOn(db){
+  const row=await first(db,`SELECT value FROM erp_settings WHERE key='cycle_count_chain'`);
+  return String(row&&row.value!=null?row.value:'1')==='1';
+}
+async function currentCountStep(db,id){
+  return await first(db,`SELECT * FROM erp_cycle_count_approvals
+    WHERE cycle_count_id=? AND status='PENDING' ORDER BY step_no LIMIT 1`,[id]);
+}
+inventoryRoutes.get('/cycle-counts/:id/chain', requirePermission('INVENTORY','VIEW'), async(c)=>{
+  const id=Number(c.req.param('id'));
+  const steps=await all(c.env.DB,`SELECT * FROM erp_cycle_count_approvals
+    WHERE cycle_count_id=? ORDER BY step_no`,[id]);
+  return ok(c,{steps,pending:steps.find(s=>s.status==='PENDING')||null});
 });
 
 inventoryRoutes.post('/cycle-counts/:id/approve', requirePermission('INVENTORY','APPROVE'), async(c)=>{
   const id=Number(c.req.param('id'));
+  const b=await jsonBody(c).catch(()=>({}));
+  const user=c.get('erpUser');
+  const role=String(user.role_code||user.role||'').toUpperCase();
   const count=await first(c.env.DB,`SELECT * FROM erp_cycle_counts WHERE id=?`,[id]);
   if(!count)return fail(c,'Cycle count not found',404);
   if(count.status!=='SUBMITTED')return fail(c,'Only a submitted cycle count can be approved.',409);
+
+  if(await countChainOn(c.env.DB)){
+    const step=await currentCountStep(c.env.DB,id);
+    if(!step)return fail(c,'This count has no pending approval step.',409);
+    const allowed=COUNT_CHAIN_ROLES[step.stage]||[];
+    if(!allowed.includes(role))
+      return fail(c,`This count is waiting on ${step.stage.replace(/_/g,' ').toLowerCase()} approval.`,403);
+    // Nobody signs their own count, and nobody signs twice in the same chain.
+    if(String(count.submitted_by||'').toLowerCase()===String(user.email).toLowerCase())
+      return fail(c,'You submitted this count, so you cannot approve it.',409);
+    const already=await first(c.env.DB,`SELECT id FROM erp_cycle_count_approvals
+      WHERE cycle_count_id=? AND LOWER(COALESCE(decided_by,''))=? AND status='APPROVED'`,
+      [id,String(user.email).toLowerCase()]);
+    if(already)return fail(c,'You have already signed this count at an earlier step.',409);
+
+    await run(c.env.DB,`UPDATE erp_cycle_count_approvals
+      SET status='APPROVED',decided_by=?,decided_at=datetime('now'),remarks=? WHERE id=?`,
+      [user.email,normalizeText(b.remarks),step.id]);
+    const next=await currentCountStep(c.env.DB,id);
+    if(next){
+      await audit(c,{action:'APPROVE_CYCLE_COUNT_STEP',module:'INVENTORY',recordType:'CYCLE_COUNT',
+        recordId:id,recordNo:count.count_no,after:{signed:step.stage,waitingOn:next.stage}});
+      return ok(c,{status:'SUBMITTED',signed:step.stage,waitingOn:next.stage});
+    }
+  }
+
   await run(c.env.DB,`
     UPDATE erp_cycle_counts SET status='APPROVED',approved_by=?,approved_at=datetime('now') WHERE id=?`,
     [c.get('erpUser').email,id]);
