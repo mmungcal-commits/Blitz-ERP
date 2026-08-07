@@ -1,4 +1,4 @@
-const FOUNDATION_BUILD='BLITZ-ERP-20260806-R15.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R17.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -39,7 +39,7 @@ function money(value){
 }
 function statusBadge(value='DRAFT'){
   const status=String(value).toUpperCase();
-  const tone=/APPROVED|POSTED|CLOSED/.test(status)?'good':/CANCELLED|REJECTED/.test(status)?'bad':/FOR_APPROVAL|PENDING/.test(status)?'warn':'info';
+  const tone=/APPROVED|POSTED|CLOSED|PAID|LIQUIDATED/.test(status)?'good':/CANCELLED|REJECTED/.test(status)?'bad':/FOR_APPROVAL|PENDING|RETURNED|FOR_LIQUIDATION/.test(status)?'warn':'info';
   return `<span class="status ${tone}">${esc(status.replaceAll('_',' '))}</span>`;
 }
 async function api(path,options={}){
@@ -986,18 +986,23 @@ async function renderPaymentRequests(){
   content.innerHTML='<div class="workspace-loading">Loading payment requests…</div>';
   try{
     const [data,master]=await Promise.all([api('/finance/payment-requests'),api('/finance/master-data')]);
+    if(data.mancomMin)window.__rfpMancomMin=Number(data.mancomMin);
     const rows=data.rows.map(row=>{
-      const action=row.status==='DRAFT'?'SUBMIT':row.status==='SUBMITTED'?'DEPARTMENT_APPROVE':
-        row.status==='DEPARTMENT_APPROVED'?'FINANCE_VALIDATE':row.status==='FINANCE_VALIDATED'?'FINAL_APPROVE':
-          row.status==='APPROVED'?'MARK_PAID':row.status==='PAYMENT_PREPARED'?'CONFIRM_PAID':'';
+      // MANCOM sits between Finance and the CEO, but only at or above the threshold.
+      const needsMancom=Number(row.net_payable||0)>=rfpMancomMin();
+      const action=['DRAFT','RETURNED'].includes(row.status)?'SUBMIT':row.status==='SUBMITTED'?'DEPARTMENT_APPROVE':
+        row.status==='DEPARTMENT_APPROVED'?'FINANCE_VALIDATE':
+          row.status==='FINANCE_VALIDATED'?(needsMancom?'MANCOM_APPROVE':'FINAL_APPROVE'):
+            row.status==='MANCOM_APPROVED'?'FINAL_APPROVE':
+              row.status==='APPROVED'?'MARK_PAID':row.status==='PAYMENT_PREPARED'?'CONFIRM_PAID':'';
       return `<tr><td><b>${esc(row.request_no)}</b></td><td>${date(row.request_date)}</td><td>${esc(row.payee_name)}</td>
         <td>${esc(row.department)}</td><td>${esc(row.purchase_order_no||'-')}</td><td class="num">${money(row.net_payable)}</td>
-        <td>${financeStatus(row.status)}</td><td><button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(rfpActionLabel(action))}</button>`:''}${!['PAID','REJECTED','DRAFT'].includes(row.status)?`<button class="table-action" data-rfp-action="RETURN" data-rfp-id="${row.id}">Return</button>`:''}</td></tr>`;
+        <td>${financeStatus(row.status)}</td><td><button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(rfpActionLabel(action))}</button>`:''}${!['PAID','REJECTED','CANCELLED','RETURNED','DRAFT'].includes(row.status)?`<button class="table-action" data-rfp-action="RETURN" data-rfp-id="${row.id}">Return</button>`:''}</td></tr>`;
     });
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newRfp">New Request for Payment</button>
       <button class="command" id="openLiquidations">Cash Advance Liquidation</button>
       <span class="command-spacer"></span><span class="workspace-mode">CONTROLLED PAYMENT WORKFLOW</span></div>
-      ${workflowStrip(['Requestor','Dept Head','Finance Review','CEO Approval','Instruct Bank (MNC)','Proof & Close'],2)}
+      ${workflowStrip(['Requestor','Dept Head','Finance Review','MANCOM (≥ '+money(rfpMancomMin())+')','CEO Approval','Instruct Bank (MNC)','Proof & Close'],2)}
       <section class="workspace-card"><header><h2>Request for Payment Worklist</h2><span>${data.rows.length} requests</span></header>
         ${financeTable(['RFP','Date','Payee','Department','PO','Net Payable','Status','Action'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'approvals');bindWorkbench();
@@ -1014,9 +1019,10 @@ async function submitRfpAction(id,body){
 }
 function runRfpAction(action,id,master){
   // Every approval step is signed. Draw or type, same as the requestor.
-  if(['SUBMIT','DEPARTMENT_APPROVE','FINANCE_VALIDATE'].includes(action)){
+  if(['SUBMIT','DEPARTMENT_APPROVE','FINANCE_VALIDATE','MANCOM_APPROVE'].includes(action)){
     const title={SUBMIT:'Submit request for payment',DEPARTMENT_APPROVE:'Department Head approval',
-      FINANCE_VALIDATE:'Finance validation'}[action];
+      FINANCE_VALIDATE:'Finance validation',
+      MANCOM_APPROVE:'MANCOM approval (at or above '+money(rfpMancomMin())+')'}[action];
     modal(title,`<form id="rfpSignForm" class="operational-form grid">
       <div class="wide">${signatureField('rfpStep','Your signature')}</div>
       <label class="wide"><span>Remarks (optional)</span><input name="notes"></label>
@@ -1037,14 +1043,22 @@ function runRfpAction(action,id,master){
     return;
   }
   if(action==='RETURN'){
+    // Reason dropdown plus remarks, as the live system does it. No signature is
+    // required to return - only to approve.
     modal('Return this request for payment',`<form id="rfpReturnForm" class="operational-form grid">
-      <label class="wide"><span>Reason for returning</span><textarea name="reason" required placeholder="Explain what needs to be corrected"></textarea></label>
+      <label class="wide"><span>Reason for returning</span><select name="reasonCode" required>
+        <option value="">Select a reason…</option>
+        ${RFP_RETURN_REASONS.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join('')}</select></label>
+      <label class="wide"><span>Remarks</span><textarea name="remarks" required placeholder="Explain what needs to be corrected"></textarea></label>
       <div class="modal-actions wide"><button type="submit" class="command primary">Return request</button><button type="button" class="command" id="rfpReturnCancel">Cancel</button></div></form>`,
-      'The requestor, department head and finance are all notified');
+      'It goes back to the requestor to correct and resubmit. The requestor, department head and finance are all notified.');
     const mb=$('#modalBody');
     mb.querySelector('#rfpReturnCancel').onclick=()=>closeModal();
     mb.querySelector('#rfpReturnForm').onsubmit=event=>{event.preventDefault();
-      const f=formDataObject(event.currentTarget);closeModal();submitRfpAction(id,{action:'RETURN',reason:f.reason});};
+      const f=formDataObject(event.currentTarget);
+      const reason=[f.reasonCode,f.remarks].filter(x=>String(x||'').trim()).join(' - ');
+      if(!reason)return toast('Choose a reason and add your remarks.','error');
+      closeModal();submitRfpAction(id,{action:'RETURN',reason:reason});};
     return;
   }
   if(action==='FINAL_APPROVE'){
@@ -1092,7 +1106,14 @@ function runRfpAction(action,id,master){
   }
   submitRfpAction(id,{action:action});
 }
-function rfpActionLabel(a){return ({SUBMIT:'Submit',DEPARTMENT_APPROVE:'Dept Head Approve',FINANCE_VALIDATE:'Finance Validate',FINAL_APPROVE:'CEO Approve',MARK_PAID:'Prepare Payment',CONFIRM_PAID:'Confirm & Attach Proof'})[a]||String(a).replaceAll('_',' ');}
+function rfpActionLabel(a){return ({SUBMIT:'Submit',DEPARTMENT_APPROVE:'Dept Head Approve',FINANCE_VALIDATE:'Finance Validate',MANCOM_APPROVE:'MANCOM Approve',FINAL_APPROVE:'CEO Approve',MARK_PAID:'Prepare Payment',CONFIRM_PAID:'Confirm & Attach Proof'})[a]||String(a).replaceAll('_',' ');}
+// The MANCOM threshold comes from the server (erp_rfp_settings.mancom_min);
+// PHP 100,000 is the documented default until the list endpoint has answered.
+function rfpMancomMin(){return Number(window.__rfpMancomMin||100000);}
+// The reasons the live system offers when an approver sends a request back.
+const RFP_RETURN_REASONS=['Incomplete supporting documents','Incorrect amount or computation',
+  'Wrong payee or bank details','Missing quotation or purchase order','Not within approved budget',
+  'Requires further justification','Duplicate request','Other'];
 
 /* ===================================================================
  * Reusable e-signature field: Draw on a pad, or Type in a signature font.
@@ -5214,6 +5235,9 @@ init();
      +sigCol('Requested by',nameOf('REQUESTOR',reqName),czd(r.request_date),'Requestor',markOf('REQUESTOR'))
      +sigCol('Reviewed By',nameOf('DEPARTMENT',r.department_approved_by||r.dept_head_by||''),czd(r.department_approved_at),'Department Head',markOf('DEPARTMENT'))
      +sigCol('Approved By',nameOf('FINANCE',r.finance_validated_by||r.finance_by||'Mark Alexis Mungcal'),czd(r.finance_validated_at),'Finance & Accounting Manager',markOf('FINANCE'))
+     // The MANCOM block is printed only when the amount actually required that tier.
+     +(signOf('MANCOM')||Number(net)>=rfpMancomMin()
+        ?sigCol('Approved By',nameOf('MANCOM',''),czd((signOf('MANCOM')||{}).created_at),'MANCOM',markOf('MANCOM')):'')
      +sigCol('Approved By',nameOf('FINAL',r.final_approved_by||r.ceo_by||''),czd(r.final_approved_at),'Chief Executive Officer',markOf('FINAL'))
      +'</tr></table>'
      +'<div style="text-align:center;font-size:9.5px;color:#7a8194;padding:8px 5px;margin-top:6px">E88 VENTURES INC. | 15 Brixton St., Kapitolyo, Pasig City 1603 Philippines</div>'
