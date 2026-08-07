@@ -81,24 +81,27 @@ async function submitCount(ccId){
     return r.json;
   } finally { who = prev; }
 }
-async function approveCountChain(ccId, opts){
-  opts = opts || {};
+async function approveCountChain(ccId){
+  // Submitting already signed step one, so walk whatever is still pending and
+  // send the right person to each stage.
+  const SIGNER = { DEPT_MANAGER:'deptmgr@nrdev.ph', DEPT_HEAD:'samuel@nrdev.ph', FINANCE:'mmungcal@nrdev.ph' };
   const prev = who;
   const signed = [];
   try{
-    for (const [email, stage] of [['deptmgr@nrdev.ph','DEPT_MANAGER'],
-                                  ['samuel@nrdev.ph','DEPT_HEAD'],
-                                  ['mmungcal@nrdev.ph','FINANCE']]){
-      who = email;
+    for (let guard = 0; guard < 5; guard += 1){
+      who = 'mmungcal@nrdev.ph';
+      const view = await call('GET', `/api/inventory/cycle-counts/${ccId}/chain`);
+      const pending = view.json?.pending;
+      if (!pending) break;
+      who = SIGNER[pending.stage];
+      if (!who) throw new Error('no signer for stage '+pending.stage);
       const r = await call('POST', `/api/inventory/cycle-counts/${ccId}/approve`, {remarks:'ok'});
-      if (!r.json?.ok) throw new Error(stage+' step: '+(r.json?.error||r.status));
-      signed.push(stage);
-      if (r.json.status === 'APPROVED') break;
+      if (!r.json?.ok) throw new Error(pending.stage+' step: '+(r.json?.error||r.status));
+      signed.push(pending.stage);
     }
   } finally { who = prev; }
   return signed;
 }
-
 
 await t('health', async () => { const r = await call('GET','/api/health'); if(!r.json?.ok) return false; return {note:r.json.build}; });
 await t('session', async () => { const r = await call('GET','/api/session'); if(!r.json?.ok) throw new Error(JSON.stringify(r.json)); return {note:r.json.user.role}; });
@@ -555,7 +558,7 @@ await t('a counted unit that is not in the system gets registered', async()=>{
 
   await submitCount(ccId);
   const signed=await approveCountChain(ccId);
-  if(signed.join('>')!=='DEPT_MANAGER>DEPT_HEAD>FINANCE')
+  if(signed.join('>')!=='DEPT_HEAD>FINANCE')
     throw new Error('chain signed '+signed.join('>'));
   const st=sqlite.prepare('SELECT status FROM erp_cycle_counts WHERE id=?').get(ccId).status;
   if(st!=='APPROVED') throw new Error('count is '+st+' after the full chain');
@@ -620,7 +623,7 @@ await t('an open count plan can be deleted, a submitted one cannot', async()=>{
   if(!(withAll.json.rows||[]).some(r=>r.id===a.json.id)) throw new Error('cancelled plan not recoverable');
 
   const b=await call('POST','/api/inventory/cycle-counts',{locationId:loc.id,countDate:'2026-08-07',category:'CHG'});
-  await call('POST',`/api/inventory/cycle-counts/${b.json.id}/submit`,{});
+  await submitCount(b.json.id);
   const no=await call('DELETE',`/api/inventory/cycle-counts/${b.json.id}`);
   if(no.json?.ok) throw new Error('a submitted plan was deleted');
   return {note:'open plan cancelled, not erased · '+no.json.error.slice(0,44)};
@@ -816,29 +819,47 @@ await t('the cycle count chain refuses to skip a step', async()=>{
   const ccId=cc.json.id;
   await submitCount(ccId);
 
-  // Finance cannot sign first - the chain is an order, not a set.
-  const prev=who; let early, wrongPerson, done;
-  try{
-    who='mmungcal@nrdev.ph';
-    early=await call('POST',`/api/inventory/cycle-counts/${ccId}/approve`,{});
-    if(early.json?.ok) throw new Error('Finance signed before the department did');
-    if(!/dept manager/i.test(early.json.error||'')) throw new Error('wrong refusal: '+early.json.error);
+  // Submitting is itself the first signature, so the sheet arrives already
+  // signed by the department manager and waiting on the department head.
+  const afterSubmit=sqlite.prepare(`SELECT stage,status,decided_by FROM erp_cycle_count_approvals
+    WHERE cycle_count_id=? ORDER BY step_no`).all(ccId);
+  if(afterSubmit[0].status!=='APPROVED'||afterSubmit[0].stage!=='DEPT_MANAGER')
+    throw new Error('the submit did not sign step one: '+JSON.stringify(afterSubmit[0]));
+  if(afterSubmit[0].decided_by!=='judy@nrdev.ph')
+    throw new Error('step one credited to '+afterSubmit[0].decided_by);
 
-    // The counter who submitted it cannot sign it either.
+  const prev=who;
+  try{
+    // Finance cannot jump the queue - the chain is an order, not a set.
+    who='mmungcal@nrdev.ph';
+    const early=await call('POST',`/api/inventory/cycle-counts/${ccId}/approve`,{});
+    if(early.json?.ok) throw new Error('Finance signed before the department head did');
+    if(!/dept head/i.test(early.json.error||'')) throw new Error('wrong refusal: '+early.json.error);
+
+    // And the person who submitted it cannot sign a second time.
     who='judy@nrdev.ph';
-    wrongPerson=await call('POST',`/api/inventory/cycle-counts/${ccId}/approve`,{});
-    if(wrongPerson.json?.ok) throw new Error('the submitter approved their own count');
+    const twice=await call('POST',`/api/inventory/cycle-counts/${ccId}/approve`,{});
+    if(twice.json?.ok) throw new Error('the submitter signed the chain twice');
   } finally { who=prev; }
 
   const signed=await approveCountChain(ccId);
-  if(signed.length!==3) throw new Error('chain took '+signed.length+' steps');
+  if(signed.length!==2) throw new Error('chain took '+signed.length+' steps after the submit');
   const st=sqlite.prepare('SELECT status FROM erp_cycle_counts WHERE id=?').get(ccId).status;
   if(st!=='APPROVED') throw new Error('count is '+st);
   const steps=sqlite.prepare('SELECT stage,status,decided_by FROM erp_cycle_count_approvals WHERE cycle_count_id=? ORDER BY step_no').all(ccId);
   if(steps.length!==3||steps.some(x=>x.status!=='APPROVED')) throw new Error('steps '+JSON.stringify(steps));
   const signers=new Set(steps.map(x=>x.decided_by));
-  if(signers.size!==3) throw new Error('the same person signed twice');
-  return {note:'blocked out-of-order and self-approval; three distinct signers'};
+  if(signers.size!==3) throw new Error('only '+signers.size+' distinct signers');
+
+  // Finance does the posting, and only Finance.
+  const prevPost=who;
+  try{
+    who='judy@nrdev.ph';
+    const nope=await call('POST',`/api/inventory/cycle-counts/${ccId}/post-adjustments`,{});
+    if(nope.json?.ok) throw new Error('a non-Finance user posted the count');
+    if(!/finance/i.test(nope.json.error||'')) throw new Error('wrong refusal: '+nope.json.error);
+  } finally { who=prevPost; }
+  return {note:'submit signs step 1; queue-jumping and double-signing refused; only Finance posts'};
 });
 
 await t('a purchase order without its quotation is refused by the API', async()=>{
