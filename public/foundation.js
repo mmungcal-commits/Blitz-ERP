@@ -1,4 +1,4 @@
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R17.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R18.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -344,7 +344,7 @@ function renderLaunchpad(){
   content.innerHTML=`<section class="enterprise-launchpad">
     <div class="launchpad-controls">
       <div class="launchpad-brand"><img src="/logo-navy.png" alt="E88 Ventures Inc." class="brand-logo"><span class="brand-name">Blitz <i>-</i> ERP</span><small class="brand-sub">E88 Ventures Inc.</small></div>
-      <div><span>${esc(state.session.user.displayName||state.session.user.email)}</span>${state.session.user.role==='ADMIN'?'<button id="launchAccess">User Access</button>':''}<button id="launchScope" class="scope-chip" title="Switch between Operations and System Administration">${state.scope==='ADMIN'?'Admin scope':'Operations scope'}</button><button id="launchRecords">Master Reference</button><button id="expandAllGroups">Expand all</button><button id="collapseAllGroups">Collapse all</button><button id="launchLogout">Sign out</button></div>
+      <div><span>${esc(state.session.user.displayName||state.session.user.email)}</span>${(state.scope==='ADMIN'||state.session.user.role==='ADMIN')?'<button id="launchAccess">User Access</button>':''}<button id="launchScope" class="scope-chip" title="Switch between Operations and System Administration">${state.scope==='ADMIN'?'Admin scope':'Operations scope'}</button><button id="launchRecords">Master Reference</button><button id="expandAllGroups">Expand all</button><button id="collapseAllGroups">Collapse all</button><button id="launchLogout">Sign out</button></div>
     </div>
     <div class="enterprise-map">
       <div class="enterprise-columns">${state.catalog.groups.map(group=>{
@@ -986,7 +986,7 @@ async function renderPaymentRequests(){
   content.innerHTML='<div class="workspace-loading">Loading payment requests…</div>';
   try{
     const [data,master]=await Promise.all([api('/finance/payment-requests'),api('/finance/master-data')]);
-    if(data.mancomMin)window.__rfpMancomMin=Number(data.mancomMin);
+    window.__rfpMancomMin=(data.mancomEnabled&&data.mancomMin)?Number(data.mancomMin):null;
     const rows=data.rows.map(row=>{
       // MANCOM sits between Finance and the CEO, but only at or above the threshold.
       const needsMancom=Number(row.net_payable||0)>=rfpMancomMin();
@@ -1002,7 +1002,7 @@ async function renderPaymentRequests(){
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newRfp">New Request for Payment</button>
       <button class="command" id="openLiquidations">Cash Advance Liquidation</button>
       <span class="command-spacer"></span><span class="workspace-mode">CONTROLLED PAYMENT WORKFLOW</span></div>
-      ${workflowStrip(['Requestor','Dept Head','Finance Review','MANCOM (≥ '+money(rfpMancomMin())+')','CEO Approval','Instruct Bank (MNC)','Proof & Close'],2)}
+      ${workflowStrip(['Requestor','Dept Head','Finance Review'].concat(rfpMancomOn()?['MANCOM (≥ '+money(rfpMancomMin())+')']:[]).concat(['CEO Approval','Instruct Bank (MNC)','Proof & Close']),2)}
       <section class="workspace-card"><header><h2>Request for Payment Worklist</h2><span>${data.rows.length} requests</span></header>
         ${financeTable(['RFP','Date','Payee','Department','PO','Net Payable','Status','Action'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'approvals');bindWorkbench();
@@ -1107,9 +1107,11 @@ function runRfpAction(action,id,master){
   submitRfpAction(id,{action:action});
 }
 function rfpActionLabel(a){return ({SUBMIT:'Submit',DEPARTMENT_APPROVE:'Dept Head Approve',FINANCE_VALIDATE:'Finance Validate',MANCOM_APPROVE:'MANCOM Approve',FINAL_APPROVE:'CEO Approve',MARK_PAID:'Prepare Payment',CONFIRM_PAID:'Confirm & Attach Proof'})[a]||String(a).replaceAll('_',' ');}
-// The MANCOM threshold comes from the server (erp_rfp_settings.mancom_min);
-// PHP 100,000 is the documented default until the list endpoint has answered.
-function rfpMancomMin(){return Number(window.__rfpMancomMin||100000);}
+// The MANCOM tier is switched off for E88: high-value spend is agreed in the
+// MANCOM meeting before it is recorded here. The server tells us
+// (mancomEnabled/mancomMin); Infinity means the stage never applies.
+function rfpMancomMin(){return window.__rfpMancomMin==null?Infinity:Number(window.__rfpMancomMin);}
+function rfpMancomOn(){return isFinite(rfpMancomMin());}
 // The reasons the live system offers when an approver sends a request back.
 const RFP_RETURN_REASONS=['Incomplete supporting documents','Incorrect amount or computation',
   'Wrong payee or bank details','Missing quotation or purchase order','Not within approved budget',
@@ -5236,7 +5238,7 @@ init();
      +sigCol('Reviewed By',nameOf('DEPARTMENT',r.department_approved_by||r.dept_head_by||''),czd(r.department_approved_at),'Department Head',markOf('DEPARTMENT'))
      +sigCol('Approved By',nameOf('FINANCE',r.finance_validated_by||r.finance_by||'Mark Alexis Mungcal'),czd(r.finance_validated_at),'Finance & Accounting Manager',markOf('FINANCE'))
      // The MANCOM block is printed only when the amount actually required that tier.
-     +(signOf('MANCOM')||Number(net)>=rfpMancomMin()
+     +(signOf('MANCOM')
         ?sigCol('Approved By',nameOf('MANCOM',''),czd((signOf('MANCOM')||{}).created_at),'MANCOM',markOf('MANCOM')):'')
      +sigCol('Approved By',nameOf('FINAL',r.final_approved_by||r.ceo_by||''),czd(r.final_approved_at),'Chief Executive Officer',markOf('FINAL'))
      +'</tr></table>'
