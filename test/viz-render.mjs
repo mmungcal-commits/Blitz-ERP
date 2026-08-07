@@ -284,6 +284,74 @@ check('every mark describes itself for hover and keyboard',
 check('no script errors', errors.length === 0, errors.slice(0,2).join(' | ') || 'clean');
 
 /*
+ * Finance's dashboard: the six numbers they asked for, over a period they can
+ * change. A management report without a stated period is not a report.
+ */
+const FIN = JSON.parse(JSON.stringify(HOME));
+FIN.department = 'Finance';
+FIN.period = { from:'2026-08-01', to:'2026-08-08' };
+FIN.focus = ['management','finance','inventory'];
+FIN.sections.management = { period:{from:'2026-08-01',to:'2026-08-08'},
+  availableUnits:412, leasedUnits:96, soldUnits:31, deployedUnits:12,
+  billed:1250000, collected:975000, outstanding:275000, invoices:18,
+  collectionPct:78, receivablesPct:22, overdue:64000, overdueCount:3,
+  aging:[{label:'Current',value:180000},{label:'1-30 days',value:61000},{label:'Over 90 days',value:34000}] };
+zeroHome = FIN;
+const fin = await browser.newPage({ viewport:{ width:1440, height:1100 } });
+await fin.goto(base, { waitUntil:'networkidle' });
+await fin.waitForSelector('.viz-tiles', { timeout:8000 });
+// The labels are uppercased by CSS, so compare on the text, not its casing.
+const finLabels = (await fin.locator('.viz-tile-label').allTextContents()).map(t=>t.trim().toUpperCase());
+check('Finance leads with the six numbers it asked for',
+  ['PENDING APPROVALS','AVAILABLE UNITS','LEASED UNITS','SOLD UNITS','COLLECTION','RECEIVABLES']
+    .every(l => finLabels.includes(l)), finLabels.join(', '));
+check('the period is stated and changeable',
+  (await fin.locator('#homeFrom').inputValue()) === '2026-08-01'
+  && (await fin.locator('#homeTo').inputValue()) === '2026-08-08'
+  && (await fin.locator('[data-range]').count()) === 4,
+  `${await fin.locator('[data-range]').count()} presets`);
+check('collection and receivables are drawn, not just stated',
+  (await fin.locator('.viz-ring-value').first().textContent()).trim() === '78%'
+  && (await fin.locator('figure.viz').count()) >= 3,
+  `${await fin.locator('figure.viz').count()} figures`);
+check('a rate reads as a rate, not a bare number',
+  (await fin.locator('.viz-tile:has-text("Collection") .viz-tile-value').first().innerText()).replace(/\s/g,'') === '78%',
+  (await fin.locator('.viz-tile:has-text("Collection") .viz-tile-value').first().innerText()).replace(/\s/g,''));
+check('the department is named on the greeting',
+  (await fin.locator('.home-hello p').textContent()).includes('Finance'),
+  (await fin.locator('.home-hello p').textContent()).trim());
+await fin.screenshot({ path:SHOTS+'home-finance.png' });
+await fin.close();
+zeroHome = null;
+
+/*
+ * The shape the live system is actually in: inventory empty, no finance data,
+ * no counting progress - so every card but one falls away and a single chart
+ * is left alone in a full-width row. That is where it ballooned.
+ */
+const SPARSE = JSON.parse(JSON.stringify(HOME));
+SPARSE.sections = { inventory:{ available:0, quarantine:0, unvalued:0, openCounts:2, variances:180, byClass:[] } };
+SPARSE.waiting = [];
+SPARSE.progress = null;
+SPARSE.trends = { all:{ series:[{label:'2026-08-02',value:1},{label:'2026-08-03',value:2},
+  {label:'2026-08-04',value:3},{label:'2026-08-05',value:5},{label:'2026-08-06',value:9},
+  {label:'2026-08-07',value:40},{label:'2026-08-08',value:377}], delta:null } };
+zeroHome = SPARSE;
+const sparse = await browser.newPage({ viewport:{ width:1740, height:1000 } });
+await sparse.goto(base, { waitUntil:'networkidle' });
+await sparse.waitForSelector('.home-shell figure.viz', { timeout:8000 });
+const chartBox = await sparse.locator('.home-shell figure.viz').first().boundingBox();
+check('a lone chart does not balloon to fill the page',
+  chartBox.height <= 420, `${Math.round(chartBox.width)}x${Math.round(chartBox.height)}px`);
+check('a chart card stays a sensible width even when it is the only one',
+  chartBox.width <= 700, `${Math.round(chartBox.width)}px wide`);
+const svgBox = await sparse.locator('.home-shell .viz-svg').first().boundingBox();
+check('the plot itself is bounded', svgBox.height <= 320, `${Math.round(svgBox.height)}px tall`);
+await sparse.screenshot({ path:SHOTS+'home-sparse.png' });
+await sparse.close();
+zeroHome = null;
+
+/*
  * Zero must look like zero. A round line cap on a zero-length arc still paints
  * a dot, which reads as "a little bit" when the answer is none.
  */

@@ -919,6 +919,24 @@ await t('only Finance clears a receiving discrepancy, and someone else acknowled
   return {note:'Finance cleared, department head acknowledged, both recorded'};
 });
 
+await t('a sales order carries its item lines and totals them', async()=>{
+  const cust=sqlite.prepare("SELECT id FROM erp_partners WHERE partner_type='CUSTOMER' LIMIT 1").get()
+    || {id:Number(sqlite.prepare("INSERT INTO erp_partners(partner_code,name,partner_type) VALUES('C-TEST','Test Customer','CUSTOMER')").run().lastInsertRowid)};
+  const r=await call('POST','/api/sales',{transactionType:'SALE',customerId:cust.id,
+    orderDate:'2026-08-08',deliveryAddress:'Pasig',
+    lines:[{itemCode:'SP-0001',itemName:'Brake pad',description:'Brake pad',qty:3,unitPrice:500},
+           {itemCode:'SP-0002',itemName:'Chain',description:'Drive chain',qty:2,unitPrice:250}]});
+  if(!r.json?.ok) throw new Error(r.json?.error);
+  // Sales prices the deal; it does not pick serials.
+  const lines=sqlite.prepare('SELECT item_code,description,qty,unit_price,serial_no FROM erp_sales_lines WHERE sales_order_id=? ORDER BY line_no').all(r.json.id);
+  if(lines.length!==2) throw new Error('stored '+lines.length+' lines');
+  if(Number(lines[0].qty)!==3||Number(lines[0].unit_price)!==500) throw new Error('line 1 wrong: '+JSON.stringify(lines[0]));
+  if(lines.some(l=>l.serial_no)) throw new Error('sales assigned a serial, which belongs to outbound');
+  const gross=sqlite.prepare('SELECT gross_amount FROM erp_sales_orders WHERE id=?').get(r.json.id).gross_amount;
+  if(Number(gross)!==2000) throw new Error('gross '+gross+', expected 2000');
+  return {note:'2 lines stored, gross 2,000, no serials assigned'};
+});
+
 
 console.log('\n=== Blitz - ERP end-to-end ===');
 for (const [s, n, note] of results) console.log(`${s}  ${n}${note ? '  ·  ' + note : ''}`);
