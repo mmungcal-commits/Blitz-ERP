@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R42.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R43.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -7974,7 +7974,12 @@ init();
   .pay-proof-by{display:block;font-size:10.5px;color:#8194a6}
   .pay-void td{opacity:.55;text-decoration:line-through}
   .pay-void td:last-child{text-decoration:none}
-  .pay-form{margin-top:13px;padding-top:11px;border-top:1px solid #e2e9f0}
+  /* .operational-form is a flex row, which laid the heading, the fields and the
+     buttons side by side and squeezed the grid into one column. This form is a
+     block: heading, then fields, then actions. */
+  .pay-form{display:block;margin-top:13px;padding:11px 0 0;background:transparent;
+    border-top:1px solid #e2e9f0}
+  .pay-form label{min-width:0}
   .pay-form h3{margin:0 0 8px;font-size:12.5px;color:#0a2239}
   .pay-form .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:9px}
   .pay-form .form-grid label.wide{grid-column:1/-1}
