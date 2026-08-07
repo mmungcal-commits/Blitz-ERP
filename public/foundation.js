@@ -1013,6 +1013,29 @@ async function submitRfpAction(id,body){
     toast('Payment request updated');await renderPaymentRequests();}catch(error){toast(error.message,'error');}
 }
 function runRfpAction(action,id,master){
+  // Every approval step is signed. Draw or type, same as the requestor.
+  if(['SUBMIT','DEPARTMENT_APPROVE','FINANCE_VALIDATE'].includes(action)){
+    const title={SUBMIT:'Submit request for payment',DEPARTMENT_APPROVE:'Department Head approval',
+      FINANCE_VALIDATE:'Finance validation'}[action];
+    modal(title,`<form id="rfpSignForm" class="operational-form grid">
+      <div class="wide">${signatureField('rfpStep','Your signature')}</div>
+      <label class="wide"><span>Remarks (optional)</span><input name="notes"></label>
+      <div class="modal-actions wide"><button type="submit" class="command primary">${esc(rfpActionLabel(action))}</button>
+        <button type="button" class="command" id="rfpSignCancel">Cancel</button></div>
+    </form>`,'Your signature is stored on the document and printed on the form');
+    const mb=$('#modalBody');
+    const pad=bindSignatureField('rfpStep',mb);
+    mb.querySelector('#rfpSignCancel').onclick=()=>closeModal();
+    mb.querySelector('#rfpSignForm').onsubmit=event=>{
+      event.preventDefault();
+      const signed=pad.get();
+      if(!signed)return toast('Draw or type your signature first.','error');
+      const f=formDataObject(event.currentTarget);
+      closeModal();
+      submitRfpAction(id,{action,signature:signed.signature,signatureType:signed.signatureType,notes:f.notes});
+    };
+    return;
+  }
   if(action==='RETURN'){
     modal('Return this request for payment',`<form id="rfpReturnForm" class="operational-form grid">
       <label class="wide"><span>Reason for returning</span><textarea name="reason" required placeholder="Explain what needs to be corrected"></textarea></label>
@@ -1027,9 +1050,17 @@ function runRfpAction(action,id,master){
   if(action==='FINAL_APPROVE'){
     modal('Final Approval - Release for Payment',`<form id="rfpFinalForm" class="operational-form grid">
       <label class="wide"><span>Expense or inventory account code</span><input name="accountCode" value="6990" required></label>
-      <p class="form-note">This account is debited when the supplier bill is recognized on final approval.</p>
-      <button class="command primary">Approve payment</button></form>`);
-    $('#rfpFinalForm').onsubmit=event=>{event.preventDefault();const f=formDataObject(event.currentTarget);closeModal();submitRfpAction(id,{action:action,accountCode:f.accountCode||'6990'});};
+      <div class="wide">${signatureField('rfpFinal','CEO signature')}</div>
+      <div class="modal-actions wide"><button type="submit" class="command primary">Approve payment</button>
+        <button type="button" class="command" id="rfpFinalCancel">Cancel</button></div></form>`);
+    const mbF=$('#modalBody');
+    const finalPad=bindSignatureField('rfpFinal',mbF);
+    mbF.querySelector('#rfpFinalCancel').onclick=()=>closeModal();
+    $('#rfpFinalForm').onsubmit=event=>{event.preventDefault();
+      const signed=finalPad.get();
+      if(!signed)return toast('Draw or type your signature first.','error');
+      const f=formDataObject(event.currentTarget);closeModal();
+      submitRfpAction(id,{action:action,accountCode:f.accountCode||'6990',signature:signed.signature,signatureType:signed.signatureType});};
     return;
   }
   if(action==='MARK_PAID'){
@@ -1062,6 +1093,61 @@ function runRfpAction(action,id,master){
   submitRfpAction(id,{action:action});
 }
 function rfpActionLabel(a){return ({SUBMIT:'Submit',DEPARTMENT_APPROVE:'Dept Head Approve',FINANCE_VALIDATE:'Finance Validate',FINAL_APPROVE:'CEO Approve',MARK_PAID:'Prepare Payment',CONFIRM_PAID:'Confirm & Attach Proof'})[a]||String(a).replaceAll('_',' ');}
+
+/* ===================================================================
+ * Reusable e-signature field: Draw on a pad, or Type in a signature font.
+ * Used by the RFP form and every RFP approval step. Returns a PNG data URL
+ * for DRAW and the typed name for TYPE, so the printed document can render
+ * whichever the signer chose.
+ * =================================================================== */
+function signatureField(prefix,label){
+  return `<div class="sig-field" data-sig="${esc(prefix)}">
+    <span class="sig-label">${esc(label||'Signature')}</span>
+    <div class="sig-tabs">
+      <button type="button" class="table-action active" id="${prefix}TabDraw">Draw</button>
+      <button type="button" class="table-action" id="${prefix}TabType">Type</button>
+    </div>
+    <div id="${prefix}DrawWrap" class="sig-draw">
+      <canvas id="${prefix}Pad" class="po-sigpad" width="460" height="150"></canvas>
+      <button type="button" class="table-action" id="${prefix}ClearPad">Clear</button>
+    </div>
+    <div id="${prefix}TypeWrap" class="sig-type" style="display:none">
+      <input id="${prefix}TypedName" class="sig-typed" placeholder="Type your full name">
+    </div>
+  </div>`;
+}
+
+function bindSignatureField(prefix,root){
+  const q=id=>(root||document).querySelector('#'+prefix+id);
+  let mode='DRAW',ink=false;
+  const pad=q('Pad');
+  if(pad){
+    const ctx=pad.getContext('2d');
+    ctx.lineWidth=2.2;ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#12305f';
+    let drawing=false;
+    const pos=event=>{const r=pad.getBoundingClientRect();const t=event.touches?event.touches[0]:event;
+      return [(t.clientX-r.left)*(pad.width/r.width),(t.clientY-r.top)*(pad.height/r.height)];};
+    const down=event=>{event.preventDefault();drawing=true;const[x,y]=pos(event);ctx.beginPath();ctx.moveTo(x,y);};
+    const move=event=>{if(!drawing)return;event.preventDefault();const[x,y]=pos(event);ctx.lineTo(x,y);ctx.stroke();ink=true;};
+    const up=()=>{drawing=false;};
+    pad.addEventListener('mousedown',down);pad.addEventListener('mousemove',move);window.addEventListener('mouseup',up);
+    pad.addEventListener('touchstart',down,{passive:false});pad.addEventListener('touchmove',move,{passive:false});pad.addEventListener('touchend',up);
+    const clear=q('ClearPad');
+    if(clear)clear.onclick=()=>{ctx.clearRect(0,0,pad.width,pad.height);ink=false;};
+  }
+  const draw=q('TabDraw'),type=q('TabType'),drawWrap=q('DrawWrap'),typeWrap=q('TypeWrap');
+  if(draw)draw.onclick=()=>{mode='DRAW';drawWrap.style.display='';typeWrap.style.display='none';draw.classList.add('active');type.classList.remove('active');};
+  if(type)type.onclick=()=>{mode='TYPE';drawWrap.style.display='none';typeWrap.style.display='';type.classList.add('active');draw.classList.remove('active');};
+  return {
+    mode:()=>mode,
+    get(){
+      if(mode==='DRAW')return ink?{signature:pad.toDataURL('image/png'),signatureType:'DRAW'}:null;
+      const name=(q('TypedName').value||'').trim();
+      return name?{signature:name,signatureType:'TYPE'}:null;
+    },
+  };
+}
+
 function openRfpForm(purchaseOrders,master){
   modal('New Request for Payment',`<form id="rfpForm" class="operational-form grid">
     <label><span>Entity</span><select name="entityCode">${master.entities.map(x=>`<option>${esc(x.entity_code)}</option>`).join('')}</select></label>
@@ -1093,13 +1179,14 @@ function openRfpForm(purchaseOrders,master){
     <label class="wide"><span>Additional remarks</span><input name="remarks"></label>
     <label class="wide"><span>Supporting documents (required)</span><input id="rfpDocs" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.xlsx,.docx"></label>
     <div id="rfpDocList" class="po-doc-list wide"></div>
-    <label class="wide"><span>Signature - type your full name</span><input name="requestorSignature" class="sig-typed" placeholder="Type your full name"></label>
+    <div class="wide">${signatureField('rfpSig','Your signature')}</div>
     <button class="command primary">Save RFP</button></form>`);
   const rfpFiles=[];
   const rfpRender=()=>{const host=$('#rfpDocList');if(!host)return;
     host.innerHTML=rfpFiles.length?rfpFiles.map((f,i)=>`<span class="po-doc-chip">${esc(f.name)} <button type="button" data-rfp-drop="${i}">&times;</button></span>`).join(''):'<span class="po-doc-empty">No file attached yet</span>';
     host.querySelectorAll('[data-rfp-drop]').forEach(b=>b.onclick=()=>{rfpFiles.splice(Number(b.dataset.rfpDrop),1);rfpRender();});};
   rfpRender();
+  const rfpSig=bindSignatureField('rfpSig');
   if($('#rfpDocs'))$('#rfpDocs').onchange=event=>{[...event.target.files].forEach(f=>{if(f.size<=5*1024*1024&&rfpFiles.length<6)rfpFiles.push(f);});event.target.value='';rfpRender();};
   $('#rfpForm').onsubmit=async event=>{event.preventDefault();
     if(!rfpFiles.length){toast('Attach the supporting document before saving.','error');return;}
@@ -1109,7 +1196,10 @@ function openRfpForm(purchaseOrders,master){
       reader.onload=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,data:String(reader.result||'').split(',')[1]||''});
       reader.onerror=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,data:''});
       reader.readAsDataURL(file);})));
-    payload.signatureType='TYPE';
+    const signed=rfpSig.get();
+    if(!signed){toast('Draw or type your signature before saving.','error');return;}
+    payload.requestorSignature=signed.signature;
+    payload.signatureType=signed.signatureType;
     try{await api('/finance/payment-requests',{method:'POST',body:JSON.stringify(payload)});closeModal();toast('Payment request created');await renderPaymentRequests();}
     catch(error){toast(error.message,'error');}};
 }
@@ -5075,7 +5165,17 @@ init();
     var rt=String(r.request_type||'').toLowerCase(),pt=String(r.payment_type||'').toLowerCase(),mop=String(r.mode_of_payment||'').toLowerCase();
     var gross=Number(r.gross_amount||r.amount||0),ewt=Number(r.withholding_amount||0),net=Number(r.net_payable||(gross-ewt));
     var line='<tr>'+['<td style="'+bd+'">'+esc(czd(r.invoice_date||r.request_date))+'</td>','<td style="'+bd+'">'+esc(r.supplier_invoice_no||'')+'</td>','<td style="'+bd+'">'+esc(r.cost_center||'')+'</td>','<td style="'+bd+'">'+esc(r.purpose||'')+'</td>','<td style="'+bd+'">'+esc(r.gl_account||'')+'</td>','<td style="'+bd+';text-align:center">'+esc(r.uom||'-')+'</td>','<td style="'+bd+';text-align:center">1</td>','<td style="'+bd+';text-align:right">'+money2(net)+'</td>','<td style="'+bd+';text-align:right">'+money2(net)+'</td>'].join('')+'</tr>';
-    var sigCol=function(label,name,ts,title){return '<td style="border:1px solid #b9c0cf;padding:8px 6px;vertical-align:top;width:25%;text-align:center"><div style="font-size:10px;color:#333;margin-bottom:2px">'+label+'</div><div style="height:34px"></div><div style="font-size:9.5px;font-weight:400;letter-spacing:.2px;color:#5a6577">'+esc(ts||'')+'</div><div style="border-top:1px solid #15294B;margin-top:2px;padding-top:3px;font-weight:bold;font-size:11px">'+esc(name||' ')+'</div><div style="font-size:10px;color:#445;font-style:italic">'+esc(title)+'</div></td>';};
+    var sigCol=function(label,name,ts,title,mark){
+      var vis='<div style="height:34px"></div>';
+      if(mark){
+        vis=/^data:image\//.test(mark)
+          ? '<div style="height:34px;display:flex;align-items:flex-end;justify-content:center"><img src="'+mark+'" style="max-height:34px;max-width:96%"></div>'
+          : '<div style="height:34px;display:flex;align-items:flex-end;justify-content:center;font-family:\'Segoe Script\',\'Brush Script MT\',cursive;font-size:19px;color:#15294B">'+esc(mark)+'</div>';
+      }
+      return '<td style="border:1px solid #b9c0cf;padding:8px 6px;vertical-align:top;width:25%;text-align:center"><div style="font-size:10px;color:#333;margin-bottom:2px">'+label+'</div>'+vis+'<div style="font-size:9.5px;font-weight:400;letter-spacing:.2px;color:#5a6577">'+esc(ts||'')+'</div><div style="border-top:1px solid #15294B;margin-top:2px;padding-top:3px;font-weight:bold;font-size:11px">'+esc(name||' ')+'</div><div style="font-size:10px;color:#445;font-style:italic">'+esc(title)+'</div></td>';};
+    var signOf=function(stage){var list=(r.__signatures||[]);for(var i=0;i<list.length;i++){if(list[i].stage===stage&&list[i].signature)return list[i];}return null;};
+    var markOf=function(stage){var x=signOf(stage);return x?x.signature:'';};
+    var nameOf=function(stage,fallback){var x=signOf(stage);return (x&&(x.actor_name||x.actor))||fallback||'';};
     var reqName=r.requestor_name||r.requested_by||r.payee_name||'';
     return '<!doctype html><html><head><meta charset="utf-8"><title>Request for Payment '+esc(r.request_no||'')+'</title></head>'
      +'<body style="font-family:Arial,Helvetica,sans-serif;background:#eef1f5;margin:0;color:#222"><div style="max-width:1000px;margin:16px auto;background:#fff;padding:30px">'
@@ -5111,16 +5211,24 @@ init();
      +'<div style="padding:4px 0;font-size:10px;color:#7a8194">for Accounting Only</div>'
      +'<div style="padding:2px 0;font-size:11px"><span style="color:#333">Additional Remarks:</span> '+esc(r.remarks||'')+'</div>'
      +'<table style="width:100%;border-collapse:collapse;margin-top:6px"><tr>'
-     +sigCol('Requested by',reqName,czd(r.request_date),'Requestor')
-     +sigCol('Reviewed By',r.department_approved_by||r.dept_head_by||'',czd(r.department_approved_at),'Operations & Product Director')
-     +sigCol('Approved By',r.finance_validated_by||r.finance_by||'Mark Alexis Mungcal',czd(r.finance_validated_at),'Finance & Accounting Manager')
-     +sigCol('Approved By',r.final_approved_by||r.ceo_by||'',czd(r.final_approved_at),'Chief Executive Officer')
+     +sigCol('Requested by',nameOf('REQUESTOR',reqName),czd(r.request_date),'Requestor',markOf('REQUESTOR'))
+     +sigCol('Reviewed By',nameOf('DEPARTMENT',r.department_approved_by||r.dept_head_by||''),czd(r.department_approved_at),'Department Head',markOf('DEPARTMENT'))
+     +sigCol('Approved By',nameOf('FINANCE',r.finance_validated_by||r.finance_by||'Mark Alexis Mungcal'),czd(r.finance_validated_at),'Finance & Accounting Manager',markOf('FINANCE'))
+     +sigCol('Approved By',nameOf('FINAL',r.final_approved_by||r.ceo_by||''),czd(r.final_approved_at),'Chief Executive Officer',markOf('FINAL'))
      +'</tr></table>'
      +'<div style="text-align:center;font-size:9.5px;color:#7a8194;padding:8px 5px;margin-top:6px">E88 VENTURES INC. | 15 Brixton St., Kapitolyo, Pasig City 1603 Philippines</div>'
      +'<div style="margin-top:14px"><button onclick="window.print()" style="padding:8px 16px;background:#0a2239;color:#fff;border:0;border-radius:4px;cursor:pointer">Print this document</button></div>'
      +'<style>@media print{button{display:none}}</style></div></body></html>';
   }
-  function czPrintRfp(r){try{var w=window.open('','_blank','width=1040,height=1000');if(!w){alert('Please allow pop-ups to print.');return;}w.document.write(czRfpDocHtml(r));w.document.close();}catch(e){if(typeof toast==='function')toast('Unable to print RFP','error');}}
+  async function czPrintRfp(r){
+    try{
+      // Pull the e-signature trail so drawn and typed signatures print on the form.
+      if(r&&r.id){try{var d=await api('/finance/payment-requests/'+r.id);r=Object.assign({},r,d.request||{},{__signatures:d.signatures||[]});}catch(e){}}
+      var w=window.open('','_blank','width=1040,height=1000');
+      if(!w){alert('Please allow pop-ups to print.');return;}
+      w.document.write(czRfpDocHtml(r));w.document.close();
+    }catch(e){if(typeof toast==='function')toast('Unable to print RFP','error');}
+  }
   window.czPrintRfp=czPrintRfp;
   window.czPrintRequisition=czPrintRequisition;window.czPrintPickSlip=czPrintPickSlip;window.czPrintGRN=czPrintGRN;window.czPrintDelivery=czPrintDelivery;
   document.addEventListener('click',function(ev){
@@ -5443,6 +5551,13 @@ init();
 
   /* ---------- Signatures, attachments, pickers ---------- */
   .sig-typed{font-family:"Segoe Script","Brush Script MT",cursive!important;font-size:22px!important;color:#15294B;letter-spacing:.5px}
+  .sig-field{margin:6px 0 2px}
+  .sig-field .sig-label{display:block;font-size:11px;font-weight:700;color:#556;margin-bottom:5px}
+  .sig-field .sig-tabs{display:flex;gap:6px;margin-bottom:6px}
+  .sig-field .sig-tabs .table-action.active{background:#123a63;color:#fff;border-color:#123a63}
+  .po-sigpad{display:block;width:100%;max-width:460px;height:150px;border:1.5px dashed #b6c6d6;border-radius:8px;background:#fcfdff;touch-action:none;cursor:crosshair}
+  .sig-draw{display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+  .sig-type input{width:100%;max-width:460px}
   .po-doc-list{display:flex;flex-wrap:wrap;gap:6px;padding:6px 0}
   .po-doc-chip{display:inline-flex;align-items:center;gap:6px;background:#eef4fb;border:1px solid #cfe0f2;border-radius:14px;padding:3px 10px;font-size:11.5px}
   .po-doc-chip button{border:0;background:none;cursor:pointer;color:#8093a6;font-size:13px;line-height:1}
