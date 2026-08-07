@@ -106,7 +106,10 @@ export function vizDonut(rows, opts){
       value:tail.reduce((s,r)=>s+Number(r.value||0),0)}]);
   }
   const total = data.reduce((s,r)=>s+Number(r.value||0),0);
-  if (!total) return emptyFigure(id, opts, 'Nothing to show yet');
+  // A circle with nothing in it is still a circle. Removing the card leaves a
+  // hole in the grid that reads as a screen that failed to load, so an empty
+  // donut keeps its ring, draws no arc, and says nought in the middle.
+  if (!total) return emptyDonut(id, opts);
 
   const R = 54, r = 34, cx = 62, cy = 62;
   const GAP = 0.035;                       // the 2px surface gap, in radians
@@ -136,7 +139,8 @@ export function vizDonut(rows, opts){
       +'<text x="'+cx+'" y="'+(cy+14)+'" class="viz-heroSub" text-anchor="middle">'+esc(opts.totalLabel||'Total')+'</text>'
     : '';
 
-  return figure({ id, title:opts.title, subtitle:opts.subtitle, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel,
+  return figure({ id, title:opts.title, subtitle:opts.subtitle,
+    open:opts.open, openLabel:opts.openLabel,
     body:'<svg viewBox="0 0 124 124" class="viz-svg viz-donut" role="img" aria-label="'
       +esc(opts.title||'Breakdown')+'">'+arcs+centre+'</svg>',
     legend: legendOf(data.map((r,i)=>({label:r.label+' · '+compact(r.value),
@@ -414,8 +418,25 @@ export function vizMeter(rows, opts){
 }
 
 function emptyFigure(id, opts, message){
-  return figure({ id, title:opts.title, subtitle:opts.subtitle, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel,
+  return figure({ id, title:opts.title, subtitle:opts.subtitle,
+    open:opts.open, openLabel:opts.openLabel,
     body:'<p class="viz-empty">'+esc(message)+'</p>' });
+}
+
+function emptyDonut(id, opts){
+  const R = 54, r = 34, cx = 62, cy = 62;
+  const stroke = R - r;
+  const track = '<circle cx="'+cx+'" cy="'+cy+'" r="'+((R+r)/2)+'" fill="none" stroke="#e8eef4"'
+    +' stroke-width="'+stroke+'"></circle>';
+  const centre = opts.centreLabel!==false
+    ? '<text x="'+cx+'" y="'+(cy-2)+'" class="viz-hero is-zero" text-anchor="middle">0</text>'
+      +'<text x="'+cx+'" y="'+(cy+14)+'" class="viz-heroSub" text-anchor="middle">'
+      +esc(opts.totalLabel||'Total')+'</text>'
+    : '';
+  return figure({ id, title:opts.title, subtitle:opts.subtitle,
+    open:opts.open, openLabel:opts.openLabel,
+    body:'<svg viewBox="0 0 124 124" class="viz-svg viz-donut is-empty" role="img" aria-label="'
+      +esc(opts.title||'Breakdown')+'">'+track+centre+'</svg>' });
 }
 
 /* --------------------------------------------------------- behaviour */
@@ -507,6 +528,7 @@ export const VIZ_CSS = `
 .viz-tick{font-size:9.5px;fill:${VIZ.muted};font-variant-numeric:tabular-nums}
 .viz-val{font-size:10.5px;font-weight:700;fill:${VIZ.ink}}
 .viz-hero{font-size:20px;font-weight:700;fill:${VIZ.ink}}
+.viz-hero.is-zero{fill:${VIZ.muted}}
 .viz-heroSub{font-size:8.5px;fill:${VIZ.muted};text-transform:uppercase;letter-spacing:.7px}
 .viz-bar{cursor:default}
 .viz-bar:focus{outline:none}

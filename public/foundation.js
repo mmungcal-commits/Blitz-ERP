@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R37.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R38.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -92,6 +92,15 @@ function toast(message,type='success'){
   element.textContent=message;
   $('#toastHost').append(element);
   setTimeout(()=>element.remove(),4200);
+}
+/*
+ * The name to put on the screen. Approvals and signed forms use displayName,
+ * which is the full legal name; everywhere the system simply addresses the
+ * person, it uses the name they go by.
+ */
+function personName(u){
+  u = u || (state.session && state.session.user) || {};
+  return u.preferredName || u.displayName || u.email || '';
 }
 function modal(title,body,subtitle=''){
   $('#modalTitle').textContent=title;
@@ -191,7 +200,7 @@ function workspaceTabs(code=state.module?.code){
     ['reports','QR Trace'],['setup','Locations'],
   ];
   if(code==='fa-receivables-management')return [
-    ['center','Receivables Center'],['records','Collections'],['approvals','For Posting'],
+    ['center','Receivables Center'],['records','Sales Register'],['approvals','For Posting'],
     ['reports','Revenue Reports'],['setup','Lists'],
   ];
   if(code==='ip-cycle-counting')return [
@@ -301,7 +310,7 @@ function showAuth(mode='login'){
         ${authField(activation?'Activation code':'Reset code','token','text',token,'autocomplete="one-time-code" required')}
         ${authField('New password','password','password','','autocomplete="new-password" minlength="12" required')}
         ${authField('Confirm password','confirmPassword','password','','autocomplete="new-password" minlength="12" required')}
-        <small class="password-rule">At least 12 characters with uppercase, lowercase, and a number.</small>
+        
         <button class="button auth-submit">${activation?'Activate and sign in':'Update password and sign in'}</button>
       </form>
       <div id="authMessage" class="auth-message"></div>
@@ -341,7 +350,7 @@ async function init(){
     if(state.catalog&&state.catalog.groups)state.catalog.groups.forEach(function(g){if(g.items)g.items=g.items.filter(function(it){return __hiddenModules.indexOf(it.code)<0;});});
     if(state.catalog&&state.catalog.groups)state.catalog.groups.forEach(function(g){if(g.items)g.items.forEach(function(it){if(it.code==='fa-receivables-payables')it.label='Payables Management';if(it.code==='ip-inventory-analysis')it.label='Reports';});});
     state.workspaceAccess=state.session.workspaceAccess||[];
-    $('#userBadge').innerHTML=`<b>${esc(state.session.user.displayName||state.session.user.email)}</b><small>${esc(state.session.user.role)} · ${esc(state.session.user.email)}</small>`;
+    $('#userBadge').innerHTML=`<b>${esc(personName(state.session.user))}</b><small>${esc(state.session.user.role)} · ${esc(state.session.user.email)}</small>`;
     $('#accessBtn').classList.toggle('hidden',state.session.user.role!=='ADMIN');
     $('#loading').classList.add('hidden');
     $('#app').classList.remove('hidden');
@@ -381,7 +390,10 @@ async function renderHomeDashboard(){
     return renderLaunchpad();
   }
   const sec=d.sections||{};
-  const who=(d.user&&d.user.name)||'';
+  // Greet people by the name they go by, not the first word of the name on
+  // their approval documents.
+  const su=(state.session&&state.session.user)||{};
+  const who=su.preferredName||(d.user&&d.user.name)||su.displayName||'';
   const hour=new Date().getHours();
   const greet=hour<12?'Good morning':hour<18?'Good afternoon':'Good evening';
 
@@ -397,9 +409,7 @@ async function renderHomeDashboard(){
   const counting=(i0&&i0.openCounts)||0;
   const emptyHtml=(noUnits&&noMoney)
     ? '<div class="home-empty"><b>No inventory is registered yet.</b>'
-      +(counting
-        ? '<span>You have '+counting+' count sheet'+(counting===1?'':'s')+' open. Units become available once Finance posts the count \u2014 that is what turns counted serials into registered stock.</span>'
-        : '<span>Post a physical count, or receive a shipment, and these numbers start filling in.</span>')
+      +(counting?'<span>'+counting+' count sheet'+(counting===1?'':'s')+' open.</span>':'')
       +'</div>'
     : '';
 
@@ -592,7 +602,7 @@ function renderLaunchpad(){
   content.innerHTML=`<section class="enterprise-launchpad">
     <div class="launchpad-controls">
       <div class="launchpad-brand"><img src="/logo-navy.png" alt="E88 Ventures Inc." class="brand-logo"><span class="brand-name">Blitz <i>-</i> ERP</span><small class="brand-sub">E88 Ventures Inc.</small></div>
-      <div><span>${esc(state.session.user.displayName||state.session.user.email)}</span>${(state.scope==='ADMIN'||state.session.user.role==='ADMIN')?'<button id="launchAccess">User Access</button>':''}<button id="launchScope" class="scope-chip" title="Switch between Operations and System Administration">${state.scope==='ADMIN'?'Admin scope':'Operations scope'}</button><button id="launchRecords">Master Reference</button><button id="expandAllGroups">Expand all</button><button id="collapseAllGroups">Collapse all</button><button id="launchLogout">Sign out</button></div>
+      <div><span>${esc(personName(state.session.user))}</span>${(state.scope==='ADMIN'||state.session.user.role==='ADMIN')?'<button id="launchAccess">User Access</button>':''}<button id="launchScope" class="scope-chip" title="Switch between Operations and System Administration">${state.scope==='ADMIN'?'Admin scope':'Operations scope'}</button><button id="launchRecords">Master Reference</button><button id="expandAllGroups">Expand all</button><button id="collapseAllGroups">Collapse all</button><button id="launchLogout">Sign out</button></div>
     </div>
     <div class="enterprise-map">
       <div class="enterprise-columns">${state.catalog.groups.map(group=>{
@@ -627,9 +637,7 @@ function renderLaunchpad(){
     const admin=state.scope==='ADMIN';
     if(!state.session.user.canUseAdminScope&&!admin)return toast('This account is not enabled for System Administration.','error');
     modal(admin?'You are in System Administration':'You are in Operations',
-      `<div class="operational-form"><p>${admin?'Setup, users and backup are available. Approvals are intentionally blocked in this scope.':'Transactions and approvals are available. System setup is blocked in this scope.'}</p>
-       <p>The scope is fixed for the whole session. To switch, sign out and pick the other scope on the sign-in screen.</p>
-       <div class="modal-actions"><button type="button" class="command primary" id="scopeSwitch">Sign out and switch</button><button type="button" class="command" id="scopeStay">Stay here</button></div></div>`);
+      `<div class="operational-form"><div class="modal-actions"><button type="button" class="command primary" id="scopeSwitch">Sign out and switch</button><button type="button" class="command" id="scopeStay">Stay here</button></div></div>`);
     const mb=$('#modalBody');
     mb.querySelector('#scopeStay').onclick=()=>closeModal();
     mb.querySelector('#scopeSwitch').onclick=async()=>{setScope(admin?'OPERATIONS':'ADMIN');closeModal();await logout();};
@@ -727,7 +735,7 @@ function renderMobileLaunchpad(){
   const user=state.session&&state.session.user||{};
   let body='<div class="mtile-wrap"><div class="mtile-home-top">'
     +'<div class="mtile-brand"><img src="/logo-navy.png" alt=""><div><b>Blitz <i>-</i> ERP</b>'
-    +'<small>'+esc(user.displayName||user.email||'')+'</small></div></div>'
+    +'<small>'+esc(personName(user))+'</small></div></div>'
     +'<button type="button" class="mtile-signout" id="mSignOut">Sign out</button></div>';
   if(open){
     body+='<button type="button" class="mtile-back" id="mGroupBack">&lsaquo; All modules</button>'
@@ -850,7 +858,7 @@ function workbenchShell(body,active=state.section){
   return `<section class="erp-workbench">
     <div class="workbench-headwrap">
     <header class="workbench-systembar">
-      <div><button class="workbench-home" title="Blitz - ERP">▦</button><span class="workbench-user-dot">●</span><b>${esc(user.displayName||user.email)}</b><small>${esc(user.role)}</small></div>
+      <div><button class="workbench-home" title="Blitz - ERP">▦</button><span class="workbench-user-dot">●</span><b>${esc(personName(user))}</b><small>${esc(user.role)}</small></div>
       <div><span>INTERNAL</span><button class="workbench-home">Modules</button><button class="workbench-logout">Sign out</button></div>
     </header>
     <div class="workbench-modulebar">
@@ -908,8 +916,8 @@ function recordsTable(rows){
 function operationalEmpty(message){
   return `<div class="workspace-empty"><b>${esc(message)}</b></div>`;
 }
-function outboundEmptyHint(title,detail){
-  return `<div class="outbound-empty"><p class="oe-title">${esc(title)}</p><p class="oe-detail">${esc(detail)}</p><button type="button" class="command primary" data-section-link="records">Go to Requisitions</button></div>`;
+function outboundEmptyHint(title){
+  return `<div class="outbound-empty"><p class="oe-title">${esc(title)}</p><button type="button" class="command primary" data-section-link="records">Go to Requisitions</button></div>`;
 }
 function operationalTable(headers,rows,options={}){
   if(!rows.length)return operationalEmpty(options.emptyMessage||'No records');
@@ -1392,7 +1400,7 @@ function runRfpAction(action,id,master){
       <label class="wide"><span>Remarks (optional)</span><input name="notes"></label>
       <div class="modal-actions wide"><button type="submit" class="command primary">${esc(rfpActionLabel(action))}</button>
         <button type="button" class="command" id="rfpSignCancel">Cancel</button></div>
-    </form>`,'Your signature is stored on the document and printed on the form');
+    </form>`,'');
     const mb=$('#modalBody');
     const pad=bindSignatureField('rfpStep',mb);
     mb.querySelector('#rfpSignCancel').onclick=()=>closeModal();
@@ -1415,7 +1423,7 @@ function runRfpAction(action,id,master){
         ${RFP_RETURN_REASONS.map(r=>`<option value="${esc(r)}">${esc(r)}</option>`).join('')}</select></label>
       <label class="wide"><span>Remarks</span><textarea name="remarks" required placeholder="Explain what needs to be corrected"></textarea></label>
       <div class="modal-actions wide"><button type="submit" class="command primary">Return request</button><button type="button" class="command" id="rfpReturnCancel">Cancel</button></div></form>`,
-      'It goes back to the requestor to correct and resubmit. The requestor, department head and finance are all notified.');
+      '');
     const mb=$('#modalBody');
     mb.querySelector('#rfpReturnCancel').onclick=()=>closeModal();
     mb.querySelector('#rfpReturnForm').onsubmit=event=>{event.preventDefault();
@@ -1614,7 +1622,7 @@ async function renderLiquidations(){
         <span class="command-spacer"></span><span class="workspace-mode">CASH ADVANCE LIQUIDATION</span></div>
       <section class="workspace-card"><header><h2>Your approved cash advances</h2><span>${(eligible.rows||[]).length} available</span></header>
         ${operationalTable(['RFP','Date','Purpose','Advance','RFP Status','Action'],eligRows,
-          {emptyMessage:'You have no fully approved cash advance to liquidate. A liquidation only opens once the cash-advance RFP is fully approved.'})}</section>
+          {emptyMessage:'No approved cash advance to liquidate.'})}</section>
       <section class="workspace-card"><header><h2>Liquidation register</h2><span>${(existing.rows||[]).length} records</span></header>
         ${operationalTable(['Liquidation','Cash advance','Requestor','Advance','Spent','Variance','Status','Action'],liqRows)}</section>`;
     content.innerHTML=workbenchShell(body,'approvals');bindOperationalShell();
@@ -1742,7 +1750,7 @@ async function openMobileReceive(shipmentId,workbench,lookups){
         <button type="button" class="command" id="mrClose">Close</button>
       </div>
     </div>`,
-    'Scan and confirm. Every confirmed unit is matched against the ATLAS manifest.');
+    '');
   const mb=$('#modalBody');
   let pending='';
   const setStatus=(text,tone)=>{const el=mb.querySelector('#mrStatus');el.className='mr-status '+(tone||'');el.innerHTML=text;};
@@ -2003,7 +2011,7 @@ async function openServiceJob(id){
         <div class="line-editor-head"><b>Assembly card - parts drawn from inventory</b>
           ${editable&&!['COMPLETED','CLOSED'].includes(h.status)?'<button type="button" id="svcAddPart">Add part</button>':''}</div>
         ${operationalTable(['Item','Description','Serial','Qty','Unit cost','Line cost','State','Action'],partRows,
-          {key:'svc-parts',emptyMessage:'No parts drawn yet. A part picked here leaves inventory immediately.'})}
+          {key:'svc-parts',emptyMessage:'No parts drawn yet.'})}
 
         <div class="line-editor-head" style="margin-top:10px"><b>Labour</b>${editable?'<button type="button" id="svcAddLabor">Edit labour</button>':''}</div>
         ${operationalTable(['Description','Technician','Hours','Rate','Amount'],laborRows,{key:'svc-labor',emptyMessage:'No labour recorded'})}
@@ -2084,7 +2092,7 @@ function openServicePartPicker(jobId,lookups,done){
     <label class="wide"><span>Notes</span><input id="svcPartNotes"></label>
     <div class="modal-actions wide"><button type="submit" class="command primary">Add to job</button>
       <button type="button" class="command" id="svcPartCancel">Cancel</button></div>
-  </form>`,'A serialised part leaves inventory the moment it is added');
+  </form>`,'');
   const mb=$('#modalBody');
   const serialSel=mb.querySelector('#svcPartSerial'),itemSel=mb.querySelector('#svcPartItem'),cost=mb.querySelector('#svcPartCost'),qty=mb.querySelector('#svcPartQty');
   serialSel.onchange=()=>{const o=serialSel.selectedOptions[0];if(o&&o.value){cost.value=o.dataset.cost||0;qty.value=1;qty.readOnly=true;itemSel.value='';}else qty.readOnly=false;};
@@ -2144,7 +2152,7 @@ function openServiceComplete(jobId,parts,done,workPerformed){
       <span class="used-of">of ${esc(p.qty)}</span></div>`).join('')||'<div class="workspace-empty"><b>No parts to confirm</b></div>'}</div>
     <div class="modal-actions"><button type="button" class="command primary" id="svcCompleteGo">Complete job</button>
       <button type="button" class="command" id="svcCompleteCancel">Cancel</button></div></div>`,
-    'Anything not used stays reserved and can be returned to inventory');
+    '');
   const mb=$('#modalBody');
   mb.querySelector('#svcCompleteCancel').onclick=()=>closeModal();
   mb.querySelector('#svcCompleteGo').onclick=async()=>{
@@ -2170,7 +2178,7 @@ function openServiceReturn(jobId,reserved,lookups,done){
     </div>`).join('')}</div>
     <div class="modal-actions"><button type="button" class="command primary" id="svcRetGo">Return to inventory</button>
       <button type="button" class="command" id="svcRetCancel">Cancel</button></div></div>`,
-    'Returned units become available in the warehouse again');
+    '');
   const mb=$('#modalBody');
   mb.querySelector('#svcRetCancel').onclick=()=>closeModal();
   mb.querySelector('#svcRetGo').onclick=async()=>{
@@ -2317,7 +2325,7 @@ function openMobileCount(countId,data){
         // The identify dialog takes over the modal, so the panel is rebuilt
         // afterwards from fresh data rather than left behind an empty shell.
         await identifyCountedUnit(countId,{id:r.lineId,actual_serial_no:serial},
-          {note:'This serial is not in the system yet. Identify it now, or set the model once in "Details for units not yet in the system" and keep scanning.'});
+          {note:'This serial is not in the system yet.'});
         try{
           const fresh=await api(`/inventory/cycle-counts/${countId}`,{noCache:true});
           closeModal();openMobileCount(countId,fresh);
@@ -2718,7 +2726,7 @@ async function renderFinancePlanning(section){
 
 function renderFinanceControlNotes(title,items){
   const body=`<section class="workspace-card"><header><h2>${esc(title)}</h2></header>
-    <div class="definition-list finance-control-list">${items.map(([label,text])=>`<div><b>${esc(label)}</b><span>${esc(text)}</span></div>`).join('')}</div></section>`;
+    <div class="definition-list finance-control-list">${items.map(([label])=>`<div><b>${esc(label)}</b></div>`).join('')}</div></section>`;
   content.innerHTML=workbenchShell(body,state.section);bindWorkbench();
 }
 
@@ -2960,7 +2968,7 @@ async function renderPurchaseOrderForm(){
       payload.approvers=approvers;payload.creatorSignature=sig.signature;payload.creatorSignatureType=sig.signatureType;payload.creatorName=(state.session&&state.session.user&&(state.session.user.displayName||state.session.user.email))||'';}
     try{const result=await api('/procurement/purchase-orders',{method:'POST',body:JSON.stringify(payload)});
       if(result.chainBuilt&&result.firstToken){const link=location.origin+'/approve.html?token='+result.firstToken;
-        modal('Purchase order routed for approval',`<div class="operational-form"><p><b>${esc(result.purchaseOrderNo)}</b> is now FOR APPROVAL.</p><p style="color:#556;font-size:12px">Send this link to the first approver (Department Head). Each approver gets the next link automatically after they sign - no login needed.</p><label><span>Approval link</span><input id="poShareLink" readonly value="${esc(link)}"></label><div class="modal-actions"><button type="button" class="command primary" id="poCopyLink">Copy link</button><button type="button" class="command" id="poDoneLink">Done</button></div></div>`);
+        modal('Purchase order routed for approval',`<div class="operational-form"><p><b>${esc(result.purchaseOrderNo)}</b> is now FOR APPROVAL.</p><label><span>Approval link</span><input id="poShareLink" readonly value="${esc(link)}"></label><div class="modal-actions"><button type="button" class="command primary" id="poCopyLink">Copy link</button><button type="button" class="command" id="poDoneLink">Done</button></div></div>`);
         const mb=$('#modalBody');mb.querySelector('#poCopyLink').onclick=()=>{const i=mb.querySelector('#poShareLink');i.select();try{document.execCommand('copy');}catch(e){}try{navigator.clipboard&&navigator.clipboard.writeText(link);}catch(e){}toast('Link copied');};
         mb.querySelector('#poDoneLink').onclick=async()=>{closeModal();await renderPurchaseOrders();};
       } else {toast(`Purchase order ${result.purchaseOrderNo} created`);await renderPurchaseOrders();}
@@ -3035,7 +3043,7 @@ async function scanQrWithCamera(onScan){
   }
   let stream;
   let stopped=false;
-  modal('Scan QR / serial',`<div class="scanner"><video id="qrVideo" playsinline autoplay muted></video><canvas id="qrCanvas" hidden></canvas><p>Point the camera at the unit QR code. Works on Android and iOS.</p><button class="command" id="stopScanner">Close scanner</button></div>`);
+  modal('Scan QR / serial',`<div class="scanner"><video id="qrVideo" playsinline autoplay muted></video><canvas id="qrCanvas" hidden></canvas><button class="command" id="stopScanner">Close scanner</button></div>`);
   const stop=()=>{
     stopped=true;
     stream?.getTracks().forEach(track=>track.stop());
@@ -3177,7 +3185,7 @@ async function renderGoodsReceipt(selectedShipmentId=''){
         state.inbound.receiptLines=[];state.inbound.shipment=null;state.inbound.locationId=null;
         const __rid=result.receiptId,__rno=result.receiptNo,__loc=(result.location&&result.location.code)||'';
         await renderGoodsReceipt();
-        modal('Goods Receipt posted',`<div class="operational-form"><p><b>${esc(__rno)}</b> was posted${__loc?(' to '+esc(__loc)):''}.</p><p style="color:#556;font-size:12px;margin:4px 0 10px">Print the Goods Receipt Note now, or reprint it anytime from the receipt row.</p><div class="modal-actions"><button type="button" class="command primary" id="grPrintNow">Print GR</button><button type="button" class="command" id="grReprint">Reprint</button><button type="button" class="command" id="grDone">Done</button></div></div>`);
+        modal('Goods Receipt posted',`<div class="operational-form"><p><b>${esc(__rno)}</b> was posted${__loc?(' to '+esc(__loc)):''}.</p><div class="modal-actions"><button type="button" class="command primary" id="grPrintNow">Print GR</button><button type="button" class="command" id="grReprint">Reprint</button><button type="button" class="command" id="grDone">Done</button></div></div>`);
         const __pf=()=>{try{if(window.czPrintGRN&&__rid)window.czPrintGRN(__rid);}catch(e){}};
         const __mb=$('#modalBody');
         if(__mb){if(__mb.querySelector('#grPrintNow'))__mb.querySelector('#grPrintNow').onclick=__pf;
@@ -3214,10 +3222,10 @@ async function renderInboundDiscrepancies(){
       </div>
       <section class="workspace-card"><header><div><h2>Expected Shipment vs Goods Receipt</h2></div>
         <label class="disc-toggle"><input type="checkbox" id="discShowAll" ${__anyVar?'':'checked'}> Show shipments with no variance</label></header>
-        ${__anyVar?'':'<div class="recon-clean"><b>All shipments reconcile</b><p>Every received shipment matches its ATLAS manifest, with no quantity or serial variances.</p></div>'}
+        ${__anyVar?'':'<div class="recon-clean"><b>All shipments reconcile</b></div>'}
         <div id="discSummaryWrap" class="${__anyVar?'only-var':''}">${operationalTable(['Shipment','Purchase Order','Receipt Locations','Expected','Received','Qty Variance','Serial Variances','Status'],summaryRows)}</div></section>
       <section class="workspace-card" id="openDiscSection"><header><h2>Open Serial Discrepancies</h2><span>${details.total} exceptions</span></header>
-        ${details.total?operationalTable(['Variance','PO','Shipment','Receipt','Location','Type','Expected Serial','Actual Serial','Reason','Action'],detailRows):'<div class="recon-clean"><b>No open serial discrepancies</b><p>Nothing to resolve. Unexpected or missing serials from receiving would appear here.</p></div>'}</section>`;
+        ${details.total?operationalTable(['Variance','PO','Shipment','Receipt','Location','Type','Expected Serial','Actual Serial','Reason','Action'],detailRows):'<div class="recon-clean"><b>No open serial discrepancies</b></div>'}</section>`;
     content.innerHTML=workbenchShell(body,'setup');
     bindOperationalShell();
     const __kod=$('#kpiOpenDisc');if(__kod){const __jump=()=>{const el=document.getElementById('openDiscSection');if(el)el.scrollIntoView({behavior:'smooth',block:'start'});};__kod.onclick=__jump;__kod.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();__jump();}};}
@@ -3382,7 +3390,7 @@ async function openRequisitionDetail(id,lookups){
     const optgroups=Object.keys(byItem).sort().map(name=>`<optgroup label="${esc(name)} (${byItem[name].length} available)">${byItem[name].map(a=>`<option value="${esc(a.serial_no)}">${esc(a.category)} · ${esc(a.serial_no)} · ${esc(a.current_location_code||'No location')}</option>`).join('')}</optgroup>`).join('');
     const allocateBlock=editable?`
       <section class="record-sublist">
-        <header><div><h3>Allocate Available Serials</h3><p>Pick the exact units to reserve on this requisition. Motorcycles then flow to the Pre-release checklist.</p></div></header>
+        <header><div><h3>Allocate Available Serials</h3></div></header>
         <div class="lease-unit-picker"><label><span>Available Serial Numbers</span>
           <div class="serial-picker" id="reqAllocPicker"><select class="serial-add"><option value="">Add a serial…</option>${optgroups||''}</select><div class="serial-chips"></div></div></label>
           <div><button type="button" class="command primary" id="reqAllocBtn">Allocate Selected Serials</button></div></div>
@@ -3477,7 +3485,7 @@ async function renderGoodsIssuance(){
       <td><button class="table-action" data-release-delivery="${row.id}">Post Goods Issuance</button></td></tr>`);
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],2)}
       <section class="workspace-card"><header><div><h2>Goods Issuance Worklist</h2></div></header>
-      ${rows.length?operationalTable(['Delivery','Requisition','Assignment','Schedule','Destination','Holder','Serials','Status','Action'],rows):outboundEmptyHint('No deliveries are waiting to be issued.','A delivery lands here automatically once you approve a requisition (Requisitions tab, Approve & Create Delivery). For motorcycles, pass the Pre-release checklist first, then use Post Goods Issuance here.')}</section>`;
+      ${rows.length?operationalTable(['Delivery','Requisition','Assignment','Schedule','Destination','Holder','Serials','Status','Action'],rows):outboundEmptyHint('No deliveries are waiting to be issued.')}</section>`;
     let __gi=[];try{for(let __p=1;__p<=8;__p++){const __r=await api('/deliveries?size=250&page='+__p);const __rr=(__r.rows||[]);__gi=__gi.concat(__rr);if(__rr.length<250)break;}}catch(e){}
     const __giRows=__gi.map(r=>`<tr class="clickable-row" data-gi-open="${r.id}" data-gi-status="${esc(r.status)}"><td><b>${esc(r.delivery_no)}</b> <button class="table-action" data-print-dlv="${r.id}">Print</button></td><td>${esc(r.requisition_no||r.sales_order_no||'-')}</td><td>${esc(r.assignment_no||'-')}</td><td>${esc(r.destination||'-')}</td><td>${esc(r.recipient_name||'-')}</td><td>${esc(r.asset_count||0)}</td><td>${statusBadge(r.status)}</td><td>${esc((r.scheduled_date||r.created_at||'').slice(0,10))}</td></tr>`);
     const __giBody=`<section class="workspace-card"><header><div><h2>Goods Issuance Register</h2><span>All ${__gi.length} outbound movements (actuals).</span></div></header>${operationalTable(['Delivery','Requisition','Assignment','Destination','Holder','Serials','Status','Date'],__giRows)}</section>`;
@@ -3518,7 +3526,7 @@ async function renderDeliveryReturns(){
         :'-'}</td></tr>`;});
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],3)}
       <section class="workspace-card"><header><h2>Delivery Confirmation</h2></header>
-        ${deliveryRows.length?operationalTable(['Delivery','Requisition','Assignment / Sale','Destination','Holder','Status','Action'],deliveryRows):outboundEmptyHint('No deliveries are ready to confirm.','This list is only for confirming outbound deliveries to a customer or holder, which flow from an approved requisition then Goods Issuance. To bring a delivered unit back to the warehouse you do NOT need a requisition; use Create Goods Return below.')}</section>
+        ${deliveryRows.length?operationalTable(['Delivery','Requisition','Assignment / Sale','Destination','Holder','Status','Action'],deliveryRows):outboundEmptyHint('No deliveries are ready to confirm.')}</section>
       ${__dallBody}
       <section class="workspace-card"><header><div><h2>Create Goods Return</h2></div></header>
         <form id="returnForm" class="operational-form grid">
@@ -3727,7 +3735,7 @@ async function renderAssemblyWorkbench(){
     const locOpt=(lookups.locations||[]).map(l=>`<option value="${l.id}" data-code="${esc(l.code)}">${esc(l.code)} · ${esc(l.name)}</option>`).join('');
     const rows=(data.rows||[]).map(a=>`<tr><td><b>${esc(a.assembly_no)}</b></td><td>${esc(a.output_item_name)}</td><td class="num">${esc(a.component_count)}</td><td class="num">${money(a.total_cost)}</td><td>${esc(a.location_code||'-')}</td><td>${statusBadge(a.status)}</td><td>${a.status==='BUILT'?`<button class="table-action" data-disasm="${a.id}">Disassemble</button>`:'-'}</td></tr>`);
     const body=`<div class="ramco-layout"><div class="ramco-main">
-      <section class="workspace-card"><header><div><h2>Build Assembly</h2><span>Combine parts into one bundled unit. Serialized parts become unusable (In Assembly) until you disassemble.</span></div></header>
+      <section class="workspace-card"><header><div><h2>Build Assembly</h2></div></header>
         <form id="asmForm" class="operational-form grid">
           <label><span>Assembly / output name</span><input name="outputItemName" required placeholder="e.g. Swap Station Cabinet (built)"></label>
           <label><span>Location</span><select name="locationId" id="asmLoc"><option value="">Select…</option>${locOpt}</select></label>
@@ -3868,7 +3876,7 @@ async function renderQrTrace(){
   const body=`<div class="ramco-layout"><div class="ramco-main"><section class="workspace-card qr-trace-card">
     <header><h2>QR / Serial Trace</h2></header>
     <div class="scan-entry"><input id="traceSerial" placeholder="Scan or enter serial number"><button class="command primary" id="traceLookup">Trace Unit</button>
-      <button class="command" id="traceCamera">Scan QR</button></div><div id="traceResult">${operationalEmpty('Scan a unit to see its current location and status.')}</div>
+      <button class="command" id="traceCamera">Scan QR</button></div><div id="traceResult">${operationalEmpty('No unit scanned.')}</div>
   </section></div></div>`;
   content.innerHTML=workbenchShell(body,'reports');
   bindOperationalShell();
@@ -3943,28 +3951,42 @@ async function renderArCenter(){
     const s=await api('/receivables/summary');
     const t=s.totals||{};
     const tiles=vizTiles([
-      {label:'Collected',value:Number(t.gross||0),suffix:'',sub:'gross, this register',module:'fa-receivables-management#records'},
-      {label:'Posted',value:Number(t.posted||0),tone:'good',sub:'final',module:'fa-receivables-management#records'},
+      {label:'Billed',value:Number(s.billed||0),sub:Number(s.billedCount||0)+' posted',
+       module:'fa-receivables-management#records'},
+      {label:'Collected',value:Number(s.collected||0),tone:'good',sub:'received',
+       module:'fa-receivables-management#records'},
+      {label:'Outstanding',value:Number(s.outstanding||0),
+       tone:Number(s.outstanding)>0?'warning':'good',sub:'still to collect',
+       module:'fa-receivables-management#records'},
       {label:'For posting',value:Number(t.draftCount||0),tone:Number(t.draftCount)?'warning':'good',
        sub:money(t.draft)+' in draft',module:'fa-receivables-management#approvals'},
-      {label:'Net of VAT',value:Number(t.net||0),sub:'revenue',module:'fa-receivables-management#reports'},
       {label:'Output VAT',value:Number(t.vat||0),sub:'payable',module:'fa-receivables-management#reports'}
     ]);
     const cards=[
+      vizRing(s.collectionPct==null?0:s.collectionPct,{title:'Collection rate',
+        subtitle:s.collectionPct==null?'nothing posted yet':money(s.collected)+' of '+money(s.billed)+' billed',
+        caption:'collected',valueLabel:s.collectionPct==null?'0%':undefined,
+        open:'fa-receivables-management#records',openLabel:'Open the register',
+        tone:s.collectionPct==null?null:(s.collectionPct>=80?'good':s.collectionPct>=50?'warning':'critical')}),
+      vizRing(s.receivablesPct==null?0:s.receivablesPct,{title:'Receivables',
+        subtitle:s.receivablesPct==null?'nothing outstanding':money(s.outstanding)+' outstanding',
+        caption:'uncollected',valueLabel:s.receivablesPct==null?'0%':undefined,
+        open:'fa-receivables-management#records',openLabel:'Open the register',
+        tone:s.receivablesPct==null?null:(s.receivablesPct<=20?'good':s.receivablesPct<=50?'warning':'critical')}),
       vizDonut((s.byStream||[]).map(r=>({label:AR_STREAMS[r.label]||r.label,value:Number(r.value)||0})),
-        {title:'Revenue by stream',totalLabel:'Collected',keyLabel:'Stream',valueLabel:'Amount',
-         open:'fa-receivables-management#records',openLabel:'Open the collections'}),
+        {title:'Revenue by stream',totalLabel:'Gross',keyLabel:'Stream',valueLabel:'Amount',
+         open:'fa-receivables-management#records',openLabel:'Open the register'}),
       vizBars((s.byCustomer||[]).map(r=>({label:r.label||'-',value:Number(r.value)||0})),
-        {title:'Top customers',money:true,color:VIZ.series[2],keyLabel:'Customer',valueLabel:'Collected',
-         limit:8,labelWidth:130,open:'fa-receivables-management#records',openLabel:'Open the collections'}),
+        {title:'Top customers',money:true,color:VIZ.series[2],keyLabel:'Customer',valueLabel:'Gross',
+         limit:8,labelWidth:130,open:'fa-receivables-management#records',openLabel:'Open the register'}),
       vizColumns((s.byMonth||[]).map(r=>({label:String(r.label||'').slice(5),value:Number(r.value)||0})),
-        {title:'Collections by month',money:true,keyLabel:'Month',valueLabel:'Collected',
+        {title:'Sales by month',money:true,keyLabel:'Month',valueLabel:'Gross',
          open:'fa-receivables-management#reports',openLabel:'Open the reports'}),
     ];
     content.innerHTML=workbenchShell(tiles+'<div class="viz-grid">'+cards.join('')+'</div>'
       +`<section class="workspace-card"><header><div><h2>Receivables Management</h2>
-        <span>${Number(t.n||0)} entries \u00b7 ${money(t.gross)} collected \u00b7 ${money(t.net)} net of VAT</span></div>
-        <button class="ramco-primary" data-section-link="records">Open collections</button></header></section>`,'center');
+        <span>${Number(t.n||0)} entries \u00b7 ${money(t.gross)} gross \u00b7 ${money(t.net)} net of VAT</span></div>
+        <button class="ramco-primary" data-section-link="records">Open the register</button></header></section>`,'center');
     bindOperationalShell();
     bindViz(content,null,dest=>{const [code,sec]=String(dest).split('#');
       if(code===state.module.code&&sec)return openSection(sec);
@@ -3975,7 +3997,7 @@ async function renderArCenter(){
 async function renderArCollections(forceStatus){
   const f=state.ar;
   if(forceStatus!==undefined)f.status=forceStatus;
-  content.innerHTML='<div class="workspace-loading">Loading collections\u2026</div>';
+  content.innerHTML='<div class="workspace-loading">Loading the register\u2026</div>';
   try{
     const qs=new URLSearchParams({page:String(f.page),size:'50'});
     if(f.stream)qs.set('stream',f.stream);
@@ -3997,13 +4019,16 @@ async function renderArCollections(forceStatus){
         <td class="num">${money(r.gross_amount)}</td>
         <td class="num">${money(r.net_amount)}</td>
         <td class="num">${money(r.output_vat)}</td>
+        <td class="num">${r.status==='POSTED'?money(r.collected):'-'}</td>
+        <td class="num">${r.status==='POSTED'?money(r.balance):'-'}</td>
         <td>${esc(r.payment_method||'-')}</td>
         <td>${statusBadge(r.cleared_status||'PENDING')}</td>
         <td>${statusBadge(r.status)}</td>
         <td>${draft?`<button class="table-action" data-ar-edit="${r.id}">Edit</button>
              <button class="table-action" data-ar-post="${r.id}">Post</button>
              <button class="table-action danger" data-ar-del="${r.id}">Remove</button>`
-            :(r.status==='POSTED'?`<button class="table-action danger" data-ar-void="${r.id}">Void</button>`:'-')}</td>
+            :(r.status==='POSTED'?`<button class="table-action primary" data-ar-collect="${r.id}">Collection</button>
+             <button class="table-action danger" data-ar-void="${r.id}">Void</button>`:'-')}</td>
       </tr>`;});
 
     const streamOpts=['<option value="">All streams</option>']
@@ -4019,14 +4044,14 @@ async function renderArCollections(forceStatus){
         <input id="arQ" placeholder="Customer, entry or receipt no." value="${esc(f.q)}">
         <button class="command" id="arApply">Apply</button>
         <span class="command-spacer"></span>
-        <button class="command primary" id="arNew">New collection</button>
+        <button class="command primary" id="arNew">New entry</button>
         <button class="command" id="arPostSelected">Post selected</button></div>
       <section class="workspace-card">
-        <header><div><h2>Collections</h2><span>${Number(t.n||0)} entries \u00b7 ${money(t.gross)} gross \u00b7
+        <header><div><h2>Sales register</h2><span>${Number(t.n||0)} entries \u00b7 ${money(t.gross)} gross \u00b7
           ${money(t.posted)} posted \u00b7 ${money(t.draft)} still in draft</span></div></header>
         ${operationalTable(['','Entry','Date','Stream','Customer','Receipt','Description',
-          'Gross','Net of VAT','Output VAT','Method','Cleared','Status','Action'],rows,
-          {emptyMessage:'No collections match this filter.'})}
+          'Gross','Net of VAT','Output VAT','Collected','Balance','Method','Cleared','Status','Action'],rows,
+          {emptyMessage:'No entries match this filter.'})}
       </section>`;
     content.innerHTML=workbenchShell(body,f.status==='DRAFT'?'approvals':'records');
     bindOperationalShell();
@@ -4042,6 +4067,7 @@ async function renderArCollections(forceStatus){
     $$('[data-ar-post]').forEach(b=>b.onclick=()=>arPost([Number(b.dataset.arPost)]));
     $$('[data-ar-del]').forEach(b=>b.onclick=()=>arRemove(Number(b.dataset.arDel)));
     $$('[data-ar-void]').forEach(b=>b.onclick=()=>arVoid(Number(b.dataset.arVoid)));
+    $$('[data-ar-collect]').forEach(b=>b.onclick=()=>arCollect(Number(b.dataset.arCollect),lists));
     $('#arPostSelected').onclick=()=>{
       const ids=$$('.ar-pick:checked').map(x=>Number(x.value));
       if(!ids.length)return toast('Tick the entries you want to post.','error');
@@ -4051,10 +4077,8 @@ async function renderArCollections(forceStatus){
 
 /* Posting is final, so it asks once and says exactly how many and how much. */
 function arPost(ids){
-  modal(ids.length===1?'Post this collection?':`Post ${ids.length} collections?`,
-    `<div class="operational-form"><p>Posting makes the entry final. It can no longer be edited \u2014
-      a posted entry is corrected by voiding it with a reason, which stays on the register.</p>
-     <div class="modal-actions"><button type="button" class="command primary" id="arPostYes">
+  modal(ids.length===1?'Post this entry?':`Post ${ids.length} entries?`,
+    `<div class="operational-form"><div class="modal-actions"><button type="button" class="command primary" id="arPostYes">
        ${ids.length===1?'Post it':'Post all '+ids.length}</button>
      <button type="button" class="command" id="arPostNo">Not yet</button></div></div>`);
   const mb=$('#modalBody');
@@ -4072,9 +4096,7 @@ function arPost(ids){
 
 function arRemove(id){
   modal('Remove this draft?',
-    `<div class="operational-form"><p>A draft that was entered in error can be removed outright.
-      Anything already posted is voided instead, so the register keeps the history.</p>
-     <div class="modal-actions"><button type="button" class="command primary" id="arDelYes">Remove it</button>
+    `<div class="operational-form"><div class="modal-actions"><button type="button" class="command primary" id="arDelYes">Remove it</button>
      <button type="button" class="command" id="arDelNo">Keep it</button></div></div>`);
   const mb=$('#modalBody');
   mb.querySelector('#arDelNo').onclick=()=>closeModal();
@@ -4088,8 +4110,7 @@ function arRemove(id){
 function arVoid(id){
   modal('Void this posted entry?',
     `<form id="arVoidForm" class="operational-form">
-      <p>The entry stays on the register marked void, with your reason against it.</p>
-      <label class="wide"><span>Reason</span><input name="reason" required placeholder="Duplicate receipt, wrong customer\u2026"></label>
+      <label class="wide"><span>Reason</span><input name="reason" required></label>
       <div class="modal-actions"><button type="submit" class="command primary">Void it</button>
       <button type="button" class="command" id="arVoidNo">Cancel</button></div></form>`);
   const mb=$('#modalBody');
@@ -4099,6 +4120,95 @@ function arVoid(id){
     try{await api(`/receivables/collections/${id}/void`,{method:'POST',
       body:JSON.stringify(formDataObject(e.currentTarget))});
       closeModal();toast('Voided');await renderArCollections();}
+    catch(error){toast(error.message,'error');}
+  };
+}
+
+/*
+ * Collection against a posted entry. The entry says what was billed; this says
+ * what came in, and there can be several against one bill. The balance is what
+ * the form is really about, so it is what the amount field starts on.
+ */
+async function arCollect(id,lists){
+  try{
+    const d=await api('/receivables/collections/'+id+'/receipts');
+    const c=d.collection||{};
+    const L=(lists&&lists.lists)||{};
+    const opt=(arr,val)=>['<option value=""></option>'].concat((arr||[]).map(v=>
+      `<option value="${esc(v)}" ${String(val||'')===v?'selected':''}>${esc(v)}</option>`)).join('');
+    const balance=Number(c.balance||0);
+    const settled=balance<=0.005;
+    const history=(d.receipts||[]).map(r=>`<tr class="${r.status==='VOID'?'is-void':''}">
+        <td><b>${esc(r.receipt_no)}</b></td><td>${date(r.receipt_date)}</td>
+        <td class="num">${money(r.amount)}</td>
+        <td>${esc(r.payment_method||'-')}</td><td>${esc(r.bank_ref||r.or_no||'-')}</td>
+        <td>${statusBadge(r.cleared_status||'PENDING')}</td>
+        <td>${r.status==='VOID'?statusBadge('VOID'):
+          `<button class="table-action danger" data-rcpt-void="${r.id}">Reverse</button>`}</td>
+      </tr>`);
+
+    modal(`Collection on ${esc(c.entry_no||'')}`,
+      `<div class="operational-form ar-collect">
+        <div class="ar-collect-head">
+          <div><span>Customer</span><b>${esc(c.customer_name||'-')}</b></div>
+          <div><span>Billed</span><b>${money(c.gross_amount)}</b></div>
+          <div><span>Collected</span><b>${money(c.collected)}</b></div>
+          <div><span>Balance</span><b class="${settled?'is-good':'is-open'}">${money(balance)}</b></div>
+        </div>
+        ${history.length?operationalTable(['Receipt','Date','Amount','Method','Reference','Cleared',''],
+          history):''}
+        ${settled?'':`<form id="arCollectForm">
+          <div class="form-grid">
+            <label><span>Date received</span><input name="receiptDate" type="date" required
+              value="${new Date().toISOString().slice(0,10)}"></label>
+            <label><span>Amount</span><input name="amount" type="number" step="0.01" min="0.01"
+              max="${balance}" required value="${balance.toFixed(2)}"></label>
+            <label><span>Payment method</span><select name="paymentMethod">${opt(L.PAYMENT_METHOD,c.payment_method)}</select></label>
+            <label><span>Bank or wallet</span><select name="bankWallet">${opt(L.BANK,c.bank_wallet)}</select></label>
+            <label><span>Bank reference</span><input name="bankRef"></label>
+            <label><span>OR number</span><input name="orNo"></label>
+            <label><span>Settlement date</span><input name="settlementDate" type="date"></label>
+            <label><span>Cleared</span><select name="clearedStatus">
+              <option value="PENDING">Pending</option><option value="CLEARED">Cleared</option>
+              <option value="BOUNCED">Bounced</option></select></label>
+            <label class="wide"><span>Remarks</span><input name="remarks"></label>
+          </div>
+          <div class="modal-actions"><button type="submit" class="command primary">Record collection</button>
+          <button type="button" class="command" id="arCollectNo">Close</button></div></form>`}
+        ${settled?`<div class="modal-actions"><button type="button" class="command" id="arCollectNo">Close</button></div>`:''}
+      </div>`);
+
+    const mb=$('#modalBody');
+    mb.querySelector('#arCollectNo').onclick=()=>closeModal();
+    mb.querySelectorAll('[data-rcpt-void]').forEach(b=>b.onclick=()=>
+      arReceiptVoid(Number(b.dataset.rcptVoid),id,lists));
+    const form=mb.querySelector('#arCollectForm');
+    if(form)form.onsubmit=async e=>{
+      e.preventDefault();
+      try{
+        const r=await api(`/receivables/collections/${id}/collect`,{method:'POST',
+          body:JSON.stringify(formDataObject(e.currentTarget))});
+        closeModal();
+        toast(`${r.receiptNo} recorded, ${money(r.balance)} outstanding`);
+        await renderArCollections();
+      }catch(error){toast(error.message,'error');}
+    };
+  }catch(error){toast(error.message,'error');}
+}
+
+function arReceiptVoid(receiptId,collectionId,lists){
+  modal('Reverse this collection?',
+    `<form id="rcptVoidForm" class="operational-form">
+      <label class="wide"><span>Reason</span><input name="reason" required></label>
+      <div class="modal-actions"><button type="submit" class="command primary">Reverse it</button>
+      <button type="button" class="command" id="rcptVoidNo">Cancel</button></div></form>`);
+  const mb=$('#modalBody');
+  mb.querySelector('#rcptVoidNo').onclick=()=>arCollect(collectionId,lists);
+  mb.querySelector('#rcptVoidForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{await api(`/receivables/receipts/${receiptId}/void`,{method:'POST',
+      body:JSON.stringify(formDataObject(e.currentTarget))});
+      toast('Reversed');await arCollect(collectionId,lists);}
     catch(error){toast(error.message,'error');}
   };
 }
@@ -4177,15 +4287,15 @@ async function renderArReports(){
     content.innerHTML=workbenchShell(
       '<div class="viz-grid">'
       +vizDonut((s.byStream||[]).map(r=>({label:AR_STREAMS[r.label]||r.label,value:Number(r.value)||0})),
-        {title:'Revenue by stream',totalLabel:'Collected',keyLabel:'Stream',valueLabel:'Amount'})
+        {title:'Revenue by stream',totalLabel:'Gross',keyLabel:'Stream',valueLabel:'Amount'})
       +vizColumns((s.byMonth||[]).map(r=>({label:String(r.label||'').slice(5),value:Number(r.value)||0})),
-        {title:'Collections by month',money:true,keyLabel:'Month',valueLabel:'Collected'})
+        {title:'Sales by month',money:true,keyLabel:'Month',valueLabel:'Gross'})
       +'</div>'
       +`<section class="workspace-card"><header><div><h2>Revenue by stream</h2>
         <span>${money(t.gross)} gross \u00b7 ${money(t.net)} net \u00b7 ${money(t.vat)} output VAT</span></div></header>
-        ${operationalTable(['Stream','Collected'],rows)}</section>`
-      +`<section class="workspace-card"><header><h2>Collections by month</h2></header>
-        ${operationalTable(['Month','Collected'],months)}</section>`,'reports');
+        ${operationalTable(['Stream','Gross'],rows)}</section>`
+      +`<section class="workspace-card"><header><h2>Sales by month</h2></header>
+        ${operationalTable(['Month','Gross'],months)}</section>`,'reports');
     bindOperationalShell();bindViz(content);
   }catch(error){showWorkspaceError(error);}
 }
@@ -4371,7 +4481,7 @@ function identifyCountedUnit(countId,line,opts){
           <button type="submit" class="command primary">Save</button>
           <button type="button" class="command" id="iduSkip">${esc(opts.skipLabel||'Skip for now')}</button>
         </div>
-      </form>`,'Anything left blank is still counted and flagged for review');
+      </form>`,'');
     const mb=$('#modalBody');
     // Offer the item codes already in the system so the counter can pick rather
     // than type - and once a known code is entered, the master fills in the
@@ -4441,7 +4551,7 @@ function openCountUpload(countId,header){
     +'<div class="modal-actions wide">'
     +'<button type="button" class="command primary" id="cuImport" disabled>Import</button>'
     +'<button type="button" class="command" id="cuClose">Close</button>'
-    +'</div></div>','Re-uploading the same file adds nothing - counted serials are skipped');
+    +'</div></div>','');
   const mb=$('#modalBody');
   let csvText='';
   mb.querySelector('#cuTemplate').onclick=function(){downloadCountTemplate(header);};
@@ -4556,8 +4666,8 @@ async function renderPhysicalCount(countId=state.cycleCount){
       const line=(data.lines||[]).find(x=>String(x.id)===b.dataset.editLine);
       if(!line)return;
       await identifyCountedUnit(id,line,{title:'Edit counted unit',lockSerial:!!line.expected_serial_no,
-        note:line.is_new_unit?'This serial is not in the system yet. Identify it and it will be registered at this location when the count is posted.'
-          :'This unit is already registered. You can correct the serial you scanned.',skipLabel:'Cancel'});
+        note:line.is_new_unit?'This serial is not in the system yet.'
+          :'This unit is already registered.',skipLabel:'Cancel'});
       await renderPhysicalCount(id);
     });
     $$('[data-drop-line]').forEach(b=>b.onclick=async()=>{
@@ -4614,7 +4724,7 @@ async function renderCycleVariances(countId=state.cycleCount){
         <label class="wide"><span>Remarks explaining the discrepancy</span><textarea name="remarks" required></textarea></label>
         <div class="modal-actions wide"><button type="submit" class="command primary">Apply to ${picked.length} line(s)</button>
           <button type="button" class="command" id="ovCancel">Cancel</button></div></form>`,
-        'Only Finance can override a physical count variance');
+        '');
       const mb=$('#modalBody');
       mb.querySelector('#ovCancel').onclick=()=>closeModal();
       mb.querySelector('#ovForm').onsubmit=async event=>{
@@ -4635,13 +4745,9 @@ async function renderCycleVariances(countId=state.cycleCount){
 
 function renderCycleSetup(){
   const body=`<div class="setup-grid">
-    <section class="workspace-card"><header><h2>Cycle Count Method</h2></header><ol class="setup-steps">
-      <li>Create a count plan for one warehouse or retail location.</li><li>Print the physical count sheet or open it on a mobile device.</li>
-      <li>Scan each unit QR/serial or enter it manually.</li><li>Submit to mark uncounted expected units as missing.</li>
-      <li>Review and approve the generated variance report.</li></ol></section>
     <section class="workspace-card"><header><h2>Variance Types</h2></header><div class="definition-list">
-      <div><b>MISSING</b><span>Expected at the location but not counted.</span></div><div><b>LOCATION MISMATCH</b><span>Found but registered in another location.</span></div>
-      <div><b>UNKNOWN SERIAL</b><span>Scanned serial does not exist in inventory.</span></div><div><b>DUPLICATE</b><span>Serial was already scanned in the count.</span></div>
+      <div><b>MISSING</b></div><div><b>LOCATION MISMATCH</b></div>
+      <div><b>UNKNOWN SERIAL</b></div><div><b>DUPLICATE</b></div>
     </div></section></div>`;
   content.innerHTML=workbenchShell(body,'setup');bindOperationalShell();
 }
@@ -4667,7 +4773,7 @@ async function renderRecordConsole(entityKey,search,includeInactive){
       var act='<button class="table-action" data-rec-edit="'+r.id+'">Edit</button>'+(data.hasActive?(isInactive?'<button class="table-action" data-rec-restore="'+r.id+'">Restore</button>':'<button class="table-action danger" data-rec-del="'+r.id+'">Delete</button>'):'');
       return '<tr'+(isInactive?' style="opacity:.5"':'')+'>'+tds+'<td>'+act+'</td></tr>';
     }).join('');
-    content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>Master Reference</h1><p>'+(cfg.financeAccess?'You have finance-level access - edits apply directly.':'Enter the edit passcode when prompted to save changes.')+' Delete deactivates a record (reversible via Restore). Every change is audited.</p></div><button class="command" id="recBack">&larr; Blitz - ERP</button></div>'+
+    content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>Master Reference</h1></div><button class="command" id="recBack">&larr; Blitz - ERP</button></div>'+
       '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">'+tabHtml+'</div>'+
       '<div class="workspace-commandbar"><input id="recSearch" placeholder="Search '+esc(ent.label)+'" value="'+esc(search||'')+'"><button class="command primary" id="recApply">Search</button><label class="inline-control" style="margin-left:10px"><input type="checkbox" id="recInactive" '+(includeInactive?'checked':'')+'> Include deactivated</label>'+(ent.create?'<button class="command" id="recAdd" style="margin-left:auto">+ Add '+esc(ent.label)+'</button>':'')+'</div>'+
       '<section class="workspace-card"><div class="record-table-wrap"><table class="record-table"><thead><tr>'+head+'</tr></thead><tbody>'+(body||'<tr><td colspan="'+(cols.length+1)+'" style="text-align:center;padding:20px;color:#64748b">No records.</td></tr>')+'</tbody></table></div></section></div>';
@@ -4792,7 +4898,7 @@ async function renderReportsHub(){
   const defs=reportsCatalog();
   const catHtml=cats.map(function(c){return '<section class="report-cat"><header><h2>'+c[0]+'</h2><span>'+defs.filter(d=>d.cat===c[1]).length+' reports</span></header><div class="report-grid">'+
     defs.filter(d=>d.cat===c[1]).map(d=>'<button class="report-card" data-report="'+esc(d.key)+'"><b>'+esc(d.title)+'</b><span>'+esc(d.desc||'')+'</span></button>').join('')+'</div></section>';}).join('');
-  content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>Reports &amp; Analytics</h1><p>Financial and operational reports across E88. Open a report to view it and export to Excel.</p></div><button class="command" id="reportsBack">&larr; Blitz - ERP</button></div>'+catHtml+'</div>';
+  content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>Reports &amp; Analytics</h1></div><button class="command" id="reportsBack">&larr; Blitz - ERP</button></div>'+catHtml+'</div>';
   $('#reportsBack').onclick=renderLaunchpad;
   $$('[data-report]').forEach(b=>b.onclick=()=>renderReport(b.dataset.report));
 }
@@ -4845,7 +4951,7 @@ async function renderReport(key,opts){
     $('#reportPrint').onclick=function(){window.print();};
     if($('#rApply'))$('#rApply').onclick=function(){var no={filters:{}};if($('#rAsOf'))no.asOf=$('#rAsOf').value;if($('#rFrom'))no.from=$('#rFrom').value;if($('#rTo'))no.to=$('#rTo').value;$$('[data-rfilter]').forEach(function(sel){if(sel.value)no.filters[sel.getAttribute('data-rfilter')]=sel.value;});renderReport(key,no);};
     if($('#rClear'))$('#rClear').onclick=function(){renderReport(key,{});};
-  }catch(error){var m=String(error&&error.message||error);if(/long-running export|D1_ERROR/i.test(m)){content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>'+esc(def.title)+'</h1></div><div class="report-actions"><button class="command" id="reportBackHub">&larr; All Reports</button></div></div><div class="workspace-empty" style="padding:30px;text-align:center"><b>The database is finishing a background task.</b><p style="margin:8px 0 14px;color:#556">This happens briefly during a backup or deploy. Try again in a few seconds.</p><button class="command primary" id="rRetry">Retry</button></div></div>';var rb=$('#rRetry');if(rb)rb.onclick=function(){renderReport(key,opts);};var bh=$('#reportBackHub');if(bh)bh.onclick=renderReportsHub;}else showWorkspaceError(error);}
+  }catch(error){var m=String(error&&error.message||error);if(/long-running export|D1_ERROR/i.test(m)){content.innerHTML='<div class="reports-hub"><div class="reports-top"><div><h1>'+esc(def.title)+'</h1></div><div class="report-actions"><button class="command" id="reportBackHub">&larr; All Reports</button></div></div><div class="workspace-empty" style="padding:30px;text-align:center"><b>The database is finishing a background task.</b><button class="command primary" id="rRetry">Retry</button></div></div>';var rb=$('#rRetry');if(rb)rb.onclick=function(){renderReport(key,opts);};var bh=$('#reportBackHub');if(bh)bh.onclick=renderReportsHub;}else showWorkspaceError(error);}
 }
 
 function exportReportExcel(){
@@ -4899,7 +5005,7 @@ async function renderInventoryAnalysisOverview(){
       '<label class="inline-control"><span>To</span><input type="date" id="invTo" value="'+esc(__invTo)+'"></label>'+
       '<button class="command primary" id="invApplyDates">Apply</button>'+(period?'<button class="command" id="invClearDates">Clear</button>':'')+
       '<span class="command-spacer"></span><span class="workspace-mode">'+(period?'PERIOD MOVEMENT':'CURRENT SNAPSHOT')+'</span></div>';
-    const body=dateBar+'<section class="workspace-card"><header><div><h2>Inventory by Class</h2><span>Total Units = Available + Leased (what you physically hold). Sold is shown for reference only - those units have left inventory.</span></div><button class="ramco-primary" data-section-link="records">Open Stock Analysis</button></header>'+
+    const body=dateBar+'<section class="workspace-card"><header><div><h2>Inventory by Class</h2></div><button class="ramco-primary" data-section-link="records">Open Stock Analysis</button></header>'+
       operationalTable(['Inventory Class','Available','Leased','Total Units','Sold (reference)','Inventory Value'],rows,{key:'class-operational',emptyMessage:'No classified inventory records.'})+
       '</section>'+moveCard+
       '<div class="ramco-layout"><div class="ramco-main"></div><aside class="ramco-rail">'+
@@ -4941,13 +5047,13 @@ async function renderProductRegistration(editId){
           '<label><span>Sale / List Price</span><input name="salePrice" type="number" step="0.01" value="'+esc(pf.sale_price||0)+'"></label>'+
           '<label class="wide"><span>Description</span><textarea name="description">'+esc(pf.description||'')+'</textarea></label>'+
           '<div class="wide"><span style="font-size:12px;color:#607080">Product Type</span><div class="pdi-grid">'+
-            typeOpt('SERIALIZED','Inventoriable - Serialized','Each unit tracked by serial (motorcycles, batteries, stations)')+
+            typeOpt('SERIALIZED','Inventoriable - Serialized','')+
             typeOpt('QUANTITY','Inventoriable - Quantity','Stocked by count (spare parts, accessories)')+
             typeOpt('SERVICE','Non-inventoriable','Service / expense item, not held in stock')+
           '</div></div>'+
           '<button class="command primary">'+(current?'Save Changes':'Register Product')+'</button>'+
         '</form></section>'+
-        ('<section class="workspace-card" id="mediaCard"><header><div><h2>Photos & 3D</h2><span>'+(current?'Upload unit photos (JPG/PNG, max 4MB each). Multiple photos enable the 360 spin. Optional .glb/.gltf 3D model for a movable view.':'Enter a product name above, then pick a photo here - the product saves automatically and the image is attached. JPG/PNG, max 4MB each.')+'</span></div></header>'+
+        ('<section class="workspace-card" id="mediaCard"><header><div><h2>Photos & 3D</h2></div></header>'+
           '<div class="lease-unit-picker"><label><span>Add photo(s)</span><input type="file" id="prPhoto" accept="image/*" multiple></label>'+
           '<label><span>Add 3D model (.glb/.gltf)</span><input type="file" id="prModel" accept=".glb,.gltf,model/gltf-binary"></label></div>'+
           '<div id="prMedia" class="pr-media"></div></section>')+
@@ -4999,7 +5105,7 @@ function __renderProductMedia(full){
   if(models.length){ __mvEnsure(); html+='<div class="pr-3d"><h4>3D Model (drag to rotate)</h4><model-viewer src="'+fileUrl(models[0])+'" camera-controls auto-rotate touch-action="pan-y" style="width:100%;height:320px;background:#0e1b2b;border-radius:10px" ar></model-viewer><div><a href="'+fileUrl(models[0])+'" target="_blank" rel="noopener">Download model</a> · <button class="table-action danger" data-del-media="'+models[0].id+'">Remove</button></div></div>'; }
   if(photos.length>=2){ html+='<div class="pr-spin"><h4>360 Spin ('+photos.length+' frames - drag left/right)</h4><div id="prSpin" class="pr-spin-stage" style="background-image:url('+fileUrl(photos[0])+')"></div></div>'; }
   if(photos.length){ html+='<div class="pr-gallery"><h4>Photos</h4><div class="pr-thumbs">'+photos.map(function(m){return '<div class="pr-thumb"><img src="'+fileUrl(m)+'" alt=""><button class="table-action danger" data-del-media="'+m.id+'">x</button></div>';}).join('')+'</div></div>'; }
-  if(!media.length){ html='<div class="workspace-empty">No photos or model yet. Add photos above; two or more enable the 360 spin.</div>'; }
+  if(!media.length){ html='<div class="workspace-empty">No photos or model yet.</div>'; }
   host.innerHTML=html;
   // 360 drag
   const spin=$('#prSpin');
@@ -5134,14 +5240,10 @@ async function renderInventoryPlanningReports(){
 
 function renderInventoryPlanningSetup(){
   const body=`<div class="setup-grid"><section class="workspace-card"><header><h2>Planning Sources</h2></header><div class="definition-list">
-    <div><b>On hand</b><span>Confirmed Goods Receipt inventory by serial and location.</span></div>
-    <div><b>Incoming</b><span>Open ATLAS expected serials tied to approved purchase orders.</span></div>
-    <div><b>Open PO</b><span>Approved purchase-order quantities not yet received.</span></div>
-    <div><b>Deployed</b><span>Units assigned to a customer, site, employee, or station.</span></div></div></section>
+    <div><b>On hand</b></div><div><b>Incoming</b></div>
+    <div><b>Open PO</b></div><div><b>Deployed</b></div></div></section>
     <section class="workspace-card"><header><h2>Plan Types</h2></header><div class="definition-list">
-      <div><b>Ordering</b><span>Procure additional items through sourcing and purchasing.</span></div>
-      <div><b>Deployment</b><span>Assign available stock to a business, project, dealer, or retail need.</span></div>
-      <div><b>Replenishment</b><span>Move stock between warehouses and retail locations.</span></div></div></section></div>`;
+      <div><b>Ordering</b></div><div><b>Deployment</b></div><div><b>Replenishment</b></div></div></section></div>`;
   content.innerHTML=workbenchShell(body,'setup');bindOperationalShell();
 }
 
@@ -5681,7 +5783,7 @@ function approvalWorkflowSection(approvals,editing){
     <td><b>${esc(step.required_role_code)}</b></td><td>${esc(step.assigned_user_name||step.assigned_user_email||'Role queue')}</td>
     <td>${statusBadge(step.status)}</td><td>${esc(step.decided_by||'-')}</td><td>${date(step.decided_at||step.requested_at)}</td></tr>`).join('');
   return `<section class="record-sublist connected-record-section approval-matrix-section">
-    <header><div><h3>Approval Matrix</h3><p>Amount-based authority and requester/approver segregation are enforced.</p></div>
+    <header><div><h3>Approval Matrix</h3></div>
       <span>${approvals.pending} pending · ${approvals.approved} approved</span></header>
     ${operationalTable(['Cycle','Step','Required Role','Assigned User','Status','Decision By','Activity Date'],rows)}
   </section>`;
@@ -5705,10 +5807,10 @@ function specialistLineSection(specialist,editing,immutable,allowed){
   const form=specialist.lineSchema?.length&&allowed&&!immutable?`<form id="specialistLineForm" class="operational-form grid specialist-line-form">
       ${specialist.lineSchema.map(specialistLineField).join('')}<button class="command primary">Add Operational Line</button></form>`:'';
   return `<section class="record-sublist connected-record-section specialist-engine-section">
-    <header><div><h3>${esc(config.domain_code)} Specialist Engine</h3><p>${esc(config.notes||config.engine_code)}. Detail lines are validated before approval, completion, or posting.</p></div>
+    <header><div><h3>${esc(config.domain_code)} Specialist Engine</h3><p>${esc(config.notes||config.engine_code)}</p></div>
       <span>${lines.length} lines · ${esc(config.rollout_level)}</span></header>
     ${form}${operationalTable(['Line','Type','Reference','Description','Qty / Hours','Rate','Amount','Status','Action'],rows)}
-    <div class="specialist-flow"><h4>Connected Document Flow</h4><div class="connected-module-grid">${links||operationalEmpty('Links appear automatically when related project, contract, customer, serial, employee, work-order, site, or invoice references are found.')}</div></div>
+    <div class="specialist-flow"><h4>Connected Document Flow</h4><div class="connected-module-grid">${links||operationalEmpty('No linked documents.')}</div></div>
   </section>`;
 }
 function renderRecordForm(record=null,documents=[],connected={}){
@@ -5726,7 +5828,7 @@ function renderRecordForm(record=null,documents=[],connected={}){
     <td>${statusBadge(unit.status)}</td></tr>`);
   const leaseUnitSection=editing&&state.module.code==='sd-lease-contract-management'?`
     <section class="record-sublist connected-record-section">
-      <header><div><h3>Leased Units / Annex A</h3><p>Select only available serialized motorcycles, batteries, equipment, or other lease assets.</p></div>
+      <header><div><h3>Leased Units / Annex A</h3></div>
         <span>${connected.units?.length||0} units linked</span></header>
       <div class="lease-unit-picker">
         <label><span>Available Serial Numbers</span><div class="serial-picker" id="leaseUnitPicker"><select class="serial-add"><option value="">Add a serial…</option>${(connected.availableAssets||[]).map(asset=>`<option value="${esc(asset.serial_no)}">${esc(asset.category)} · ${esc(asset.serial_no)} · ${esc(asset.item_name)} · ${esc(asset.current_location_code||'No location')}</option>`).join('')}</select><div class="serial-chips"></div></div></label>
@@ -5885,7 +5987,7 @@ function adminWorkbenchShell(body,active='users'){
   const tabs=[['users','Authorized Users'],['roles','Roles & Permissions'],['audit','Access Audit']];
   return `<section class="erp-workbench access-workbench">
     <header class="workbench-systembar">
-      <div><button class="admin-modules-home" title="Blitz - ERP">▦</button><span class="workbench-user-dot">●</span><b>${esc(user.displayName||user.email)}</b><small>${esc(user.role)}</small></div>
+      <div><button class="admin-modules-home" title="Blitz - ERP">▦</button><span class="workbench-user-dot">●</span><b>${esc(personName(user))}</b><small>${esc(user.role)}</small></div>
       <div><span>INTERNAL</span><button class="admin-modules-home">Modules</button><button class="workbench-logout">Sign out</button></div>
     </header>
     <div class="workbench-modulebar">
@@ -5926,7 +6028,7 @@ async function renderRolePermissions(roleCode=''){
       <button class="command primary" id="saveRolePermissions" ${role==='ADMIN'?'disabled':''}>Save Permissions</button>
       <span class="command-spacer"></span><span class="workspace-mode">ROLE AUTHORITY</span></div>
       <section class="workspace-card"><header><div><h2>${esc(data.roles.find(value=>value.code===role)?.name||role)}</h2>
-        <span>Action authority by operational area; individual module visibility is assigned on each user.</span></div></header>
+        </div></header>
         <div class="record-table-wrap"><table class="record-table authority-table"><thead><tr><th>Operational Area</th>${actions.map(([,label])=>`<th>${label}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>
       </section>`;
     content.innerHTML=adminWorkbenchShell(body,'roles');bindAdminWorkbench();
@@ -6006,12 +6108,12 @@ function openUserForm(data,user=null,options={}){
         </div>
       </section>
       <section class="access-assignment">
-        <header><div><h3>Allowed Modules</h3><p>Check only the modules this user is permitted to see and open.</p></div><div><button type="button" id="selectAllAccess">Select all</button><button type="button" id="clearAllAccess">Clear all</button><b id="selectedAccessCount">0 selected</b></div></header>
-        <div id="adminFullAccessNote" class="admin-access-note hidden">Administrators always retain access to every module.</div>
+        <header><div><h3>Allowed Modules</h3></div><div><button type="button" id="selectAllAccess">Select all</button><button type="button" id="clearAllAccess">Clear all</button><b id="selectedAccessCount">0 selected</b></div></header>
+        
         <div class="access-selector">${groups}</div>
       </section>
       <section class="access-authority">
-        <header><div><h3>Action Authority</h3><p>Action rights come from the selected role. Every void, deletion, or reversal still requires an independent approver.</p></div><b id="authorityRole">${esc(user?.role_code||'STAFF')}</b></header>
+        <header><div><h3>Action Authority</h3></div><b id="authorityRole">${esc(user?.role_code||'STAFF')}</b></header>
         <div class="record-table-wrap"><table class="record-table authority-table"><thead><tr><th>Operational Area</th>${actionColumns.map(([,label])=>`<th>${label}</th>`).join('')}</tr></thead><tbody id="roleAuthorityBody">${buildRoleAuthority(user?.role_code||'STAFF')}</tbody></table></div>
       </section>
     </form>`;
@@ -6080,11 +6182,11 @@ function openUserForm(data,user=null,options={}){
 function showCredentialLink(title,link,delivery){
   delivery=delivery||{};
   const banner=delivery.emailed
-    ? `<p class="cred-sent">Sent to <b>${esc(delivery.emailedTo||'')}</b>. They can activate straight from the email - you do not need to send anything.</p>`
+    ? `<p class="cred-sent">Sent to <b>${esc(delivery.emailedTo||'')}</b>.</p>`
     : `<p class="cred-failed"><b>The email did not go out.</b>${delivery.emailError?' '+esc(delivery.emailError):''}
         Send them the link below yourself, then check the mail settings.</p>`;
   modal(title,`${banner}
-    <p class="cred-hint">${delivery.emailed?'Backup link, in case they cannot find the email:':'Activation link:'}</p>
+    <p class="cred-hint">${delivery.emailed?'Activation link:':'Activation link:'}</p>
     <div class="credential-link"><input value="${esc(link)}" readonly><button class="command primary" id="copyCredential">Copy Link</button></div>`);
   $('#copyCredential').onclick=async()=>{await navigator.clipboard.writeText(link);toast('Link copied');};
 }
@@ -6452,7 +6554,7 @@ init();
       </style>
       <div class="cz-toolbar"><input id="czNewGroup" placeholder="New column name (e.g. Treasury)"><button class="button" id="czAddGroup">Add column</button></div>
       <div id="czRows">${rows}</div>${hiddenHtml}
-      <p style="color:var(--muted);font-size:11px;margin-top:10px">Changes save instantly and persist for your presentation.</p>
+      
     `,'Add, rename, reorder, hide columns and modules');
     wireCustomizer();
   }
@@ -6775,6 +6877,18 @@ init();
   .ar-vat-preview b{color:#0a2239;font-variant-numeric:tabular-nums}
   tr.is-void td{opacity:.55;text-decoration:line-through}
   .ar-pick{width:15px;height:15px}
+
+  /* Collection against a posted entry: the balance is the point of the dialog. */
+  .ar-collect-head{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;
+    margin-bottom:12px;padding:11px 13px;border-radius:8px;background:#f5f8fb;border:1px solid #e3e9f1}
+  .ar-collect-head>div{display:flex;flex-direction:column;gap:2px}
+  .ar-collect-head span{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#8194a6}
+  .ar-collect-head b{font-size:14px;color:#0a2239;font-variant-numeric:tabular-nums}
+  .ar-collect-head b.is-good{color:#0ca30c}
+  .ar-collect-head b.is-open{color:#c07a12}
+  .ar-collect .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px}
+  .ar-collect .form-grid label.wide{grid-column:1/-1}
+  .table-action.primary{border-color:#12305f;background:#12305f;color:#fff}
   .home-empty{margin-bottom:14px;padding:14px 16px;border:1px solid #e8eef4;border-radius:10px;background:#fff;
     box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
   .home-empty b{display:block;font-size:13px;color:#0a2239;margin-bottom:3px}

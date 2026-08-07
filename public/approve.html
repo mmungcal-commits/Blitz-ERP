@@ -60,9 +60,9 @@ function poCard(d){
   +'<div class="foot">E88 Ventures, Inc. | 15 Brixton St., Kapitolyo, Pasig City 1603 Philippines</div></div>';
 }
 function signatureBlock(d){
- return '<div class="card"><h3 style="margin:0 0 6px">Your decision — '+esc(d.step.role)+' ('+esc(d.step.approver_name||'')+')</h3>'
+ return '<div class="card"><h3 style="margin:0 0 6px">Your decision - '+esc(d.step.role)+' ('+esc(d.step.approver_name||'')+')</h3>'
   +'<div class="tabs"><button class="primary" id="tabDraw">Draw</button><button class="ghost" id="tabType">Type</button></div>'
-  +'<div id="drawWrap"><canvas class="sigpad" id="pad" width="420" height="150"></canvas><div class="rowf"><button class="ghost" id="clearPad" type="button">Clear</button><span class="muted">Sign with mouse or finger</span></div></div>'
+  +'<div id="drawWrap"><canvas class="sigpad" id="pad" width="420" height="150"></canvas><div class="rowf"><button class="ghost" id="clearPad" type="button">Clear</button></div></div>'
   +'<div id="typeWrap" style="display:none"><div class="rowf"><input type="text" id="typedName" placeholder="Type your full name" style="min-width:260px"></div></div>'
   +'<div class="rowf"><input type="text" id="comment" placeholder="Comment (optional)" style="flex:1;min-width:260px"></div>'
   +'<div class="rowf"><button class="primary" id="approveBtn">Approve &amp; Sign</button><button class="danger" id="rejectBtn">Reject</button></div></div>';
@@ -84,7 +84,7 @@ async function render(){
  if(d.actionable){html+=signatureBlock(d);}
  else if(d.poStatus==='APPROVED'){html+='<div class="card done"><h2>Fully approved</h2><p class="muted">This purchase order has completed its approval chain.</p></div>';}
  else if(d.poStatus==='REJECTED'){html+='<div class="card done"><h2>Rejected</h2></div>';}
- else{html+='<div class="card done"><p class="muted">This is not your step yet, or your decision is already recorded. Earlier approvers must sign first.</p></div>';}
+ else{html+='<div class="card done"><p class="muted">This is not your step yet, or your decision is already recorded.</p></div>';}
  app.innerHTML=html;
  if(d.actionable){
   initPad();

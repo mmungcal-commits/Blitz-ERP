@@ -1,7 +1,7 @@
 
 /* E88 logo override: transparent, bigger, wordmark stays white in the PNG */
 /* Normalise how a logo is painted, but never how big it is: forcing a height here silently overrode every per-context size in the app - the sidebar mark, the loading mark and the sign-in mark all rendered 48px whatever their own rule asked for. Size belongs to the context that shows it. */
-img[src*="logo"]{background:transparent !important;border-radius:0 !important;box-shadow:none !important;padding:0 !important;}/* E88 clean enterprise foundation — no legacy ERP screens */
+img[src*="logo"]{background:transparent !important;border-radius:0 !important;box-shadow:none !important;padding:0 !important;}/* E88 clean enterprise foundation */
 :root{
   --navy:#0a2239;--navy-2:#102f4a;--blue:#267cbe;--blue-dark:#1669a7;
   --bg:#eef2f6;--panel:#fff;--panel-2:#f7f9fb;--text:#17212b;--muted:#657586;
@@ -182,7 +182,7 @@ button{cursor:pointer}
 @media(max-width:1250px){.inventory-class-kpis{grid-template-columns:repeat(3,minmax(130px,1fr))}}
 @media(max-width:760px){.inventory-class-kpis{grid-template-columns:repeat(2,minmax(120px,1fr))}.inventory-detail-grid{grid-template-columns:1fr}.record-table-wrap{max-height:58vh}}
 
-/* v13.1 compact typography — apply small, consistent fonts across all modules */
+/* v13.1 compact typography: small, consistent fonts across all modules */
 .operational-form input,.operational-form select,.operational-form textarea,.record-field input,.record-field select,.record-field textarea,.requisition-line input,.requisition-line select,.workspace-commandbar input,.workspace-commandbar select,.inline-control input,.inline-control select,.finance-lines input{font-size:12px}
 .record-fields .record-field span{font-size:11px}
 /* clickable KPI hint */
