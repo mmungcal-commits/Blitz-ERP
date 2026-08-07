@@ -1,4 +1,4 @@
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R19.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R20.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -987,14 +987,17 @@ async function renderPaymentRequests(){
   try{
     const [data,master]=await Promise.all([api('/finance/payment-requests'),api('/finance/master-data')]);
     window.__rfpMancomMin=(data.mancomEnabled&&data.mancomMin)?Number(data.mancomMin):null;
+    window.__rfpFinanceReview=data.financeReview!==false;
     const rows=data.rows.map(row=>{
       // MANCOM sits between Finance and the CEO, but only at or above the threshold.
       const needsMancom=Number(row.net_payable||0)>=rfpMancomMin();
+      // Finance checks the request before the head of Finance approves it.
       const action=['DRAFT','RETURNED'].includes(row.status)?'SUBMIT':row.status==='SUBMITTED'?'DEPARTMENT_APPROVE':
-        row.status==='DEPARTMENT_APPROVED'?'FINANCE_VALIDATE':
-          row.status==='FINANCE_VALIDATED'?(needsMancom?'MANCOM_APPROVE':'FINAL_APPROVE'):
-            row.status==='MANCOM_APPROVED'?'FINAL_APPROVE':
-              row.status==='APPROVED'?'MARK_PAID':row.status==='PAYMENT_PREPARED'?'CONFIRM_PAID':'';
+        row.status==='DEPARTMENT_APPROVED'?(rfpFinanceReviewOn()?'FINANCE_REVIEW':'FINANCE_VALIDATE'):
+          row.status==='FINANCE_REVIEWED'?'FINANCE_VALIDATE':
+            row.status==='FINANCE_VALIDATED'?(needsMancom?'MANCOM_APPROVE':'FINAL_APPROVE'):
+              row.status==='MANCOM_APPROVED'?'FINAL_APPROVE':
+                row.status==='APPROVED'?'MARK_PAID':row.status==='PAYMENT_PREPARED'?'CONFIRM_PAID':'';
       return `<tr><td><b>${esc(row.request_no)}</b></td><td>${date(row.request_date)}</td><td>${esc(row.payee_name)}</td>
         <td>${esc(row.department)}</td><td>${esc(row.purchase_order_no||'-')}</td><td class="num">${money(row.net_payable)}</td>
         <td>${financeStatus(row.status)}</td><td><button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(rfpActionLabel(action))}</button>`:''}${!['PAID','REJECTED','CANCELLED','RETURNED','DRAFT'].includes(row.status)?`<button class="table-action" data-rfp-action="RETURN" data-rfp-id="${row.id}">Return</button>`:''}</td></tr>`;
@@ -1002,7 +1005,7 @@ async function renderPaymentRequests(){
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newRfp">New Request for Payment</button>
       <button class="command" id="openLiquidations">Cash Advance Liquidation</button>
       <span class="command-spacer"></span><span class="workspace-mode">CONTROLLED PAYMENT WORKFLOW</span></div>
-      ${workflowStrip(['Requestor','Dept Head','Finance Review'].concat(rfpMancomOn()?['MANCOM (≥ '+money(rfpMancomMin())+')']:[]).concat(['CEO Approval','Instruct Bank (MNC)','Proof & Close']),2)}
+      ${workflowStrip(['Requestor','Dept Head'].concat(rfpFinanceReviewOn()?['Finance Check']:[]).concat(['Head of Finance']).concat(rfpMancomOn()?['MANCOM (≥ '+money(rfpMancomMin())+')']:[]).concat(['CEO Approval','Instruct Bank (MNC)','Proof & Close']),2)}
       <section class="workspace-card"><header><h2>Request for Payment Worklist</h2><span>${data.rows.length} requests</span></header>
         ${financeTable(['RFP','Date','Payee','Department','PO','Net Payable','Status','Action'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'approvals');bindWorkbench();
@@ -1019,9 +1022,10 @@ async function submitRfpAction(id,body){
 }
 function runRfpAction(action,id,master){
   // Every approval step is signed. Draw or type, same as the requestor.
-  if(['SUBMIT','DEPARTMENT_APPROVE','FINANCE_VALIDATE','MANCOM_APPROVE'].includes(action)){
+  if(['SUBMIT','DEPARTMENT_APPROVE','FINANCE_REVIEW','FINANCE_VALIDATE','MANCOM_APPROVE'].includes(action)){
     const title={SUBMIT:'Submit request for payment',DEPARTMENT_APPROVE:'Department Head approval',
-      FINANCE_VALIDATE:'Finance validation',
+      FINANCE_REVIEW:'Finance check - documents and department approval',
+      FINANCE_VALIDATE:'Head of Finance approval',
       MANCOM_APPROVE:'MANCOM approval (at or above '+money(rfpMancomMin())+')'}[action];
     modal(title,`<form id="rfpSignForm" class="operational-form grid">
       <div class="wide">${signatureField('rfpStep','Your signature')}</div>
@@ -1106,12 +1110,13 @@ function runRfpAction(action,id,master){
   }
   submitRfpAction(id,{action:action});
 }
-function rfpActionLabel(a){return ({SUBMIT:'Submit',DEPARTMENT_APPROVE:'Dept Head Approve',FINANCE_VALIDATE:'Finance Validate',MANCOM_APPROVE:'MANCOM Approve',FINAL_APPROVE:'CEO Approve',MARK_PAID:'Prepare Payment',CONFIRM_PAID:'Confirm & Attach Proof'})[a]||String(a).replaceAll('_',' ');}
+function rfpActionLabel(a){return ({SUBMIT:'Submit',DEPARTMENT_APPROVE:'Dept Head Approve',FINANCE_REVIEW:'Finance Check',FINANCE_VALIDATE:'Head of Finance Approve',MANCOM_APPROVE:'MANCOM Approve',FINAL_APPROVE:'CEO Approve',MARK_PAID:'Prepare Payment',CONFIRM_PAID:'Confirm & Attach Proof'})[a]||String(a).replaceAll('_',' ');}
 // The MANCOM tier is switched off for E88: high-value spend is agreed in the
 // MANCOM meeting before it is recorded here. The server tells us
 // (mancomEnabled/mancomMin); Infinity means the stage never applies.
 function rfpMancomMin(){return window.__rfpMancomMin==null?Infinity:Number(window.__rfpMancomMin);}
 function rfpMancomOn(){return isFinite(rfpMancomMin());}
+function rfpFinanceReviewOn(){return window.__rfpFinanceReview!==false;}
 // The reasons the live system offers when an approver sends a request back.
 const RFP_RETURN_REASONS=['Incomplete supporting documents','Incorrect amount or computation',
   'Wrong payee or bank details','Missing quotation or purchase order','Not within approved budget',
@@ -5226,7 +5231,7 @@ init();
           ? '<div style="height:34px;display:flex;align-items:flex-end;justify-content:center"><img src="'+mark+'" style="max-height:34px;max-width:96%"></div>'
           : '<div style="height:34px;display:flex;align-items:flex-end;justify-content:center;font-family:\'Segoe Script\',\'Brush Script MT\',cursive;font-size:19px;color:#15294B">'+esc(mark)+'</div>';
       }
-      return '<td style="border:1px solid #b9c0cf;padding:8px 6px;vertical-align:top;width:25%;text-align:center"><div style="font-size:10px;color:#333;margin-bottom:2px">'+label+'</div>'+vis+'<div style="font-size:9.5px;font-weight:400;letter-spacing:.2px;color:#5a6577">'+esc(ts||'')+'</div><div style="border-top:1px solid #15294B;margin-top:2px;padding-top:3px;font-weight:bold;font-size:11px">'+esc(name||' ')+'</div><div style="font-size:10px;color:#445;font-style:italic">'+esc(title)+'</div></td>';};
+      return '<td style="border:1px solid #b9c0cf;padding:8px 6px;vertical-align:top;text-align:center"><div style="font-size:10px;color:#333;margin-bottom:2px">'+label+'</div>'+vis+'<div style="font-size:9.5px;font-weight:400;letter-spacing:.2px;color:#5a6577">'+esc(ts||'')+'</div><div style="border-top:1px solid #15294B;margin-top:2px;padding-top:3px;font-weight:bold;font-size:11px">'+esc(name||' ')+'</div><div style="font-size:10px;color:#445;font-style:italic">'+esc(title)+'</div></td>';};
     var signOf=function(stage){var list=(r.__signatures||[]);for(var i=0;i<list.length;i++){if(list[i].stage===stage&&list[i].signature)return list[i];}return null;};
     var markOf=function(stage){var x=signOf(stage);return x?x.signature:'';};
     var nameOf=function(stage,fallback){var x=signOf(stage);return (x&&(x.actor_name||x.actor))||fallback||'';};
@@ -5267,7 +5272,11 @@ init();
      +'<table style="width:100%;border-collapse:collapse;margin-top:6px"><tr>'
      +sigCol('Requested by',nameOf('REQUESTOR',reqName),czd(r.request_date),'Requestor',markOf('REQUESTOR'))
      +sigCol('Reviewed By',nameOf('DEPARTMENT',r.department_approved_by||r.dept_head_by||''),czd(r.department_approved_at),'Department Head',markOf('DEPARTMENT'))
-     +sigCol('Approved By',nameOf('FINANCE',r.finance_validated_by||r.finance_by||'Mark Alexis Mungcal'),czd(r.finance_validated_at),'Finance & Accounting Manager',markOf('FINANCE'))
+     // Finance checks before the head of Finance approves, so the form carries
+     // both: "Checked By" and then "Approved By".
+     +(signOf('FINANCE_REVIEW')
+        ?sigCol('Checked By',nameOf('FINANCE_REVIEW',''),czd((signOf('FINANCE_REVIEW')||{}).created_at),'Finance & Accounting',markOf('FINANCE_REVIEW')):'')
+     +sigCol('Approved By',nameOf('FINANCE',r.finance_validated_by||r.finance_by||''),czd(r.finance_validated_at),'Head of Finance & Accounting',markOf('FINANCE'))
      // The MANCOM block is printed only when the amount actually required that tier.
      +(signOf('MANCOM')
         ?sigCol('Approved By',nameOf('MANCOM',''),czd((signOf('MANCOM')||{}).created_at),'MANCOM',markOf('MANCOM')):'')
