@@ -6,6 +6,7 @@ import { audit } from '../lib/audit.js';
 import { normalizeText, nextCode, normalizeSerial } from '../lib/codes.js';
 import { randomToken, sha256 } from '../lib/crypto.js';
 import { WORKSPACE_MODULES } from '../lib/workspace.js';
+import { sendMail, mailLayout, mailButton, mailConfigured } from '../lib/mailer.js';
 
 export const adminRoutes = new Hono();
 
@@ -27,6 +28,41 @@ activation
 const url = new URL(c.req.url);
 const key = activation ? 'activate' : 'reset';
 return `${url.origin}/?${key}=${encodeURIComponent(token)}&email=${encodeURIComponent(user.email)}`;
+}
+
+/*
+ * Creating an account used to mint a link and nothing else - somebody had to
+ * notice, copy it and send it by hand, which is exactly how six accounts sat
+ * unactivated. The link now goes to the person it belongs to.
+ *
+ * It is still returned to the admin as a fallback, and the response says
+ * plainly whether the email actually left, so a mail outage shows up as a
+ * message rather than as a person who never hears anything.
+ */
+async function deliverAuthLink(env, user, mode, link) {
+  const activation = mode === 'activate';
+  if (!mailConfigured(env)) {
+    return { emailed: false, emailError: 'No mail transport is configured on this deployment.' };
+  }
+  const title = activation ? 'Activate your Blitz - ERP account' : 'Reset your Blitz - ERP password';
+  const lead = activation
+    ? `<p>An account has been created for you on <b>Blitz - ERP</b>. Set your password to finish activating it.</p>
+       <p style="color:#657586;font-size:13px">This link is valid for 48 hours.</p>`
+    : `<p>A password reset was requested for your <b>Blitz - ERP</b> account.</p>
+       <p style="color:#657586;font-size:13px">This link is valid for 1 hour. If you did not ask for this, ignore this email and your password stays as it is.</p>`;
+  const result = await sendMail(env, {
+    to: user.email,
+    subject: title,
+    html: mailLayout(title,
+      `<p>Hello ${String(user.display_name || user.email)},</p>
+       ${lead}
+       ${mailButton(link, activation ? 'Activate my account' : 'Reset my password')}
+       <p style="color:#657586;font-size:12px;word-break:break-all">
+         If the button does not work, paste this into your browser:<br>${link}</p>`,
+      'Blitz - ERP sent this because an administrator created or reset your account.'),
+    text: `${title}\n\n${link}\n`,
+  });
+  return { emailed: !!result.ok, emailError: result.ok ? null : (result.error || result.reason || 'Send failed') };
 }
 
 adminRoutes.get('/users', requirePermission('ADMIN','MANAGE'), async c=>{
@@ -93,29 +129,33 @@ await run(c.env.DB,`INSERT INTO erp_user_workspace_access(user_id,module_code,al
 }
 const credential=await first(c.env.DB,`SELECT activated_at,password_hash FROM erp_user_credentials WHERE user_id=?`,[after.id]);
 const activationLink=!credential?.activated_at||!credential?.password_hash?await issueAuthLink(c,after,'activate'):null;
+const delivery=activationLink?await deliverAuthLink(c.env,after,'activate',activationLink):{emailed:false,emailError:null};
 const savedAccess=await all(c.env.DB,`SELECT module FROM erp_user_module_access WHERE user_id=? AND allowed=1 ORDER BY module`,[after.id]);
 const effectiveAllowed=after.role_code==='ADMIN'?ERP_MODULES:savedAccess.map(row=>row.module);
 await audit(c,{action:before?'UPDATE_USER':'CREATE_USER',module:'ADMIN',recordType:'USER',recordId:after.id,recordNo:email,before,after:{...after,allowedModules:effectiveAllowed}});
 const savedWorkspace=await all(c.env.DB,`SELECT module_code FROM erp_user_workspace_access WHERE user_id=? AND allowed=1 ORDER BY module_code`,[after.id]);
 const effectiveWorkspace=after.role_code==='ADMIN'?WORKSPACE_MODULES.map(module=>module.code):savedWorkspace.map(row=>row.module_code);
-return ok(c,{user:{...after,allowed_modules:effectiveAllowed,allowed_workspace_modules:effectiveWorkspace},activationLink});
+return ok(c,{user:{...after,allowed_modules:effectiveAllowed,allowed_workspace_modules:effectiveWorkspace},
+activationLink,emailed:delivery.emailed,emailError:delivery.emailError,emailedTo:activationLink?after.email:null});
 });
 
 adminRoutes.post('/users/:id/activation', requirePermission('ADMIN','MANAGE'), async c=>{
 const user=await first(c.env.DB,`SELECT * FROM erp_users WHERE id=?`,[Number(c.req.param('id'))]);
 if(!user)return fail(c,'User not found',404);
 const activationLink=await issueAuthLink(c,user,'activate');
+const delivery=await deliverAuthLink(c.env,user,'activate',activationLink);
 await audit(c,{action:'ISSUE_ACTIVATION',module:'ADMIN',recordType:'USER',recordId:user.id,recordNo:user.email});
-return ok(c,{activationLink});
+return ok(c,{activationLink,emailed:delivery.emailed,emailError:delivery.emailError,emailedTo:user.email});
 });
 
 adminRoutes.post('/users/:id/reset', requirePermission('ADMIN','MANAGE'), async c=>{
 const user=await first(c.env.DB,`SELECT * FROM erp_users WHERE id=?`,[Number(c.req.param('id'))]);
 if(!user)return fail(c,'User not found',404);
 const resetLink=await issueAuthLink(c,user,'reset');
+const delivery=await deliverAuthLink(c.env,user,'reset',resetLink);
 await run(c.env.DB,`DELETE FROM erp_sessions WHERE user_id=?`,[user.id]);
 await audit(c,{action:'ISSUE_PASSWORD_RESET',module:'ADMIN',recordType:'USER',recordId:user.id,recordNo:user.email});
-return ok(c,{resetLink});
+return ok(c,{resetLink,emailed:delivery.emailed,emailError:delivery.emailError,emailedTo:user.email});
 });
 
 adminRoutes.post('/permissions/:role', requirePermission('ADMIN','MANAGE'), async c=>{const role=normalizeText(c.req.param('role')).toUpperCase();const b=await jsonBody(c);const rows=Array.isArray(b.permissions)?b.permissions:[];for(const p of rows){if(!ERP_MODULES.includes(p.module))continue;await run(c.env.DB,`INSERT INTO erp_role_permissions(role_code,module,can_view,can_create,can_edit,can_approve,can_post,can_export,can_manage) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(role_code,module) DO UPDATE SET can_view=excluded.can_view,can_create=excluded.can_create,can_edit=excluded.can_edit,can_approve=excluded.can_approve,can_post=excluded.can_post,can_export=excluded.can_export,can_manage=excluded.can_manage`,[role,p.module,p.canView?1:0,p.canCreate?1:0,p.canEdit?1:0,p.canApprove?1:0,p.canPost?1:0,p.canExport?1:0,p.canManage?1:0]);}await audit(c,{action:'UPDATE_PERMISSIONS',module:'ADMIN',recordType:'ROLE',recordNo:role,after:{permissions:rows}});return ok(c,{updated:rows.length});});

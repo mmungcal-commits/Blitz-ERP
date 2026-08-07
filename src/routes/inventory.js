@@ -788,6 +788,14 @@ inventoryRoutes.post('/cycle-counts/:id/submit', requirePermission('INVENTORY','
   const count=await first(c.env.DB,`SELECT * FROM erp_cycle_counts WHERE id=?`,[id]);
   if(!count)return fail(c,'Cycle count not found',404);
   if(count.status!=='OPEN')return fail(c,`Cycle count is ${count.status}.`,409);
+  // Counting is open to the floor, but closing the sheet is not. The first
+  // approver initiates the submit, which is also their signature on step one.
+  const submitUser=c.get('erpUser');
+  const submitRole=String(submitUser.role_code||submitUser.role||'').toUpperCase();
+  const chainOn=await countChainOn(c.env.DB);
+  if(chainOn&&!COUNT_CHAIN_ROLES.DEPT_MANAGER.includes(submitRole)){
+    return fail(c,'Only the department manager or department head can submit a count for approval.',403);
+  }
   await run(c.env.DB,`
     UPDATE erp_cycle_count_lines
     SET count_status='VARIANCE',variance_type='MISSING',notes='Expected serial was not physically counted.'
@@ -802,17 +810,23 @@ inventoryRoutes.post('/cycle-counts/:id/submit', requirePermission('INVENTORY','
     WHERE id=?`,[totals?.counted||0,totals?.variances||0,c.get('erpUser').email,id]);
   // Submitting starts the chain rather than handing the count straight to one
   // approver. A resubmitted count gets a clean set of steps.
-  const chain=await countChainOn(c.env.DB);
-  if(chain){
+  if(chainOn){
     await run(c.env.DB,`DELETE FROM erp_cycle_count_approvals WHERE cycle_count_id=?`,[id]);
     for(let i=0;i<COUNT_CHAIN.length;i+=1){
       await run(c.env.DB,`INSERT INTO erp_cycle_count_approvals(cycle_count_id,step_no,stage)
         VALUES(?,?,?)`,[id,i+1,COUNT_CHAIN[i]]);
     }
+    // Submitting IS the first approval, so it is recorded as one rather than
+    // asking the same person to press approve straight afterwards.
+    await run(c.env.DB,`UPDATE erp_cycle_count_approvals
+      SET status='APPROVED',decided_by=?,decided_at=datetime('now'),remarks='Initiated the submit'
+      WHERE cycle_count_id=? AND stage='DEPT_MANAGER'`,[submitUser.email,id]);
   }
+  const waiting=chainOn?await currentCountStep(c.env.DB,id):null;
   await audit(c,{action:'SUBMIT_CYCLE_COUNT',module:'INVENTORY',recordType:'CYCLE_COUNT',
-    recordId:id,recordNo:count.count_no,after:totals});
-  return ok(c,{status:'SUBMITTED',totals,chain:chain?COUNT_CHAIN:null});
+    recordId:id,recordNo:count.count_no,after:{...totals,submittedBy:submitUser.email}});
+  return ok(c,{status:'SUBMITTED',totals,chain:chainOn?COUNT_CHAIN:null,
+    waitingOn:waiting?waiting.stage:null});
 });
 
 /*
@@ -895,6 +909,12 @@ inventoryRoutes.post('/cycle-counts/:id/post-adjustments', requirePermission('IN
     JOIN erp_locations l ON l.id=cc.location_id WHERE cc.id=?`,[id]);
   if(!count)return fail(c,'Cycle count not found',404);
   if(count.status!=='APPROVED')return fail(c,'Only an approved cycle count can post inventory adjustments.',409);
+  // Posting writes the count into inventory and into the ledger, so Finance
+  // does it - the same hand that signs the last approval.
+  const postRole=String(c.get('erpUser').role_code||c.get('erpUser').role||'').toUpperCase();
+  if(await countChainOn(c.env.DB)&&!COUNT_CHAIN_ROLES.FINANCE.includes(postRole)){
+    return fail(c,'Only Finance can post a physical count to inventory.',403);
+  }
   const lines=await all(c.env.DB,`SELECT ccl.*,a.unit_cost,a.category,a.item_id
     FROM erp_cycle_count_lines ccl
     LEFT JOIN erp_assets a ON a.id=COALESCE(ccl.actual_asset_id,ccl.expected_asset_id)
