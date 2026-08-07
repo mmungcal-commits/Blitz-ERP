@@ -416,6 +416,68 @@ await t('a returned request restarts the chain', async()=>{
   return {note:'returned -> resubmitted -> DEPARTMENT signed again'};
 });
 
+await t('the head of Finance approves Finance requests as its head', async()=>{
+  const head=sqlite.prepare("SELECT head_email FROM erp_department_heads WHERE department='Finance and Accounting'").get();
+  if(head?.head_email!=='mmungcal@nrdev.ph') throw new Error('Finance head is '+head?.head_email);
+  sqlite.exec("INSERT OR IGNORE INTO erp_users(email,display_name,role_code,department,active) VALUES('fin3@nrdev.ph','Third Finance','FINANCE','Finance and Accounting',1)");
+  const ent=sqlite.prepare('SELECT entity_code FROM erp_legal_entities LIMIT 1').get();
+  let raised; try{ who='fin3@nrdev.ph'; raised=await call('POST','/api/finance/payment-requests',{entityCode:ent.entity_code,
+    payeeName:'BIR',department:'Finance and Accounting',purpose:'Quarterly filing fee',grossAmount:3200,
+    supplierInvoiceNo:'BIR-Q3-2026'});
+    await call('POST',`/api/finance/payment-requests/${raised.json.id}/action`,{action:'SUBMIT'});
+  } finally { who='mmungcal@nrdev.ph'; }
+  if(!raised.json?.ok) throw new Error(raised.json?.error);
+  const dep=await call('POST',`/api/finance/payment-requests/${raised.json.id}/action`,
+    {action:'DEPARTMENT_APPROVE',signature:'Mark Alexis Mungcal'});
+  if(!dep.json?.ok) throw new Error(dep.json?.error);
+  // Having signed as the department head he cannot also validate as Finance.
+  const twice=await call('POST',`/api/finance/payment-requests/${raised.json.id}/action`,
+    {action:'FINANCE_VALIDATE',signature:'Mark Alexis Mungcal'});
+  if(twice.json?.ok) throw new Error('the same person signed DEPARTMENT and FINANCE');
+  return {note:'signed DEPARTMENT as head · blocked from FINANCE: '+twice.json.error.slice(0,44)};
+});
+
+// ---- opening physical count: what we count today must BE the system record
+await t('a counted unit that is not in the system gets registered', async()=>{
+  const loc=sqlite.prepare('SELECT id,code FROM erp_locations LIMIT 1').get();
+  const cc=await call('POST','/api/inventory/cycle-counts',{locationId:loc.id,countDate:'2026-08-07',category:'MC'});
+  if(!cc.json?.ok) throw new Error(cc.json?.error);
+  const ccId=cc.json.id;
+  // A motorcycle on the floor that the ERP has never seen, with the keys the
+  // receiver actually reads off the unit.
+  const scan=await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,{
+    serialNo:'LC6PAGA13R0099001',itemCode:'MC-0001',itemName:'E88 Cruiser',category:'MC',
+    serialType:'FRAME',motorNo:'MTR-88231',unitCost:78000,conditionCode:'GOOD'});
+  if(!scan.json?.ok) throw new Error(scan.json?.error);
+  if(!scan.json.result.willRegister) throw new Error('unit was not marked for registration');
+  // A second unit scanned with no item detail at all - still real stock.
+  const bare=await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,{serialNo:'LC6PAGA13R0099002'});
+  if(!bare.json?.ok) throw new Error(bare.json?.error);
+
+  await call('POST',`/api/inventory/cycle-counts/${ccId}/submit`,{});
+  const app2=await call('POST',`/api/inventory/cycle-counts/${ccId}/approve`,{});
+  if(!app2.json?.ok) throw new Error(app2.json?.error);
+  const posted=await call('POST',`/api/inventory/cycle-counts/${ccId}/post-adjustments`,{});
+  if(!posted.json?.ok) throw new Error(posted.json?.error);
+  if(posted.json.registered!==2) throw new Error('registered '+posted.json.registered+', expected 2');
+
+  const a=sqlite.prepare("SELECT * FROM erp_assets WHERE serial_no='LC6PAGA13R0099001'").get();
+  if(!a) throw new Error('the counted unit never reached inventory');
+  if(a.current_location_id!==loc.id) throw new Error('registered at the wrong location');
+  if(a.current_status!=='AVAILABLE') throw new Error('status '+a.current_status);
+  if(a.motor_no!=='MTR-88231') throw new Error('motor number lost');
+  if(Number(a.unit_cost)!==78000) throw new Error('unit cost lost');
+  const b=sqlite.prepare("SELECT * FROM erp_assets WHERE serial_no='LC6PAGA13R0099002'").get();
+  if(!b) throw new Error('the undocumented unit was dropped');
+  if(b.reconciliation_status!=='FOR_REVIEW') throw new Error('missing item code should flag FOR_REVIEW, got '+b.reconciliation_status);
+  return {note:`2 units registered · ${a.asset_no} full detail, ${b.asset_no} flagged FOR_REVIEW`};
+});
+await t('re-posting a count does not duplicate the unit', async()=>{
+  const n=sqlite.prepare("SELECT COUNT(*) n FROM erp_assets WHERE serial_no='LC6PAGA13R0099001'").get().n;
+  if(n!==1) throw new Error('serial exists '+n+' times');
+  return {note:'serial is unique in erp_assets'};
+});
+
 // ---- cycle count finance override
 await t('finance override on a variance', async()=>{
   const loc=sqlite.prepare('SELECT id FROM erp_locations LIMIT 1').get();
