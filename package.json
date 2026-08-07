@@ -22,7 +22,8 @@
     "predeploy": "node scripts/predeploy-guard.mjs",
     "test:e2e": "node test/blitz-e2e.mjs",
     "test:goldenpath": "node test/goldenpath.mjs",
-    "test:receivables": "node test/receivables-render.mjs"
+    "test:receivables": "node test/receivables-render.mjs",
+    "test:centres": "node test/module-centres-render.mjs"
   },
   "dependencies": {
     "hono": "^4.6.14",
