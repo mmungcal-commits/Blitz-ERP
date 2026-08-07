@@ -18,7 +18,8 @@
     "db:bootstrap:remote": "node scripts/apply-database.mjs --remote --confirm=E88_NEW_DATABASE",
     "smoke": "node scripts/smoke-test.mjs",
     "predeploy": "node scripts/predeploy-guard.mjs",
-    "test:e2e": "node test/blitz-e2e.mjs"
+    "test:e2e": "node test/blitz-e2e.mjs",
+    "test:goldenpath": "node test/goldenpath.mjs"
   },
   "dependencies": {
     "hono": "^4.6.14",
