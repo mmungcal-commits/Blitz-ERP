@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
-  from './viz.js?v=20260807-r28';
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R28.0';
+  from './viz.js?v=20260807-r29';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R29.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -387,44 +387,49 @@ async function renderHomeDashboard(){
   const cards=[];
   if(sec.inventory){
     const i=sec.inventory;
+    // Every tile goes somewhere. A number you cannot click is a dead end.
     tiles=vizTiles([
       {label:'Available',value:i.available,tone:'good',sub:'ready to move',module:'ip-warehouse-management',
        spark:sparkOf('inventory'),delta:deltaOf('inventory')},
-      {label:'Quarantine',value:i.quarantine,tone:i.quarantine?'serious':'good',sub:'held back'},
-      {label:'Missing cost',value:i.unvalued,tone:i.unvalued?'critical':'good',sub:'unvalued units'},
-      {label:'Open counts',value:i.openCounts,tone:i.openCounts?'warning':'good',sub:'being counted'},
-      {label:'Variances',value:i.variances,tone:i.variances?'critical':'good',sub:'units in question'}
+      {label:'Quarantine',value:i.quarantine,tone:i.quarantine?'serious':'good',sub:'held back',
+       module:'ip-warehouse-management'},
+      {label:'Missing cost',value:i.unvalued,tone:i.unvalued?'critical':'good',sub:'unvalued units',
+       module:'ip-warehouse-management'},
+      {label:'Open counts',value:i.openCounts,tone:i.openCounts?'warning':'good',sub:'being counted',
+       module:'ip-cycle-counting'},
+      {label:'Variances',value:i.variances,tone:i.variances?'critical':'good',sub:'units in question',
+       module:'ip-cycle-counting'}
     ]);
     if((i.byClass||[]).length)
       cards.push(vizDonut(i.byClass.map(r=>({label:r.label||'Unclassified',value:Number(r.value)||0})),
-        {title:'Inventory by class',totalLabel:'Units',keyLabel:'Class',valueLabel:'Units'}));
+        {title:'Inventory by class',totalLabel:'Units',keyLabel:'Class',valueLabel:'Units',
+         open:'ip-warehouse-management',openLabel:'Open Warehouse Management'}));
     const pg=d.progress;
     if(pg&&pg.pct!=null)
       cards.push(vizRing(pg.pct,{title:'Counting progress',
         subtitle:compact(pg.counted)+' of '+compact(pg.expected)+' expected units',
         caption:'counted',tipLabel:'Counted against expected',
+        open:'ip-cycle-counting',openLabel:'Open Inventory & Cycle Counting',
         tone:pg.pct>=100?'good':pg.pct>=50?'warning':'serious'}));
   }
   if(sec.procurement&&(sec.procurement.topVendors||[]).length)
     cards.push(vizBars(sec.procurement.topVendors.map(r=>({label:r.label||'-',value:Number(r.value)||0})),
       {title:'Committed spend by vendor',money:true,color:VIZ.series[1],
-       keyLabel:'Vendor',valueLabel:'Amount',limit:6,labelWidth:120}));
+       keyLabel:'Vendor',valueLabel:'Amount',limit:6,labelWidth:120,
+       open:'ip-inbound-logistics',openLabel:'Open Inbound Logistics'}));
   if(sec.finance&&(sec.finance.byStage||[]).length)
     cards.push(vizDonut(sec.finance.byStage.map(r=>({label:String(r.label||'').replace(/_/g,' '),value:Number(r.value)||0})),
-      {title:'Payment requests by stage',totalLabel:'Requests',keyLabel:'Stage',valueLabel:'Requests'}));
+      {title:'Payment requests by stage',totalLabel:'Requests',keyLabel:'Stage',valueLabel:'Requests',
+       open:'fa-receivables-payables',openLabel:'Open Payables Management'}));
   if(sec.service&&(sec.service.byStatus||[]).length)
     cards.push(vizDonut(sec.service.byStatus.map(r=>({label:String(r.label||'').replace(/_/g,' '),value:Number(r.value)||0})),
-      {title:'Service jobs by stage',totalLabel:'Jobs',keyLabel:'Stage',valueLabel:'Jobs'}));
+      {title:'Service jobs by stage',totalLabel:'Jobs',keyLabel:'Stage',valueLabel:'Jobs',
+       open:'sd-service-management',openLabel:'Open Service Management'}));
 
   if(tr.all&&tr.all.series)
     cards.push(vizLine([{label:'Activity',points:tr.all.series.map(p=>(
       {label:new Date(p.label+'T00:00:00').toLocaleDateString('en-US',{weekday:'short'}),value:p.value}))}],
       {title:'Activity across the last 7 days',keyLabel:'Day',valueLabel:'Events'}));
-
-  const feed=(d.activity||[]).map(a=>
-    '<li><b>'+esc(String(a.action||'').replace(/_/g,' ').toLowerCase())+'</b>'
-    +'<span>'+esc(a.record_no||a.module||'')+'</span>'
-    +'<small>'+esc(String(a.user_email||'').split('@')[0])+'</small></li>').join('');
 
   content.innerHTML='<section class="home-shell">'
     +'<header class="home-top">'
@@ -440,14 +445,16 @@ async function renderHomeDashboard(){
     +waitingHtml
     +tiles
     +'<div class="viz-grid home-grid">'+cards.join('')+'</div>'
-    +(feed?'<section class="home-feed"><h2>Latest activity</h2><ul>'+feed+'</ul></section>':'')
     +'<footer class="home-foot"><span>Blitz - ERP</span><span>&copy; 2026 E88 Ventures Inc.</span></footer>'
     +'</section>';
 
-  bindViz(content);
-  $$('[data-home-go]').forEach(b=>b.onclick=()=>openWorkspace(b.dataset.homeGo));
-  $$('[data-viz-go]').forEach(b=>{ const m=b.getAttribute('data-viz-go');
-    if(m&&m.indexOf('-')>0)b.onclick=()=>openWorkspace(m); });
+  const go=code=>{
+    if(!code)return;
+    if(!canWorkspace(code))return toast('This module is not assigned to your account.','error');
+    openWorkspace(code);
+  };
+  bindViz(content,null,go);
+  $$('[data-home-go]').forEach(b=>b.onclick=()=>go(b.dataset.homeGo));
   $('#homeModules').onclick=()=>{state.showModuleMap=true;renderLaunchpad();};
   $('#homeSignOut').onclick=logout;
   // Let the cards arrive rather than snap in.
@@ -6218,16 +6225,6 @@ init();
     box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
 
   .home-grid{margin-bottom:14px}
-  .home-feed{padding:13px 15px;border:1px solid #e8eef4;border-radius:10px;background:#fff;
-    box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
-  .home-feed h2{margin:0 0 9px;font-size:12.5px;color:#0a2239}
-  .home-feed ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
-  .home-feed li{display:flex;align-items:baseline;gap:9px;font-size:12px;color:#42506a;
-    padding-bottom:6px;border-bottom:1px solid #f0f4f8}
-  .home-feed li:last-child{border-bottom:0;padding-bottom:0}
-  .home-feed b{text-transform:capitalize;color:#0a2239;font-weight:700}
-  .home-feed span{flex:1;color:#657586}
-  .home-feed small{color:#9fb0c0}
   .home-foot{display:flex;justify-content:space-between;margin-top:18px;padding-top:12px;
     border-top:1px solid #e2e9f0;color:#9fb0c0;font-size:11px}
   @keyframes homeRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}

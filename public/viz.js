@@ -60,8 +60,12 @@ function niceTicks(max, count){
  * than one series, and a table behind a toggle. The table is not a nicety -
  * it is how a value stays reachable when a hue is too light to label.
  */
-function figure({ title, subtitle, body, legend, table, id }){
-  return '<figure class="viz" id="'+id+'">'
+function figure({ title, subtitle, body, legend, table, id, open, openLabel }){
+  // A chart on a dashboard is a question. Giving the whole card a destination
+  // means the answer is one click away instead of a hunt through the rail.
+  return '<figure class="viz'+(open?' viz-clickable':'')+'" id="'+id+'"'
+    + (open?' data-viz-open="'+esc(open)+'" tabindex="0" role="link"':'')
+    + '>'
     + (title ? '<figcaption><span class="viz-title">'+esc(title)+'</span>'
         + (subtitle?'<span class="viz-sub">'+esc(subtitle)+'</span>':'')
         + (table?'<button type="button" class="viz-tbl-toggle" data-viz-table="'+id+'">Table</button>':'')
@@ -69,6 +73,7 @@ function figure({ title, subtitle, body, legend, table, id }){
     + '<div class="viz-plot">'+body+'</div>'
     + (legend||'')
     + (table?'<div class="viz-table" hidden>'+table+'</div>':'')
+    + (open?'<span class="viz-open">'+esc(openLabel||'Open')+' <i>&rsaquo;</i></span>':'')
     + '</figure>';
 }
 
@@ -131,7 +136,7 @@ export function vizDonut(rows, opts){
       +'<text x="'+cx+'" y="'+(cy+14)+'" class="viz-heroSub" text-anchor="middle">'+esc(opts.totalLabel||'Total')+'</text>'
     : '';
 
-  return figure({ id, title:opts.title, subtitle:opts.subtitle,
+  return figure({ id, title:opts.title, subtitle:opts.subtitle, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel,
     body:'<svg viewBox="0 0 124 124" class="viz-svg viz-donut" role="img" aria-label="'
       +esc(opts.title||'Breakdown')+'">'+arcs+centre+'</svg>',
     legend: legendOf(data.map((r,i)=>({label:r.label+' · '+compact(r.value),
@@ -177,7 +182,7 @@ export function vizBars(rows, opts){
       + '</g>';
   }).join('');
 
-  return figure({ id, title:opts.title, subtitle:opts.subtitle,
+  return figure({ id, title:opts.title, subtitle:opts.subtitle, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel,
     body:'<svg viewBox="0 0 '+W+' '+H+'" class="viz-svg" preserveAspectRatio="xMinYMin meet" role="img" aria-label="'
       +esc(opts.title||'Comparison')+'">'
       +'<line x1="'+LABEL+'" y1="0" x2="'+LABEL+'" y2="'+H+'" stroke="'+VIZ.axis+'" stroke-width="1"/>'
@@ -224,7 +229,7 @@ export function vizColumns(rows, opts){
       + '</g>';
   }).join('');
 
-  return figure({ id, title:opts.title, subtitle:opts.subtitle,
+  return figure({ id, title:opts.title, subtitle:opts.subtitle, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel,
     body:'<svg viewBox="0 0 '+W+' '+H+'" class="viz-svg" role="img" aria-label="'+esc(opts.title||'Trend')+'">'
       +grid
       +'<line x1="'+PAD_L+'" y1="'+(PAD_T+plotH)+'" x2="'+(W-14)+'" y2="'+(PAD_T+plotH)
@@ -281,7 +286,7 @@ export function vizLine(series, opts){
       +'" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>'+dots+endLabel;
   }).join('');
 
-  return figure({ id, title:opts.title, subtitle:opts.subtitle,
+  return figure({ id, title:opts.title, subtitle:opts.subtitle, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel,
     body:'<svg viewBox="0 0 '+W+' '+H+'" class="viz-svg" role="img" aria-label="'+esc(opts.title||'Trend')+'">'
       +grid
       +'<line x1="'+PAD_L+'" y1="'+(PAD_T+plotH)+'" x2="'+(W-PAD_R)+'" y2="'+(PAD_T+plotH)
@@ -317,7 +322,7 @@ export function vizRing(pct, opts){
       +esc(opts.valueLabel!=null?opts.valueLabel:Math.round(v)+'%')+'</text>'
     +(opts.caption?'<text x="'+cx+'" y="'+(cy+18)+'" class="viz-heroSub" text-anchor="middle">'+esc(opts.caption)+'</text>':'')
     +'</svg>';
-  return figure({ id, title:opts.title, subtitle:opts.subtitle, body,
+  return figure({ id, title:opts.title, subtitle:opts.subtitle, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, body,
     table: tableOf([opts.keyLabel||'Measure','Value'], [[opts.title||'Progress', Math.round(v)+'%']]) });
 }
 
@@ -361,8 +366,10 @@ export function vizTiles(tiles, opts){
         + (up?'\u2191':'\u2193') + ' ' + esc(Math.abs(Number(t.delta.value)).toFixed(1)) + '% '
         + '<i>' + esc(t.delta.period || 'vs last period') + '</i></small>';
     }
-    return '<button type="button" class="viz-tile '+tone+'"'
-      + (t.section?' data-viz-go="'+esc(t.section)+'"':'')
+    const dest = t.module || t.section;
+    return '<button type="button" class="viz-tile '+tone+(dest?' is-clickable':'')+'"'
+      + (t.module?' data-viz-open="'+esc(t.module)+'"':'')
+      + (!t.module&&t.section?' data-viz-go="'+esc(t.section)+'"':'')
       + (t.match?' data-viz-match="'+esc(t.match)+'"':'')
       + '><span class="viz-tile-label">'+esc(t.label)+'</span>'
       + (spark?'<span class="viz-tile-spark">'+spark+'</span>':'')
@@ -387,13 +394,13 @@ export function vizMeter(rows, opts){
       +'<span class="viz-meter-track"><i style="width:'+pct.toFixed(1)+'%;background:'+tone+'"></i></span>'
       +'</li>';
   }).join('')+'</ul>';
-  return figure({ id, title:opts.title, subtitle:opts.subtitle, body,
+  return figure({ id, title:opts.title, subtitle:opts.subtitle, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, body,
     table: tableOf([opts.keyLabel||'Item','Progress'],
       data.map(r=>[r.label, Math.round(Number(r.pct)||0)+'%'])) });
 }
 
 function emptyFigure(id, opts, message){
-  return figure({ id, title:opts.title, subtitle:opts.subtitle,
+  return figure({ id, title:opts.title, subtitle:opts.subtitle, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel,
     body:'<p class="viz-empty">'+esc(message)+'</p>' });
 }
 
@@ -403,7 +410,7 @@ function emptyFigure(id, opts, message){
  * a cockpit can hold several hundred marks and they should cost nothing.
  */
 let bound = false;
-export function bindViz(root, onNavigate){
+export function bindViz(root, onNavigate, onOpen){
   const scope = root || document;
   scope.querySelectorAll('[data-viz-table]').forEach(btn=>{
     btn.onclick = () => {
@@ -421,6 +428,18 @@ export function bindViz(root, onNavigate){
   if (typeof onNavigate === 'function'){
     scope.querySelectorAll('[data-viz-go]').forEach(tile=>{
       tile.onclick = () => onNavigate(tile.dataset.vizGo, tile.dataset.vizMatch||'');
+    });
+  }
+  if (typeof onOpen === 'function'){
+    scope.querySelectorAll('[data-viz-open]').forEach(el=>{
+      el.onclick = (e) => {
+        // The table toggle lives inside a clickable card; it must not navigate.
+        if (e.target.closest('[data-viz-table]')) return;
+        onOpen(el.getAttribute('data-viz-open'));
+      };
+      el.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(el.getAttribute('data-viz-open')); }
+      };
     });
   }
   if (bound) return;
@@ -455,6 +474,15 @@ export const VIZ_CSS = `
 .viz figcaption{display:flex;align-items:baseline;gap:8px;margin-bottom:10px}
 .viz-title{font-size:12.5px;font-weight:700;color:#0b0b0b}
 .viz-sub{font-size:10.5px;color:${VIZ.muted}}
+.viz-clickable{cursor:pointer;transition:transform .16s ease,box-shadow .16s ease}
+.viz-clickable:hover{transform:translateY(-2px);box-shadow:0 2px 4px rgba(10,34,57,.06),0 10px 24px rgba(10,34,57,.10)}
+.viz-clickable:focus-visible{outline:2px solid #2a78d6;outline-offset:2px}
+.viz-open{display:block;margin-top:9px;padding-top:8px;border-top:1px solid #f0f4f8;
+  font-size:11px;font-weight:700;color:#1669a7}
+.viz-open i{font-style:normal}
+.viz-tile.is-clickable{cursor:pointer}
+.viz-tile:not(.is-clickable){cursor:default;box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
+.viz-tile:not(.is-clickable):hover{transform:none;box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
 .viz-tbl-toggle{margin-left:auto;padding:3px 9px;border:1px solid #c9d6e0;border-radius:999px;
   background:#fff;color:#42506a;font-size:10px;cursor:pointer}
 .viz-tbl-toggle.on{background:#eef4f9;border-color:#a9c3d6;color:#14507f}
