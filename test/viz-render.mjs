@@ -61,8 +61,8 @@ const HOME = { ok:true,
     finance:{ open:5, mine:2, byStage:[{label:'FINANCE_REVIEWED',value:3},{label:'DRAFT',value:2}] },
   },
   waiting:[
-    { label:'Physical counts awaiting approval', count:2, module:'ip-cycle-counting' },
-    { label:'Payment requests for your validation', count:3, module:'fa-receivables-payables' },
+    { label:'Physical counts awaiting approval', count:2, module:'ip-cycle-counting#approvals' },
+    { label:'Payment requests for your validation', count:3, module:'fa-receivables-payables#records' },
   ],
   activity:[{ event_at:'2026-08-07', user_email:'judy@nrdev.ph', action:'SUBMIT_CYCLE_COUNT', module:'INVENTORY', record_no:'CC-0000002' }],
   progress:{ counted:424, expected:517, pct:82.0 },
@@ -77,6 +77,7 @@ const HOME = { ok:true,
 };
 
 let breakHome = false;
+let zeroHome = null;
 const results = [];
 const check = (name, pass, detail='') => {
   results.push({ name, pass, detail });
@@ -94,7 +95,7 @@ const server = createServer(async (req,res)=>{
       if (String(req.headers['x-boom'] || '') === '1' || breakHome) {
         res.statusCode = 500; return res.end(JSON.stringify({ ok:false, error:'no such column: requested_by' }));
       }
-      return res.end(JSON.stringify(HOME));
+      return res.end(JSON.stringify(zeroHome || HOME));
     }
     if (path.includes('/definition')) return res.end(JSON.stringify({ ok:true, definition:{ fields:[], statuses:[] } }));
     // A generic stub still has to carry the shapes the screens destructure,
@@ -145,9 +146,15 @@ check('the delta is signed and named against its period',
     (await page.locator('.viz-tile-delta').first().innerText()).replace(/\s+/g,' ').trim()),
   (await page.locator('.viz-tile-delta').first().innerText()).replace(/\s+/g,' ').trim());
 check('a waiting item opens the module it belongs to',
-  (await page.locator('[data-home-go="ip-cycle-counting"]').count()) === 1);
+  (await page.locator('[data-home-go="ip-cycle-counting#approvals"]').count()) === 1);
 
 // A number you cannot click is a dead end.
+check('every destination names a section, not just a module',
+  (await page.evaluate(() => [...document.querySelectorAll('[data-viz-open],[data-home-go]')]
+     .map(e => e.getAttribute('data-viz-open') || e.getAttribute('data-home-go'))
+     .every(d => d.includes('#')))),
+  (await page.evaluate(() => [...new Set([...document.querySelectorAll('[data-viz-open]')]
+     .map(e => e.getAttribute('data-viz-open')))].join(' | '))));
 check('every stat tile is clickable and points somewhere',
   (await page.locator('.viz-tile.is-clickable').count()) === 5,
   `${await page.locator('.viz-tile.is-clickable').count()} of ${await page.locator('.viz-tile').count()}`);
@@ -162,11 +169,14 @@ check('a card that leads nowhere shows no false affordance',
   && !(await page.locator('.home-shell figure.viz:not(.viz-clickable) .viz-open').count()));
 
 // Clicking a tile actually lands in the module, not just visually reacts.
-await page.locator('.viz-tile[data-viz-open="ip-cycle-counting"]').first().click();
+// A card opens the register the number came from, not the module's front page.
+await page.locator('.viz-tile[data-viz-open="ip-cycle-counting#records"]').first().click();
 await page.waitForFunction(() => document.body.classList.contains('workbench-view'), { timeout:8000 });
-check('clicking a tile opens its module',
-  (await page.locator('#pageTitle').textContent()).includes('Cycle Counting'),
-  await page.locator('#pageTitle').textContent());
+await page.waitForFunction(() => document.querySelector('.nav-item.active')?.textContent?.includes('Count Plans'), { timeout:8000 });
+check('clicking a tile opens the source records, not the module front page',
+  (await page.locator('#pageTitle').textContent()).includes('Cycle Counting')
+  && (await page.locator('.nav-item.active').textContent()).includes('Count Plans'),
+  (await page.locator('#pageTitle').textContent())+' \u203a '+(await page.locator('.nav-item.active').textContent()));
 await page.goto(base, { waitUntil:'networkidle' });
 await page.waitForSelector('.home-shell', { timeout:8000 });
 
@@ -175,12 +185,14 @@ await page.locator('figure.viz-clickable').first().locator('.viz-tbl-toggle').cl
 check('the table toggle inside a clickable card does not navigate',
   await page.locator('.home-shell').isVisible());
 await page.locator('figure.viz-clickable').first().locator('.viz-tbl-toggle').click();
-const card = page.locator('figure[data-viz-open="ip-warehouse-management"]');
+const card = page.locator('figure[data-viz-open="ip-warehouse-management#records"]');
 await card.locator('.viz-title').click();
 await page.waitForFunction(() => document.body.classList.contains('workbench-view'), { timeout:8000 });
-check('clicking a chart card opens its module',
-  (await page.locator('#pageTitle').textContent()).includes('Warehouse'),
-  await page.locator('#pageTitle').textContent());
+await page.waitForFunction(() => document.querySelector('.nav-item.active')?.textContent?.includes('Unit Visibility'), { timeout:8000 });
+check('clicking a chart card opens its source register',
+  (await page.locator('#pageTitle').textContent()).includes('Warehouse')
+  && (await page.locator('.nav-item.active').textContent()).includes('Unit Visibility'),
+  (await page.locator('#pageTitle').textContent())+' \u203a '+(await page.locator('.nav-item.active').textContent()));
 await page.goto(base, { waitUntil:'networkidle' });
 await page.waitForSelector('.home-shell', { timeout:8000 });
 
@@ -270,6 +282,34 @@ check('every mark describes itself for hover and keyboard',
   described.tipped === described.total, `${described.tipped}/${described.total}`);
 
 check('no script errors', errors.length === 0, errors.slice(0,2).join(' | ') || 'clean');
+
+/*
+ * Zero must look like zero. A round line cap on a zero-length arc still paints
+ * a dot, which reads as "a little bit" when the answer is none.
+ */
+const ZERO_HOME = JSON.parse(JSON.stringify(HOME));
+ZERO_HOME.sections.inventory = { available:0, quarantine:0, unvalued:0, openCounts:0, variances:0, byClass:[] };
+ZERO_HOME.progress = { counted:0, expected:120, pct:0 };
+ZERO_HOME.trends = { inventory:{ series:[{label:'a',value:0},{label:'b',value:0},{label:'c',value:0}], delta:null } };
+zeroHome = ZERO_HOME;
+const zeros = await browser.newPage({ viewport:{ width:1440, height:960 } });
+await zeros.goto(base, { waitUntil:'networkidle' });
+await zeros.waitForSelector('.viz-ring', { timeout:8000 });
+check('a ring at zero draws no arc at all',
+  (await zeros.locator('.viz-ring .viz-ring-arc').count()) === 0
+  && (await zeros.locator('.viz-ring circle').count()) === 1,
+  `${await zeros.locator('.viz-ring circle').count()} circle(s), ${await zeros.locator('.viz-ring-arc').count()} arc(s)`);
+check('the zero ring still says zero, quietly',
+  (await zeros.locator('.viz-ring-value').textContent()).trim() === '0%'
+  && (await zeros.locator('.viz-ring-value.is-zero').count()) === 1);
+check('tiles reading zero stop wearing a status colour',
+  (await zeros.locator('.viz-tile.is-zero').count()) === 5,
+  `${await zeros.locator('.viz-tile.is-zero').count()} of ${await zeros.locator('.viz-tile').count()}`);
+check('a flat history draws no sparkline',
+  (await zeros.locator('.viz-spark').count()) === 0);
+await zeros.screenshot({ path:SHOTS+'home-zero.png' });
+await zeros.close();
+zeroHome = null;
 
 /*
  * The failure that actually stranded someone: the dashboard endpoint threw, the
