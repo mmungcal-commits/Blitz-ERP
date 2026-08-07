@@ -360,7 +360,9 @@ inventoryRoutes.get('/cycle-counts', requirePermission('INVENTORY','VIEW'), asyn
     SELECT cc.*,l.code location_code,l.name location_name,l.location_type
     FROM erp_cycle_counts cc
     JOIN erp_locations l ON l.id=cc.location_id
-    ORDER BY cc.count_date DESC,cc.id DESC`);
+    WHERE (cc.status<>'CANCELLED' OR ?='1')
+    ORDER BY cc.count_date DESC,cc.id DESC`,
+    [normalizeText(c.req.query('includeCancelled'))==='1'?'1':'0']);
   return ok(c,{rows,total:rows.length});
 });
 
@@ -456,6 +458,145 @@ async function refreshCountTotals(db,id){
     [t?.counted||0,t?.variances||0,id]);
   return t;
 }
+
+// ---------------------------------------------------------------------------
+// Count sheet upload.
+//
+// Not everyone counts with a phone. A team with a clipboard types the serials
+// into a spreadsheet, and this takes that file. One row per physical unit, which
+// is the same shape a scan produces, so there is no second code path to keep in
+// step with scanning.
+//
+//   serial_no,item_code,item_name,category,serial_type,secondary_serial,motor_no,unit_cost,condition,remarks
+//
+// Only serial_no is required. Everything else fills in what the "identify this
+// unit" dialog would have asked for.
+// ---------------------------------------------------------------------------
+export const COUNT_IMPORT_COLUMNS = ['serial_no','item_code','item_name','category',
+  'serial_type','secondary_serial','motor_no','unit_cost','condition','remarks'];
+
+function parseCsv(text){
+  const rows=[];let row=[];let cell='';let quoted=false;
+  const src=String(text||'').replace(/^\uFEFF/,'');
+  for(let i=0;i<src.length;i++){
+    const ch=src[i];
+    if(quoted){
+      if(ch==='"'){ if(src[i+1]==='"'){cell+='"';i++;} else quoted=false; }
+      else cell+=ch;
+    }else if(ch==='"')quoted=true;
+    else if(ch===','||ch===';'&&false){row.push(cell);cell='';}
+    else if(ch==='\r'){/* ignore */}
+    else if(ch==='\n'){row.push(cell);rows.push(row);row=[];cell='';}
+    else cell+=ch;
+  }
+  if(cell!==''||row.length){row.push(cell);rows.push(row);}
+  return rows.filter(r=>r.some(v=>String(v).trim()!==''));
+}
+
+const headerKey=h=>String(h||'').trim().toLowerCase().replace(/[\s-]+/g,'_');
+
+// A plan raised by mistake can be removed while it is still OPEN.
+//
+// Nothing is actually destroyed: the plan is marked CANCELLED and drops out of
+// the register. A count sheet is a record of what somebody physically did, and
+// deleting the rows would take that away along with who scanned what and when.
+// Cancelling keeps it recoverable and keeps the audit trail intact.
+inventoryRoutes.delete('/cycle-counts/:id', requirePermission('INVENTORY','EDIT'), async(c)=>{
+  const id=Number(c.req.param('id'));
+  const count=await first(c.env.DB,`SELECT * FROM erp_cycle_counts WHERE id=?`,[id]);
+  if(!count)return fail(c,'Cycle count not found',404);
+  if(count.status!=='OPEN')
+    return fail(c,`Only an open count plan can be removed. ${count.count_no} is ${String(count.status).toLowerCase()}.`,409);
+  await run(c.env.DB,`UPDATE erp_cycle_counts SET status='CANCELLED' WHERE id=?`,[id]);
+  await audit(c,{action:'CANCEL_CYCLE_COUNT',module:'INVENTORY',recordType:'CYCLE_COUNT',
+    recordId:id,recordNo:count.count_no,before:count,after:{status:'CANCELLED'}});
+  return ok(c,{deleted:true,cancelled:true,countNo:count.count_no,
+    note:'The plan is cancelled and hidden from the register. Nothing was erased.'});
+});
+
+inventoryRoutes.post('/cycle-counts/:id/import', requirePermission('INVENTORY','CREATE'), async(c)=>{
+  const id=Number(c.req.param('id'));
+  const b=await jsonBody(c);
+  const count=await first(c.env.DB,`SELECT * FROM erp_cycle_counts WHERE id=?`,[id]);
+  if(!count)return fail(c,'Cycle count not found',404);
+  if(count.status!=='OPEN')return fail(c,`This count is ${String(count.status).toLowerCase()} and can no longer be added to.`,409);
+
+  const grid=parseCsv(b.csv);
+  if(!grid.length)return fail(c,'The file is empty.');
+  const header=grid[0].map(headerKey);
+  if(!header.includes('serial_no')){
+    return fail(c,'The first row must be a header containing serial_no. Download the template from this screen and fill it in.');
+  }
+  const idx=Object.fromEntries(COUNT_IMPORT_COLUMNS.map(k=>[k,header.indexOf(k)]));
+  const at=(r,k)=>idx[k]>=0?normalizeText(r[idx[k]]):'';
+
+  const commit=b.commit===true;
+  const user=c.get('erpUser').email;
+  const seen=new Set();
+  const results=[];
+  let added=0;
+
+  for(let n=1;n<grid.length;n++){
+    const r=grid[n];
+    const rowNo=n+1;
+    const serial=normalizeSerial(at(r,'serial_no'));
+    if(!serial){results.push({rowNo,serial:'',status:'SKIPPED',message:'No serial on this row.'});continue;}
+    if(seen.has(serial)){results.push({rowNo,serial,status:'DUPLICATE',message:'This serial appears more than once in the file.'});continue;}
+    seen.add(serial);
+
+    const already=await first(c.env.DB,
+      `SELECT id FROM erp_cycle_count_lines WHERE cycle_count_id=? AND actual_serial_no=?`,[id,serial]);
+    if(already){results.push({rowNo,serial,status:'ALREADY_COUNTED',message:'Already on this count sheet.'});continue;}
+
+    const expected=await first(c.env.DB,
+      `SELECT * FROM erp_cycle_count_lines WHERE cycle_count_id=? AND expected_serial_no=?`,[id,serial]);
+    const asset=await first(c.env.DB,`SELECT * FROM erp_assets WHERE serial_no=?`,[serial]);
+    const itemCode=at(r,'item_code');
+    const status=expected
+      ? (Number(asset?.current_location_id||0)!==Number(count.location_id)?'LOCATION_MISMATCH':'COUNTED')
+      : (asset?'LOCATION_MISMATCH':'NEW_UNIT');
+    const note=status==='NEW_UNIT'&&!itemCode?'Will be registered, flagged for review (no item code).':'';
+
+    if(!commit){results.push({rowNo,serial,status,itemCode,message:note});continue;}
+
+    if(expected){
+      await run(c.env.DB,`UPDATE erp_cycle_count_lines SET actual_asset_id=?,actual_serial_no=?,
+        actual_location_id=?,count_status=?,variance_type=?,scan_method='UPLOAD',scanned_by=?,
+        scanned_at=datetime('now'),notes=? WHERE id=?`,
+        [asset?.id||null,serial,asset?.current_location_id||null,
+         status==='COUNTED'?'COUNTED':'VARIANCE',status==='COUNTED'?null:'LOCATION_MISMATCH',
+         user,at(r,'remarks'),expected.id]);
+    }else{
+      const ins=await run(c.env.DB,`INSERT INTO erp_cycle_count_lines(
+        cycle_count_id,actual_asset_id,actual_serial_no,actual_location_id,count_status,variance_type,
+        scan_method,scanned_by,scanned_at,notes)
+        VALUES(?,?,?,?,'VARIANCE',?,'UPLOAD',?,datetime('now'),?)`,
+        [id,asset?.id||null,serial,asset?.current_location_id||null,
+         asset?'LOCATION_MISMATCH':'UNKNOWN_SERIAL',user,at(r,'remarks')]);
+      if(!asset){
+        await run(c.env.DB,`INSERT OR REPLACE INTO erp_cycle_count_new_units(
+          line_id,item_code,item_name,category,serial_type,secondary_serial,motor_no,
+          unit_cost,condition_code,status,captured_by)
+          VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+          [ins.meta.last_row_id,itemCode,at(r,'item_name'),
+           at(r,'category')||count.category||'OTH',at(r,'serial_type')||'SERIAL',
+           at(r,'secondary_serial'),at(r,'motor_no'),Number(at(r,'unit_cost'))||0,
+           at(r,'condition')||'GOOD','AVAILABLE',user]);
+      }
+    }
+    added+=1;
+    results.push({rowNo,serial,status,itemCode,message:note});
+  }
+
+  const summary=results.reduce((o,x)=>{o[x.status]=(o[x.status]||0)+1;return o;},{});
+  if(commit){
+    await refreshCountTotals(c.env.DB,id);
+    await audit(c,{action:'IMPORT_COUNT_SHEET',module:'INVENTORY',recordType:'CYCLE_COUNT',
+      recordId:id,recordNo:count.count_no,after:{added,summary}});
+  }
+  return ok(c,{preview:!commit,added,rows:results,summary,
+    totalRows:grid.length-1,columns:COUNT_IMPORT_COLUMNS});
+});
 
 inventoryRoutes.patch('/cycle-counts/:id/lines/:lineId', requirePermission('INVENTORY','EDIT'), async(c)=>{
   const id=Number(c.req.param('id'));const lineId=Number(c.req.param('lineId'));
