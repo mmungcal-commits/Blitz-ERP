@@ -1,4 +1,4 @@
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R18.1';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R19.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -1867,6 +1867,24 @@ function openMobileCount(countId,data){
       <div class="mr-counter"><b id="mcCount">${data.summary.counted}</b><span>of ${data.summary.expected} expected</span></div>
       <div id="mcStatus" class="mr-status">Tap <b>Scan unit</b> and the count sheet updates itself.</div>
       <input id="mcSerial" inputmode="text" autocomplete="off" placeholder="Or type / scan with a hardware scanner">
+      <details class="mr-newunit" id="mcNewWrap">
+        <summary>Details for units not yet in the system</summary>
+        <p class="form-note">Set the model once and keep scanning - it is applied to every unit that the
+          system has never seen. Anything counted without an item code is still registered, and flagged
+          for review so it can be tidied up later.</p>
+        <label><span>Item code</span><input id="mcItemCode" autocomplete="off" placeholder="e.g. MC-0001"></label>
+        <label><span>Item / model name</span><input id="mcItemName" autocomplete="off"></label>
+        <label><span>Class</span><select id="mcCategory">
+          <option value="">Use the count sheet's class</option>
+          <option value="MC">Motorcycle</option><option value="BAT">Battery</option>
+          <option value="BSS">Locker / Station</option><option value="SP">Spare part</option>
+          <option value="CHG">Charger</option><option value="OTH">Other</option></select></label>
+        <label><span>Unit cost</span><input id="mcUnitCost" type="number" step="0.01" min="0" placeholder="0.00"></label>
+        <label><span>Condition</span><select id="mcCondition">
+          <option value="GOOD">Good</option><option value="DAMAGED">Damaged</option>
+          <option value="FOR_REPAIR">For repair</option></select></label>
+        <label><span>Motor / secondary no. <i>(this unit only)</i></span><input id="mcMotorNo" autocomplete="off"></label>
+      </details>
       <div class="mr-actions">
         <button type="button" class="command primary mr-big" id="mcScan">Scan unit</button>
         <button type="button" class="command mr-big" id="mcAdd">Count</button>
@@ -1882,7 +1900,7 @@ function openMobileCount(countId,data){
   const setStatus=(t,tone)=>{const el=mb.querySelector('#mcStatus');el.className='mr-status '+(tone||'');el.innerHTML=t;};
   const paint=()=>{
     mb.querySelector('#mcList').innerHTML=log.slice().reverse().slice(0,40)
-      .map(l=>`<div class="mr-item ${l.variance?'bad':'good'}"><b>${esc(l.serial)}</b><span>${esc(l.variance||'counted')}</span></div>`).join('')
+      .map(l=>`<div class="mr-item ${esc(l.tone||(l.variance?'bad':'good'))}"><b>${esc(l.serial)}</b><span>${esc(l.label||l.variance||'counted')}</span></div>`).join('')
       ||'<div class="mr-empty">Nothing counted yet</div>';
   };
   paint();
@@ -1890,14 +1908,27 @@ function openMobileCount(countId,data){
     const serial=serialFromQrPayload(raw||mb.querySelector('#mcSerial').value);
     if(!serial){setStatus('Scan or type a serial.','bad');return;}
     try{
+      const v=id=>{const el=mb.querySelector(id);return el?el.value.trim():'';};
       const result=await api(`/inventory/cycle-counts/${countId}/scan`,{method:'POST',
-        body:JSON.stringify({serialNo:serial,qrPayload:raw||'',scanMethod:raw?'QR':'MANUAL'})});
-      const variance=result.result&&result.result.varianceType;
-      log.push({serial,variance:variance?String(variance).replace(/_/g,' '):''});
-      mb.querySelector('#mcCount').textContent=log.filter(x=>!x.variance).length+Number(data.summary.counted||0);
-      setStatus(`<b>${esc(serial)}</b> · ${variance?esc(String(variance).replace(/_/g,' ')):'counted'}`,variance?'bad':'good');
-      if(navigator.vibrate)navigator.vibrate(variance?[60,60,60]:40);
-      mb.querySelector('#mcSerial').value='';paint();
+        body:JSON.stringify({serialNo:serial,qrPayload:raw||'',scanMethod:raw?'QR':'MANUAL',
+          itemCode:v('#mcItemCode'),itemName:v('#mcItemName'),category:v('#mcCategory'),
+          unitCost:v('#mcUnitCost'),conditionCode:v('#mcCondition'),motorNo:v('#mcMotorNo')})});
+      const r=result.result||{};
+      const variance=r.varianceType;
+      // A unit the system has never seen is not an error during an opening
+      // count - it is the whole point. Say so, and only warn when we had to
+      // register it blind.
+      const isNew=r.willRegister;
+      const label=isNew?(r.needsItemDetail?'new unit · no item code':'new unit · will be registered')
+        :(variance?String(variance).replace(/_/g,' '):'counted');
+      log.push({serial,variance:(variance&&!isNew)?label:'',tone:isNew?(r.needsItemDetail?'warn':'new'):(variance?'bad':'good'),label});
+      mb.querySelector('#mcCount').textContent=log.length+Number(data.summary.counted||0);
+      setStatus(`<b>${esc(serial)}</b> · ${esc(label)}`,isNew?(r.needsItemDetail?'warn':'good'):(variance?'bad':'good'));
+      if(navigator.vibrate)navigator.vibrate((variance&&!isNew)?[60,60,60]:40);
+      mb.querySelector('#mcSerial').value='';
+      // The motor number belongs to one unit; everything else is sticky.
+      if(mb.querySelector('#mcMotorNo'))mb.querySelector('#mcMotorNo').value='';
+      paint();
     }catch(error){setStatus(esc(error.message),'bad');}
   };
   mb.querySelector('#mcScan').onclick=()=>scanQrWithCamera(v=>count(v));
@@ -5543,6 +5574,17 @@ init();
   @keyframes blitzCharge{0%,100%{background:rgba(255,255,255,.25)}50%{background:#4fa8f5;box-shadow:0 0 10px rgba(79,168,245,.7)}}
   /* Two equal cards on one row. align-items:stretch plus a fixed min-height keeps
      them the same size whether or not the label wraps. */
+  /* Physical count: a unit the system has never seen is normal during an
+     opening count, so it reads as progress, not as an error. */
+  .mr-newunit{border:1px solid #dbe4ee;border-radius:10px;padding:8px 10px;margin:8px 0;background:#fbfcfe}
+  .mr-newunit summary{cursor:pointer;font-weight:600;font-size:12.5px;color:var(--blitz-1)}
+  .mr-newunit label{display:block;margin-top:8px;font-size:11.5px}
+  .mr-newunit label span{display:block;color:#5a6577;margin-bottom:2px}
+  .mr-newunit label i{color:#8b97a8;font-style:italic}
+  .mr-newunit input,.mr-newunit select{width:100%;padding:8px 9px;border:1px solid #dbe4ee;border-radius:8px;font-size:13px}
+  .mr-status.warn{background:#fff6e5;color:#7a5300}
+  .mr-item.new{border-left:3px solid #1e88e5}
+  .mr-item.warn{border-left:3px solid #e8a33d}
   .blitz-scope{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:4px 0 14px;align-items:stretch}
   .blitz-scope-btn{display:flex;align-items:center;justify-content:center;text-align:center;
     min-height:44px;padding:10px 12px;border:1.5px solid #dbe4ee;border-radius:10px;background:#fff;
