@@ -1,4 +1,4 @@
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R22.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R23.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -7,6 +7,8 @@ const state={
   module:null,
   definition:null,
   section:'center',
+  mobileFull:false,
+  mobileGroup:null,
   inbound:{preview:null,receiptLines:[],shipment:null,locationId:null},
   cycleCount:null,
   scannerStream:null,
@@ -335,6 +337,7 @@ function enterpriseButton(item,className='enterprise-module-button'){
   return `<button class="${className}" data-workspace="${esc(item.code)}" ${allowed?'':'disabled aria-disabled="true"'}>${esc(item.label)}</button>`;
 }
 function renderLaunchpad(){
+  if(isPhone()&&!state.mobileFull)return renderMobileLaunchpad();
   state.module=null;
   state.definition=null;
   state.section='center';
@@ -413,13 +416,23 @@ function setHeader(title,subtitle=''){
  * because that is where the phone gets used.
  * =================================================================== */
 const MOBILE_TILES={
-  'ip-warehouse-management':{
-    title:'Inventory',
+  // Physical Count lives in Inventory & Cycle Counting, not Warehouse Management.
+  'ip-cycle-counting':{
+    title:'Inventory Count',
     tiles:[
       {key:'count',label:'Physical Count',sub:'Scan and count units',tone:'orange',icon:'clipboard',section:'approvals'},
-      {key:'stock',label:'Stock Lookup',sub:'Find a serial, see its status',tone:'slate',icon:'box',section:'center'},
-      {key:'plans',label:'Count Plans',sub:'Open or create a count sheet',tone:'green',icon:'truck',section:'records'},
-      {key:'variance',label:'Variances',sub:'Review count differences',tone:'blue',icon:'check',section:'reports'}
+      {key:'plans',label:'Count Plans',sub:'Open or create a count sheet',tone:'green',icon:'clipboard',section:'records'},
+      {key:'variance',label:'Variances',sub:'Review count differences',tone:'blue',icon:'check',section:'reports'},
+      {key:'overview',label:'Overview',sub:'Counting status at a glance',tone:'slate',icon:'box',section:'center'}
+    ]
+  },
+  'ip-warehouse-management':{
+    title:'Warehouse',
+    tiles:[
+      {key:'stock',label:'Unit Visibility',sub:'Find a serial, see its status',tone:'slate',icon:'box',section:'records'},
+      {key:'move',label:'Stock Movement',sub:'Receive, issue and transfer',tone:'orange',icon:'truck',section:'approvals'},
+      {key:'qr',label:'QR Trace',sub:'Scan a unit and read its history',tone:'blue',icon:'check',section:'reports'},
+      {key:'loc',label:'Locations',sub:'Warehouses and bins',tone:'green',icon:'box',section:'setup'}
     ]
   }
 };
@@ -442,8 +455,59 @@ function renderMobileTiles(module){
     }).join('')
     +'</div><button type="button" class="command mtile-full" id="mtileFull">Open the full desktop view</button></div>';
   $$('[data-mtile]').forEach(function(b){b.onclick=function(){openSection(b.dataset.mtile);};});
-  $('#mtileFull').onclick=function(){openSection('center');};
+  $('#mtileFull').onclick=function(){state.mobileFull=true;openSection('center');};
   return true;
+}
+/* A phone that has drilled into a section keeps one obvious way back to the
+   tiles - the desktop rail is off-screen on a handset. */
+function addMobileBackBar(){
+  const spec=MOBILE_TILES[state.module&&state.module.code];
+  if(!spec||!content||content.querySelector('.mtile-back'))return;
+  const bar=document.createElement('button');
+  bar.type='button';
+  bar.className='mtile-back';
+  bar.innerHTML='&lsaquo; '+esc(spec.title);
+  bar.onclick=function(){state.mobileFull=false;renderMobileTiles(state.module);};
+  content.insertBefore(bar,content.firstChild);
+}
+/* The eleven-column enterprise map is unreadable on a handset, so the phone
+   home screen is a grid of group tiles, then a grid of module tiles. */
+const MGROUP_TONES=['orange','slate','green','blue'];
+function renderMobileLaunchpad(){
+  state.module=null;state.definition=null;state.section='center';
+  document.body.classList.remove('workbench-view');
+  document.body.classList.add('launchpad-view');
+  const groups=(state.catalog.groups||[]).filter(function(g){return (g.items||[]).length;});
+  const open=state.mobileGroup&&groups.filter(function(g){return g.code===state.mobileGroup;})[0];
+  const user=state.session&&state.session.user||{};
+  let body='<div class="mtile-wrap"><div class="mtile-home-top">'
+    +'<div class="mtile-brand"><img src="/logo-navy.png" alt=""><div><b>Blitz <i>-</i> ERP</b>'
+    +'<small>'+esc(user.displayName||user.email||'')+'</small></div></div>'
+    +'<button type="button" class="mtile-signout" id="mSignOut">Sign out</button></div>';
+  if(open){
+    body+='<button type="button" class="mtile-back" id="mGroupBack">&lsaquo; All modules</button>'
+      +'<div class="mtile-head"><h2>'+esc(open.title)+'</h2><span>Modules</span></div><div class="mtile-grid">'
+      +open.items.map(function(it,i){
+        return '<button type="button" class="mtile '+MGROUP_TONES[i%MGROUP_TONES.length]+'" data-mmodule="'+esc(it.code)+'">'
+          +'<svg viewBox="0 0 24 24" aria-hidden="true">'+TILE_ICONS.box+'</svg>'
+          +'<b>'+esc(it.label)+'</b><small>'+esc(String(it.permission||'').replace(/_/g,' ').toLowerCase())+'</small><i class="mtile-go">&rsaquo;</i></button>';
+      }).join('')+'</div>';
+  }else{
+    body+='<div class="mtile-head"><h2>Modules</h2><span>Pick an area</span></div><div class="mtile-grid">'
+      +groups.map(function(g,i){
+        return '<button type="button" class="mtile '+MGROUP_TONES[i%MGROUP_TONES.length]+'" data-mgroup="'+esc(g.code)+'">'
+          +'<svg viewBox="0 0 24 24" aria-hidden="true">'+TILE_ICONS.clipboard+'</svg>'
+          +'<b>'+esc(g.title)+'</b><small>'+g.items.length+' module'+(g.items.length===1?'':'s')+'</small>'
+          +'<i class="mtile-go">&rsaquo;</i></button>';
+      }).join('')+'</div>';
+  }
+  body+='<button type="button" class="command mtile-full" id="mDesktop">Open the full desktop view</button></div>';
+  content.innerHTML=body;
+  $$('[data-mgroup]').forEach(function(b){b.onclick=function(){state.mobileGroup=b.dataset.mgroup;renderMobileLaunchpad();};});
+  $$('[data-mmodule]').forEach(function(b){b.onclick=function(){openWorkspace(b.dataset.mmodule);};});
+  if($('#mGroupBack'))$('#mGroupBack').onclick=function(){state.mobileGroup=null;renderMobileLaunchpad();};
+  if($('#mSignOut'))$('#mSignOut').onclick=logout;
+  if($('#mDesktop'))$('#mDesktop').onclick=function(){state.mobileFull=true;renderLaunchpad();};
 }
 
 async function openWorkspace(code){
@@ -457,13 +521,20 @@ async function openWorkspace(code){
   setHeader(module.label,module.groupTitle);
   renderSidebar();
   // A phone gets the tile launcher instead of the desktop rail.
-  if(isPhone()&&renderMobileTiles(module))return;
+  if(isPhone()&&!state.mobileFull&&renderMobileTiles(module))return;
   await openSection('center');
 }
 async function openSection(section){
   if(!state.module)return renderLaunchpad();
   state.section=section;
   renderSidebar();
+  const out=await renderSectionBody(section);
+  if(isPhone()&&!state.mobileFull&&MOBILE_TILES[state.module.code]){
+    try{addMobileBackBar();}catch(e){}
+  }
+  return out;
+}
+async function renderSectionBody(section){
   if(state.module.code.startsWith('fa-'))return renderFinanceWorkspace(section);
   if(state.module.code==='ip-inbound-logistics')return renderInboundWorkspace(section);
   if(state.module.code==='ip-warehouse-management')return renderWarehouseWorkspace(section);
@@ -3685,11 +3756,30 @@ function identifyCountedUnit(countId,line,opts){
         </div>
       </form>`,'Anything left blank is still counted and flagged for review');
     const mb=$('#modalBody');
-    // Offer the item codes already in the system so the counter can pick rather than type.
-    api('/masters/items?limit=400').then(r=>{
+    // Offer the item codes already in the system so the counter can pick rather
+    // than type - and once a known code is entered, the master fills in the
+    // description, class and cost so nobody retypes what the system already knows.
+    api('/masters/items?size=250').then(r=>{
       const list=mb.querySelector('#iduItems');
-      if(!list)return;
-      list.innerHTML=(r.rows||[]).map(i=>`<option value="${esc(i.item_code)}">${esc(i.item_name||'')}</option>`).join('');
+      const rows=r.rows||[];
+      if(list)list.innerHTML=rows.map(i=>`<option value="${esc(i.item_code)}">${esc(i.item_name||'')}</option>`).join('');
+      const byCode={};rows.forEach(i=>{byCode[String(i.item_code||'').toUpperCase()]=i;});
+      const codeEl=mb.querySelector('[name="itemCode"]');
+      const nameEl=mb.querySelector('[name="itemName"]');
+      const catEl=mb.querySelector('[name="category"]');
+      const costEl=mb.querySelector('[name="unitCost"]');
+      if(!codeEl)return;
+      const applyMaster=()=>{
+        const hit=byCode[String(codeEl.value||'').trim().toUpperCase()];
+        if(!hit)return;
+        if(nameEl&&!nameEl.value.trim())nameEl.value=hit.item_name||'';
+        if(catEl&&!catEl.value&&hit.category)catEl.value=hit.category;
+        if(costEl&&!Number(costEl.value)&&Number(hit.standard_cost))costEl.value=Number(hit.standard_cost);
+      };
+      codeEl.addEventListener('input',applyMaster);
+      codeEl.addEventListener('change',applyMaster);
+      codeEl.addEventListener('blur',applyMaster);
+      applyMaster();
     }).catch(()=>{});
     mb.querySelector('#iduSkip').onclick=()=>{closeModal();resolve(null);};
     mb.querySelector('#iduForm').onsubmit=async event=>{
@@ -3790,7 +3880,7 @@ async function renderPhysicalCount(countId=state.cycleCount){
       <td>${editable&&row.actual_serial_no?`<button class="table-action" data-edit-line="${row.id}">Edit</button>
         <button class="table-action danger" data-drop-line="${row.id}">${row.expected_serial_no?'Undo scan':'Remove'}</button>`:'-'}</td></tr>`;});
     const body=`<div class="workspace-commandbar"><label class="inline-control"><span>Count Plan</span><select id="physicalCountSelect"><option value="">Select count…</option>${register.rows.map(row=>`<option value="${row.id}" ${row.id===id?'selected':''}>${esc(row.count_no)} · ${esc(row.location_code)} · ${esc(row.status)}</option>`).join('')}</select></label>
-      ${data?`<button class="command" id="printCount">Print Count Sheet</button><button class="command primary" id="submitCount" ${data.header.status==='OPEN'?'':'disabled'}>Submit Count</button>`:''}</div>
+      ${data?`<button class="command" id="printCount">Print Count Sheet</button><button class="command primary" id="submitCount" ${data.header.status==='OPEN'?'':'disabled'}>Submit Count</button>${data.header.status==='OPEN'?`<button class="command danger" id="removeCount">Remove count sheet</button>`:''}`:''}</div>
       ${data?`<div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
         <header><div><h2>${esc(data.header.count_no)} · Physical Count</h2><span>${esc(data.header.location_code)} - ${esc(data.header.location_name)}</span></div>${statusBadge(data.header.status)}</header>
         <div class="scan-entry"><input id="countSerial" placeholder="Scan or enter physical serial"><button class="command primary" id="countAdd">Count Serial</button>
@@ -3804,6 +3894,28 @@ async function renderPhysicalCount(countId=state.cycleCount){
     $('#physicalCountSelect').onchange=event=>renderPhysicalCount(Number(event.target.value));
     if(!data)return;
     $('#printCount').onclick=()=>printCycleCountSheet(data);
+    // A sheet raised by mistake is removed from here too, not only from the
+    // register - this is the screen you are looking at when you notice.
+    if($('#removeCount'))$('#removeCount').onclick=()=>{
+      const cno=data.header.count_no;
+      const counted=Number(data.summary.counted||0);
+      modal('Remove '+esc(cno)+'?',
+        `<div class="operational-form"><p>This count sheet will be cancelled and disappear from the register.
+          ${counted?`It already has <b>${counted}</b> scanned unit${counted===1?'':'s'}, which stay on the cancelled sheet - nothing is erased and nothing is posted to inventory.`
+            :'Nothing has been scanned against it yet.'}</p>
+        <div class="modal-actions"><button type="button" class="command primary" id="rcYes">Remove count sheet</button>
+        <button type="button" class="command" id="rcNo">Keep it</button></div></div>`);
+      const mb=$('#modalBody');
+      mb.querySelector('#rcNo').onclick=()=>closeModal();
+      mb.querySelector('#rcYes').onclick=async()=>{
+        try{
+          await api('/inventory/cycle-counts/'+id,{method:'DELETE'});
+          closeModal();toast(cno+' removed');
+          state.cycleCount=null;
+          await renderPhysicalCount(null);
+        }catch(error){toast(error.message,'error');}
+      };
+    };
     const scan=async value=>{
       const serial=serialFromQrPayload(value||$('#countSerial').value);
       if(!serial)return toast('Scan or enter a serial.','error');
@@ -5856,7 +5968,16 @@ init();
   .mtile.green{background:linear-gradient(140deg,#4aa564,#358a4d)}
   .mtile.blue{background:linear-gradient(140deg,#2a86dd,#1a68b5)}
   .mtile-full{width:100%;margin-top:14px}
-  @media (min-width:721px){.mtile-wrap{display:none}}
+  .mtile-back{display:block;width:100%;text-align:left;margin:0 0 12px;padding:10px 12px;border:1px solid #d7e0ea;
+    border-radius:10px;background:#f5f8fb;color:var(--blitz-1);font-size:14px;font-weight:600;cursor:pointer}
+  .mtile-home-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px}
+  .mtile-brand{display:flex;align-items:center;gap:9px;min-width:0}
+  .mtile-brand img{height:34px;width:auto}
+  .mtile-brand b{display:block;font-size:16px;color:var(--blitz-1)}
+  .mtile-brand b i{font-style:normal;color:#1e88e5}
+  .mtile-brand small{display:block;font-size:11px;color:#7c8b9c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:46vw}
+  .mtile-signout{flex:0 0 auto;padding:8px 12px;border:1px solid #d7e0ea;border-radius:8px;background:#fff;color:#42506a;font-size:12.5px}
+  @media (min-width:721px){.mtile-wrap,.mtile-back{display:none}}
   .row-needs-item{background:#fffaf0}
   .needs-item{color:#b06f00;font-weight:600;font-size:11.5px}
   .table-action.danger{color:#a4282b;border-color:#e7c3c4}
