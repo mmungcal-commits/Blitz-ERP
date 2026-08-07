@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
-  from './viz.js?v=20260807-r29';
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R29.0';
+  from './viz.js?v=20260807-r30';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R30.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -389,42 +389,42 @@ async function renderHomeDashboard(){
     const i=sec.inventory;
     // Every tile goes somewhere. A number you cannot click is a dead end.
     tiles=vizTiles([
-      {label:'Available',value:i.available,tone:'good',sub:'ready to move',module:'ip-warehouse-management',
+      {label:'Available',value:i.available,tone:'good',sub:'ready to move',module:'ip-warehouse-management#records',
        spark:sparkOf('inventory'),delta:deltaOf('inventory')},
       {label:'Quarantine',value:i.quarantine,tone:i.quarantine?'serious':'good',sub:'held back',
-       module:'ip-warehouse-management'},
+       module:'ip-warehouse-management#records'},
       {label:'Missing cost',value:i.unvalued,tone:i.unvalued?'critical':'good',sub:'unvalued units',
-       module:'ip-warehouse-management'},
+       module:'ip-warehouse-management#records'},
       {label:'Open counts',value:i.openCounts,tone:i.openCounts?'warning':'good',sub:'being counted',
-       module:'ip-cycle-counting'},
+       module:'ip-cycle-counting#records'},
       {label:'Variances',value:i.variances,tone:i.variances?'critical':'good',sub:'units in question',
-       module:'ip-cycle-counting'}
+       module:'ip-cycle-counting#reports'}
     ]);
     if((i.byClass||[]).length)
       cards.push(vizDonut(i.byClass.map(r=>({label:r.label||'Unclassified',value:Number(r.value)||0})),
         {title:'Inventory by class',totalLabel:'Units',keyLabel:'Class',valueLabel:'Units',
-         open:'ip-warehouse-management',openLabel:'Open Warehouse Management'}));
+         open:'ip-warehouse-management#records',openLabel:'Open unit visibility'}));
     const pg=d.progress;
     if(pg&&pg.pct!=null)
       cards.push(vizRing(pg.pct,{title:'Counting progress',
         subtitle:compact(pg.counted)+' of '+compact(pg.expected)+' expected units',
         caption:'counted',tipLabel:'Counted against expected',
-        open:'ip-cycle-counting',openLabel:'Open Inventory & Cycle Counting',
+        open:'ip-cycle-counting#approvals',openLabel:'Open the physical count',
         tone:pg.pct>=100?'good':pg.pct>=50?'warning':'serious'}));
   }
   if(sec.procurement&&(sec.procurement.topVendors||[]).length)
     cards.push(vizBars(sec.procurement.topVendors.map(r=>({label:r.label||'-',value:Number(r.value)||0})),
       {title:'Committed spend by vendor',money:true,color:VIZ.series[1],
        keyLabel:'Vendor',valueLabel:'Amount',limit:6,labelWidth:120,
-       open:'ip-inbound-logistics',openLabel:'Open Inbound Logistics'}));
+       open:'ip-inbound-logistics#records',openLabel:'Open purchase orders'}));
   if(sec.finance&&(sec.finance.byStage||[]).length)
     cards.push(vizDonut(sec.finance.byStage.map(r=>({label:String(r.label||'').replace(/_/g,' '),value:Number(r.value)||0})),
       {title:'Payment requests by stage',totalLabel:'Requests',keyLabel:'Stage',valueLabel:'Requests',
-       open:'fa-receivables-payables',openLabel:'Open Payables Management'}));
+       open:'fa-receivables-payables#records',openLabel:'Open the payment requests'}));
   if(sec.service&&(sec.service.byStatus||[]).length)
     cards.push(vizDonut(sec.service.byStatus.map(r=>({label:String(r.label||'').replace(/_/g,' '),value:Number(r.value)||0})),
       {title:'Service jobs by stage',totalLabel:'Jobs',keyLabel:'Stage',valueLabel:'Jobs',
-       open:'sd-service-management',openLabel:'Open Service Management'}));
+       open:'sd-service-management#records',openLabel:'Open the job orders'}));
 
   if(tr.all&&tr.all.series)
     cards.push(vizLine([{label:'Activity',points:tr.all.series.map(p=>(
@@ -448,13 +448,21 @@ async function renderHomeDashboard(){
     +'<footer class="home-foot"><span>Blitz - ERP</span><span>&copy; 2026 E88 Ventures Inc.</span></footer>'
     +'</section>';
 
-  const go=code=>{
-    if(!code)return;
+  /*
+   * A card opens its source, not the module's front page. 'code#section' lands
+   * on the register the number came from, so clicking Variances puts you on the
+   * variance report rather than somewhere you have to navigate from.
+   */
+  const go=async dest=>{
+    if(!dest)return;
+    const [code,section]=String(dest).split('#');
     if(!canWorkspace(code))return toast('This module is not assigned to your account.','error');
-    openWorkspace(code);
+    await openWorkspace(code);
+    if(section&&state.module&&state.module.code===code)await openSection(section);
   };
   bindViz(content,null,go);
   $$('[data-home-go]').forEach(b=>b.onclick=()=>go(b.dataset.homeGo));
+  // canWorkspace only knows module codes, so strip any section before the check.
   $('#homeModules').onclick=()=>{state.showModuleMap=true;renderLaunchpad();};
   $('#homeSignOut').onclick=logout;
   // Let the cards arrive rather than snap in.

@@ -309,16 +309,26 @@ export function vizRing(pct, opts){
   const id = nextId();
   const v = Math.max(0, Math.min(100, Number(pct)||0));
   const tone = opts.tone && VIZ.status[opts.tone] ? VIZ.status[opts.tone] : (opts.color || VIZ.series[0]);
-  const R = 52, C = 2*Math.PI*R, cx = 64, cy = 64;
+  const R = 52, C = 2*Math.PI*R, cx = 64, cy = 64, STROKE = 12;
   const dash = (v/100)*C;
-  const body = '<svg viewBox="0 0 128 128" class="viz-svg viz-ring" role="img" aria-label="'
+  /*
+   * Zero draws no arc at all. A round line cap on a zero-length dash still
+   * paints a dot, which reads as "a little bit" when the answer is none - so
+   * the arc is omitted entirely, and the cap only rounds once the arc is
+   * longer than the stroke is wide.
+   */
+  const arc = v > 0
+    ? '<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="'+tone+'" stroke-width="'+STROKE+'"'
+      +' stroke-linecap="'+(dash >= STROKE ? 'round' : 'butt')+'"'
+      +' stroke-dasharray="'+dash.toFixed(1)+' '+(C-dash).toFixed(1)+'"'
+      +' transform="rotate(-90 '+cx+' '+cy+')" class="viz-ring-arc"/>'
+    : '';
+  const body = '<svg viewBox="0 0 128 128" class="viz-svg viz-ring'+(v>0?'':' is-empty')+'" role="img" aria-label="'
     +esc((opts.title||'Progress')+': '+Math.round(v)+'%')+'"'
     +' tabindex="0" data-viz-tip="'+esc(opts.tipLabel||opts.title||'Progress')+': '+Math.round(v)+'%">'
-    +'<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="'+(opts.track||'#e8eef4')+'" stroke-width="12"/>'
-    +'<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="'+tone+'" stroke-width="12"'
-    +' stroke-linecap="round" stroke-dasharray="'+dash.toFixed(1)+' '+(C-dash).toFixed(1)+'"'
-    +' transform="rotate(-90 '+cx+' '+cy+')" class="viz-ring-arc"/>'
-    +'<text x="'+cx+'" y="'+(cy+(opts.caption?0:7))+'" class="viz-ring-value" text-anchor="middle">'
+    +'<circle cx="'+cx+'" cy="'+cy+'" r="'+R+'" fill="none" stroke="'+(opts.track||'#e8eef4')+'" stroke-width="'+STROKE+'"/>'
+    +arc
+    +'<text x="'+cx+'" y="'+(cy+(opts.caption?0:7))+'" class="viz-ring-value'+(v>0?'':' is-zero')+'" text-anchor="middle">'
       +esc(opts.valueLabel!=null?opts.valueLabel:Math.round(v)+'%')+'</text>'
     +(opts.caption?'<text x="'+cx+'" y="'+(cy+18)+'" class="viz-heroSub" text-anchor="middle">'+esc(opts.caption)+'</text>':'')
     +'</svg>';
@@ -331,6 +341,7 @@ export function vizRing(pct, opts){
 function sparkline(points, color){
   const data = (points||[]).map(p=>Number(p&&p.value!=null?p.value:p)||0);
   if (data.length < 2) return '';
+  if (!data.some(v => v > 0)) return '';   // no history is not a flat line
   const max = Math.max.apply(null, data.concat([1]));
   const W = 74, H = 22, band = W/data.length;
   const bars = data.map((v,i)=>{
@@ -367,7 +378,8 @@ export function vizTiles(tiles, opts){
         + '<i>' + esc(t.delta.period || 'vs last period') + '</i></small>';
     }
     const dest = t.module || t.section;
-    return '<button type="button" class="viz-tile '+tone+(dest?' is-clickable':'')+'"'
+    const zero = !(Number(t.value) > 0);
+    return '<button type="button" class="viz-tile '+tone+(dest?' is-clickable':'')+(zero?' is-zero':'')+'"'
       + (t.module?' data-viz-open="'+esc(t.module)+'"':'')
       + (!t.module&&t.section?' data-viz-go="'+esc(t.section)+'"':'')
       + (t.match?' data-viz-match="'+esc(t.match)+'"':'')
@@ -390,9 +402,10 @@ export function vizMeter(rows, opts){
     const tone = r.tone && VIZ.status[r.tone] ? VIZ.status[r.tone] : (r.color||VIZ.series[0]);
     return '<li tabindex="0" data-viz-tip="'+esc(r.label)+': '+Math.round(pct)+'%">'
       +'<span class="viz-meter-head"><span>'+esc(r.label)+'</span>'
-      +'<b>'+esc(r.valueLabel!=null?r.valueLabel:Math.round(pct)+'%')+'</b></span>'
-      +'<span class="viz-meter-track"><i style="width:'+pct.toFixed(1)+'%;background:'+tone+'"></i></span>'
-      +'</li>';
+      +'<b'+(pct>0?'':' class="is-zero"')+'>'+esc(r.valueLabel!=null?r.valueLabel:Math.round(pct)+'%')+'</b></span>'
+      +'<span class="viz-meter-track">'
+      +(pct>0?'<i style="width:'+pct.toFixed(1)+'%;background:'+tone+'"></i>':'')
+      +'</span></li>';
   }).join('')+'</ul>';
   return figure({ id, title:opts.title, subtitle:opts.subtitle, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, body,
     table: tableOf([opts.keyLabel||'Item','Progress'],
@@ -531,6 +544,11 @@ export const VIZ_CSS = `
 .viz-ring{max-width:172px;margin:0 auto;display:block}
 .viz-ring-arc{transition:stroke-dasharray .6s cubic-bezier(.2,.8,.25,1)}
 .viz-ring-value{font-size:23px;font-weight:700;fill:${VIZ.ink}}
+.viz-ring-value.is-zero{fill:${VIZ.muted}}
+.viz-meter-head b.is-zero{color:${VIZ.muted}}
+/* A tile reading zero has nothing to report, so its state dot goes quiet. */
+.viz-tile.is-zero .viz-tile-label:before{background:#dbe3ea!important}
+.viz-tile.is-zero .viz-tile-value{color:${VIZ.muted}}
 .viz-spark{display:block;width:74px;height:22px;margin:2px 0 1px}
 .viz-tile-spark{display:block}
 .viz-tile-delta{display:block;font-size:10.5px;font-weight:700}
