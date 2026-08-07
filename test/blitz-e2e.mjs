@@ -1317,6 +1317,73 @@ await t('a payment request carries the lines it was made of', async()=>{
   return {note:'2 lines, 11,200 total, split across '+titles.length+' posting titles'};
 });
 
+/*
+ * Loading the register twice must not link the same document twice. The
+ * attachment table carries no natural key, so uniqueness is stated explicitly;
+ * without it "INSERT OR IGNORE" ignores nothing and every redeploy adds a copy.
+ */
+await t('a document is linked to its request once, however many times it is loaded', async()=>{
+  const rfp='RFP-DOCDUPE2026-0001';
+  sqlite.prepare(`INSERT OR IGNORE INTO erp_payment_requests(request_no,entity_id,request_date,requestor_email,
+      payee_name,department,purpose,request_type,gross_amount,net_payable,status)
+    VALUES(?,(SELECT id FROM erp_legal_entities WHERE entity_code='E88'),'2026-04-09','judy@nrdev.ph',
+      'Doc Supplier','Technology','Document test','Payment to Vendor',1000,1000,'DRAFT')`).run(rfp);
+  const link=sqlite.prepare(`INSERT OR IGNORE INTO erp_attachments(module_code,record_type,record_no,
+      file_name,content_type,storage,drive_file_id,file_url,uploaded_by)
+    VALUES('FINANCE','PAYMENT_REQUEST',?,?,'application/pdf','DRIVE',?,?,'import@nrdev.ph')`);
+  const args=[rfp, rfp+'.pdf', 'DRIVEID-DOCDUPE-0001', 'https://drive.google.com/file/d/DRIVEID-DOCDUPE-0001/view'];
+  link.run(...args); link.run(...args); link.run(...args);
+  const n=sqlite.prepare(`SELECT COUNT(*) n FROM erp_attachments WHERE record_no=?`).get(rfp).n;
+  if(n!==1) throw new Error('the same document is linked '+n+' times');
+  // A genuinely different document on the same request is still allowed.
+  link.run(rfp, rfp+'-annex.pdf', 'DRIVEID-DOCDUPE-0002', 'https://drive.google.com/file/d/DRIVEID-DOCDUPE-0002/view');
+  const m=sqlite.prepare(`SELECT COUNT(*) n FROM erp_attachments WHERE record_no=?`).get(rfp).n;
+  if(m!==2) throw new Error('a second, different document was refused');
+  return {note:'three identical loads leave one link; a different document still attaches'};
+});
+
+/*
+ * A draft request can be corrected; a submitted one cannot. Totals are always
+ * re-derived from the lines, so a request can never show a figure its own rows
+ * do not give.
+ */
+await t('a draft payment request is editable, a submitted one is not', async()=>{
+  const rfp='RFP-EDITME2026-0001';
+  sqlite.prepare(`INSERT OR IGNORE INTO erp_payment_requests(request_no,entity_id,request_date,requestor_email,
+      payee_name,department,purpose,request_type,gross_amount,vat_amount,withholding_amount,net_payable,status)
+    VALUES(?,(SELECT id FROM erp_legal_entities WHERE entity_code='E88'),'2026-04-11','judy@nrdev.ph',
+      'Editable Vendor','Technology','Original purpose','Payment to Vendor',1000,0,0,1000,'DRAFT')`).run(rfp);
+  const id=sqlite.prepare('SELECT id FROM erp_payment_requests WHERE request_no=?').get(rfp).id;
+
+  const ed=await call('PATCH','/api/finance/payment-requests/'+id,{
+    purpose:'Corrected purpose',
+    lines:[{accountTitle:'Station shell/equipment',description:'Shell',grossAmount:11200,vatRate:0.12,ewtAmount:0},
+           {accountTitle:'Travel and Transportation',description:'Site travel',grossAmount:2240,vatRate:0.12,ewtAmount:200}]});
+  if(!ed.json?.ok) throw new Error(ed.json?.error);
+  const h=sqlite.prepare('SELECT purpose,gross_amount,vat_amount,withholding_amount,net_payable FROM erp_payment_requests WHERE id=?').get(id);
+  if(h.purpose!=='Corrected purpose') throw new Error('the header did not change');
+  if(Math.abs(h.gross_amount-13440)>0.02) throw new Error('gross '+h.gross_amount+', expected the sum of the lines');
+  if(Math.abs(h.withholding_amount-200)>0.02) throw new Error('EWT '+h.withholding_amount);
+  if(Math.abs(h.net_payable-13240)>0.02) throw new Error('net '+h.net_payable);
+  const lines=sqlite.prepare('SELECT account_title,gross_amount,input_vat FROM erp_payment_request_lines WHERE rfp_ref=? ORDER BY line_no').all(rfp);
+  if(lines.length!==2) throw new Error('lines '+lines.length);
+  if(Math.abs(lines[0].input_vat-1200)>0.02) throw new Error('the VAT was not split from the gross: '+lines[0].input_vat);
+
+  // Replacing the lines replaces them: a shrinking edit must not leave orphans.
+  const again=await call('PATCH','/api/finance/payment-requests/'+id,{
+    lines:[{accountTitle:'Marketing Cost',description:'Only line',grossAmount:500,vatRate:0,ewtAmount:0}]});
+  if(!again.json?.ok) throw new Error(again.json?.error);
+  const after=sqlite.prepare('SELECT COUNT(*) n FROM erp_payment_request_lines WHERE rfp_ref=?').get(rfp).n;
+  if(after!==1) throw new Error('lines left behind: '+after);
+
+  // Once it is out for signature the figure is frozen.
+  sqlite.prepare("UPDATE erp_payment_requests SET status='SUBMITTED' WHERE id=?").run(id);
+  const late=await call('PATCH','/api/finance/payment-requests/'+id,{purpose:'sneaky'});
+  if(late.json?.ok) throw new Error('a submitted request was edited');
+  if(!/no longer be edited/i.test(late.json.error||'')) throw new Error('wrong refusal: '+late.json.error);
+  return {note:'header and lines edited, totals re-derived to 13,440 gross / 13,240 net; frozen once submitted'};
+});
+
 await t('a sales order becomes a receivable, once', async()=>{
   const cust=sqlite.prepare("SELECT id FROM erp_partners WHERE partner_type='CUSTOMER' LIMIT 1").get();
   const so=await call('POST','/api/sales',{transactionType:'LEASE',customerId:cust.id,
