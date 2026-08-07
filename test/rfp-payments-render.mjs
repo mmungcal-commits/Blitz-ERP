@@ -203,6 +203,28 @@ check('the card fits its window without scrolling sideways',
   await page.evaluate(()=>{ const m=document.querySelector('.pay-card');
     return m.scrollWidth <= m.clientWidth + 1; }));
 
+/*
+ * .operational-form is a flex row, and inheriting it laid the heading, the
+ * fields and the buttons side by side with the grid squeezed into one narrow
+ * column. Nothing overflowed and every field was present, so the earlier checks
+ * passed while the form was unusable. Geometry is what catches that.
+ */
+const geom = await page.evaluate(()=>{
+  const form = document.querySelector('#paySettleForm');
+  const box = e => { const r = e.getBoundingClientRect(); return { t:r.top, b:r.bottom, l:r.left, w:r.width }; };
+  return { form:box(form), h3:box(form.querySelector('h3')),
+    grid:box(form.querySelector('.form-grid')), actions:box(form.querySelector('.modal-actions')),
+    amount:box(form.querySelector('input[name="amount"]')),
+    cols:getComputedStyle(form.querySelector('.form-grid')).gridTemplateColumns.split(' ').length };
+});
+check('the heading sits above the fields, not beside them',
+  geom.h3.b <= geom.grid.t + 1, `heading bottom ${Math.round(geom.h3.b)} vs fields top ${Math.round(geom.grid.t)}`);
+check('the buttons sit below the fields, not beside them',
+  geom.actions.t >= geom.grid.b - 1, `buttons top ${Math.round(geom.actions.t)} vs fields bottom ${Math.round(geom.grid.b)}`);
+check('the fields use the width of the card',
+  geom.grid.w > geom.form.w * 0.9, `fields ${Math.round(geom.grid.w)} of ${Math.round(geom.form.w)}`);
+check('the fields lay out in more than one column', geom.cols >= 2, geom.cols + ' column(s)');
+
 await page.screenshot({ path:SHOTS+'rfp-payments.png', fullPage:true });
 
 /* ------------------------------------------------------ the proof uploader */
