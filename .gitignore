@@ -8,3 +8,6 @@ backups/
 .DS_Store
 __pycache__/
 *.pyc
+
+# Screenshots written by the browser render harnesses
+test/__screens__/
