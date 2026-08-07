@@ -34,22 +34,70 @@ CREATE INDEX IF NOT EXISTS idx_ar_posting_bank ON erp_ar_receipt_postings(bank_a
  * Every one points at the same cash control account for now. Finance can split
  * them onto their own GL accounts from Accounts & Periods without a deployment.
  */
-INSERT OR IGNORE INTO erp_bank_accounts
+-- One statement per account rather than a compound SELECT: D1 refuses a
+-- UNION ALL chain of this length, and separate inserts are plainer anyway.
+INSERT INTO erp_bank_accounts
   (bank_account_code, entity_id, bank_name, account_name, account_number_masked, currency, gl_account_id, opening_balance, active)
-SELECT code, (SELECT id FROM erp_legal_entities WHERE entity_code='E88'),
-       bank, name, '****', 'PHP',
+SELECT 'XENDIT', (SELECT id FROM erp_legal_entities WHERE entity_code='E88'),
+       'XENDIT', 'Xendit Clearing', '****', 'PHP',
        (SELECT id FROM erp_chart_accounts WHERE account_code='1010'), 0, 1
-FROM (
-  SELECT 'XENDIT'       code, 'XENDIT'       bank, 'Xendit Clearing'          name UNION ALL
-  SELECT 'MBTC-PHP',          'MBTC PHP',           'Metrobank PHP'                UNION ALL
-  SELECT 'MBTC-USD',          'MBTC USD',           'Metrobank USD'                UNION ALL
-  SELECT 'GCASH',             'GCash',              'GCash Wallet'                 UNION ALL
-  SELECT 'MAYA',              'Maya',               'Maya Wallet'                  UNION ALL
-  SELECT 'CASH-ON-HAND',      'Cash on Hand',       'Cash on Hand'                 UNION ALL
-  SELECT 'OTHER-BANK',        'Other Bank',         'Other Bank'
-) x
 WHERE EXISTS (SELECT 1 FROM erp_chart_accounts WHERE account_code='1010')
-  AND NOT EXISTS (SELECT 1 FROM erp_bank_accounts b WHERE b.bank_account_code=x.code);
+  AND EXISTS (SELECT 1 FROM erp_legal_entities WHERE entity_code='E88')
+  AND NOT EXISTS (SELECT 1 FROM erp_bank_accounts WHERE bank_account_code='XENDIT');
+
+INSERT INTO erp_bank_accounts
+  (bank_account_code, entity_id, bank_name, account_name, account_number_masked, currency, gl_account_id, opening_balance, active)
+SELECT 'MBTC-PHP', (SELECT id FROM erp_legal_entities WHERE entity_code='E88'),
+       'MBTC PHP', 'Metrobank PHP', '****', 'PHP',
+       (SELECT id FROM erp_chart_accounts WHERE account_code='1010'), 0, 1
+WHERE EXISTS (SELECT 1 FROM erp_chart_accounts WHERE account_code='1010')
+  AND EXISTS (SELECT 1 FROM erp_legal_entities WHERE entity_code='E88')
+  AND NOT EXISTS (SELECT 1 FROM erp_bank_accounts WHERE bank_account_code='MBTC-PHP');
+
+INSERT INTO erp_bank_accounts
+  (bank_account_code, entity_id, bank_name, account_name, account_number_masked, currency, gl_account_id, opening_balance, active)
+SELECT 'MBTC-USD', (SELECT id FROM erp_legal_entities WHERE entity_code='E88'),
+       'MBTC USD', 'Metrobank USD', '****', 'PHP',
+       (SELECT id FROM erp_chart_accounts WHERE account_code='1010'), 0, 1
+WHERE EXISTS (SELECT 1 FROM erp_chart_accounts WHERE account_code='1010')
+  AND EXISTS (SELECT 1 FROM erp_legal_entities WHERE entity_code='E88')
+  AND NOT EXISTS (SELECT 1 FROM erp_bank_accounts WHERE bank_account_code='MBTC-USD');
+
+INSERT INTO erp_bank_accounts
+  (bank_account_code, entity_id, bank_name, account_name, account_number_masked, currency, gl_account_id, opening_balance, active)
+SELECT 'GCASH', (SELECT id FROM erp_legal_entities WHERE entity_code='E88'),
+       'GCash', 'GCash Wallet', '****', 'PHP',
+       (SELECT id FROM erp_chart_accounts WHERE account_code='1010'), 0, 1
+WHERE EXISTS (SELECT 1 FROM erp_chart_accounts WHERE account_code='1010')
+  AND EXISTS (SELECT 1 FROM erp_legal_entities WHERE entity_code='E88')
+  AND NOT EXISTS (SELECT 1 FROM erp_bank_accounts WHERE bank_account_code='GCASH');
+
+INSERT INTO erp_bank_accounts
+  (bank_account_code, entity_id, bank_name, account_name, account_number_masked, currency, gl_account_id, opening_balance, active)
+SELECT 'MAYA', (SELECT id FROM erp_legal_entities WHERE entity_code='E88'),
+       'Maya', 'Maya Wallet', '****', 'PHP',
+       (SELECT id FROM erp_chart_accounts WHERE account_code='1010'), 0, 1
+WHERE EXISTS (SELECT 1 FROM erp_chart_accounts WHERE account_code='1010')
+  AND EXISTS (SELECT 1 FROM erp_legal_entities WHERE entity_code='E88')
+  AND NOT EXISTS (SELECT 1 FROM erp_bank_accounts WHERE bank_account_code='MAYA');
+
+INSERT INTO erp_bank_accounts
+  (bank_account_code, entity_id, bank_name, account_name, account_number_masked, currency, gl_account_id, opening_balance, active)
+SELECT 'CASH-ON-HAND', (SELECT id FROM erp_legal_entities WHERE entity_code='E88'),
+       'Cash on Hand', 'Cash on Hand', '****', 'PHP',
+       (SELECT id FROM erp_chart_accounts WHERE account_code='1010'), 0, 1
+WHERE EXISTS (SELECT 1 FROM erp_chart_accounts WHERE account_code='1010')
+  AND EXISTS (SELECT 1 FROM erp_legal_entities WHERE entity_code='E88')
+  AND NOT EXISTS (SELECT 1 FROM erp_bank_accounts WHERE bank_account_code='CASH-ON-HAND');
+
+INSERT INTO erp_bank_accounts
+  (bank_account_code, entity_id, bank_name, account_name, account_number_masked, currency, gl_account_id, opening_balance, active)
+SELECT 'OTHER-BANK', (SELECT id FROM erp_legal_entities WHERE entity_code='E88'),
+       'Other Bank', 'Other Bank', '****', 'PHP',
+       (SELECT id FROM erp_chart_accounts WHERE account_code='1010'), 0, 1
+WHERE EXISTS (SELECT 1 FROM erp_chart_accounts WHERE account_code='1010')
+  AND EXISTS (SELECT 1 FROM erp_legal_entities WHERE entity_code='E88')
+  AND NOT EXISTS (SELECT 1 FROM erp_bank_accounts WHERE bank_account_code='OTHER-BANK');
 
 /*
  * Which name on a collection means which bank account. Held as data so a new
