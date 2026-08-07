@@ -77,7 +77,8 @@ SELECT r.request_no, r.id, r.net_payable,
        'FULL:'||r.request_no
   FROM erp_payment_requests r
  WHERE r.status='PAID'
-   AND NOT EXISTS (SELECT 1 FROM erp_payment_settlements s WHERE s.natural_key='FULL:'||r.request_no);
+   AND NOT EXISTS (SELECT 1 FROM erp_payment_settlements s
+                    WHERE s.request_no=r.request_no AND s.status<>'VOID');
 
 /*
  * Xiamen Ampace Technology, RFP-OPS2026-00101, PHP 9,302,256.00 for cells: 30%
@@ -115,18 +116,33 @@ UPDATE erp_payment_requests
    SET status='APPROVED', paid_at=NULL, paid_by=NULL, updated_at=datetime('now')
  WHERE status='PAID'
    AND request_date >= COALESCE((SELECT value FROM erp_rfp_settings WHERE key='rfp_paid_evidence_from'),'2026-07-31')
+   -- Only the loader's own claims. A payment somebody recorded in the system,
+   -- with their name against it, is not the loader's to reverse.
+   AND NOT EXISTS (SELECT 1 FROM erp_payment_settlements s
+                    WHERE s.request_no=erp_payment_requests.request_no
+                      AND s.status<>'VOID' AND s.source<>'REGISTER_IMPORT')
    AND NOT EXISTS (SELECT 1 FROM erp_rfp_proof_of_payment p WHERE p.rfp_ref=erp_payment_requests.request_no)
    AND NOT EXISTS (SELECT 1 FROM erp_attachments a
                     WHERE a.record_type='PAYMENT_PROOF' AND a.record_no=erp_payment_requests.request_no
                       AND a.active=1);
 
--- And drop the settlement that was written for any request the rule just pulled
--- back, so the two never disagree.
+/*
+ * And drop the settlement that was written for any request the rule just pulled
+ * back, so the two never disagree.
+ *
+ * Only ever the loader's own row, only while it is untouched: a settlement
+ * somebody has voided carries the reason they voided it, and one that has had
+ * its bank advice attached is evidence. Deleting either would erase a person's
+ * work on the next deploy.
+ */
 DELETE FROM erp_payment_settlements
- WHERE natural_key IN (
-   SELECT 'FULL:'||r.request_no FROM erp_payment_requests r WHERE r.status<>'PAID'
- )
- AND source='REGISTER_IMPORT';
+ WHERE source='REGISTER_IMPORT'
+   AND status<>'VOID' AND voided_at IS NULL
+   AND proof_attachment_id IS NULL AND COALESCE(proof_reference,'')=''
+   AND natural_key IN (
+     SELECT 'FULL:'||r.request_no FROM erp_payment_requests r
+      WHERE r.status NOT IN ('PAID','PARTIALLY_PAID','PAID_UNPROVEN')
+   );
 
 -- Point settlements at their request where the id was not known at insert time.
 UPDATE erp_payment_settlements
