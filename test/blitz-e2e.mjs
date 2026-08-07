@@ -1207,6 +1207,116 @@ await t('a statement of account is generated from the register and frozen when i
   return {note:'opening 6,000 + 5,000 - 2,000 = 9,000; adjustment to 8,500; frozen on issue'};
 });
 
+/*
+ * Recording a collection and posting it are two acts, and the line between them
+ * is the whole control: recording says the money arrived, posting says it is in
+ * the bank and moves that account's balance. The checker may do the first and
+ * not the second, exactly as she checks an RFP without approving it.
+ */
+await t('a collection is posted to the bank registry, and moves the balance', async()=>{
+  sqlite.exec("INSERT OR IGNORE INTO erp_users(email,display_name,role_code,department,active) VALUES('rhonrado@nrdev.ph','Rucel Mae Honrado','FINANCE_REVIEWER','Finance and Accounting',1)");
+  const made=await call('POST','/api/receivables/collections',{
+    stream:'MC_SOLD',txnDate:'2026-05-04',salesType:'Sold',customerName:'BANKPOST TEST CORP',
+    grossAmount:60000,vatType:'VATable',vatRate:0.12,paymentMethod:'Bank Transfer',bankWallet:'BDO'});
+  if(!made.json?.ok) throw new Error(made.json?.error);
+  const id=made.json.id;
+  const posted=await call('POST','/api/receivables/collections/post',{ids:[id]});
+  if(!posted.json?.ok) throw new Error(posted.json?.error);
+
+  // The checker records what came in.
+  let rec; const prev=who;
+  try{ who='rhonrado@nrdev.ph';
+    rec=await call('POST',`/api/receivables/collections/${id}/collect`,
+      {receiptDate:'2026-05-10',amount:25000,paymentMethod:'Bank Transfer',bankWallet:'BDO',bankRef:'BDO-55001'});
+  } finally { who=prev; }
+  if(!rec.json?.ok) throw new Error('the finance checker could not record a collection: '+rec.json?.error);
+  const receipt=sqlite.prepare('SELECT id,receipt_no FROM erp_ar_receipts WHERE collection_id=? ORDER BY id DESC').get(id);
+
+  // She may not post it: that moves a bank balance.
+  try{ who='rhonrado@nrdev.ph';
+    const nope=await call('POST',`/api/receivables/receipts/${receipt.id}/post`,{});
+    if(nope.json?.ok) throw new Error('the finance checker posted a collection');
+  } finally { who=prev; }
+
+  // Nothing is on the register until it is posted.
+  const before=sqlite.prepare("SELECT COUNT(*) n FROM erp_bank_transactions WHERE import_batch='AR_COLLECTION'").get().n;
+  const post=await call('POST',`/api/receivables/receipts/${receipt.id}/post`,{});
+  if(!post.json?.ok) throw new Error(post.json?.error);
+  const after=sqlite.prepare("SELECT COUNT(*) n FROM erp_bank_transactions WHERE import_batch='AR_COLLECTION'").get().n;
+  if(after!==before+1) throw new Error('the deposit did not reach the bank register');
+  const txn=sqlite.prepare('SELECT * FROM erp_bank_transactions ORDER BY id DESC LIMIT 1').get();
+  if(txn.direction!=='CREDIT'||Number(txn.amount)!==25000) throw new Error('wrong movement: '+JSON.stringify(txn));
+  if(Number(post.json.runningBalance)!==Number(txn.running_balance))
+    throw new Error('the reported balance and the register disagree');
+
+  // Posting twice would double the money.
+  const again=await call('POST',`/api/receivables/receipts/${receipt.id}/post`,{});
+  if(again.json?.ok) throw new Error('the same collection posted twice');
+
+  // A reversal leaves a contra rather than deleting the deposit.
+  const openingBal=Number(txn.running_balance);
+  const noReason=await call('POST',`/api/receivables/receipts/${receipt.id}/unpost`,{});
+  if(noReason.json?.ok) throw new Error('reversed with no reason');
+  const rev=await call('POST',`/api/receivables/receipts/${receipt.id}/unpost`,{reason:'posted to the wrong account'});
+  if(!rev.json?.ok) throw new Error(rev.json?.error);
+  const contra=sqlite.prepare('SELECT * FROM erp_bank_transactions ORDER BY id DESC LIMIT 1').get();
+  if(contra.direction!=='DEBIT'||Number(contra.amount)!==25000) throw new Error('no contra was written');
+  if(Number(contra.running_balance)!==openingBal-25000) throw new Error('the balance did not come back');
+  if(sqlite.prepare('SELECT COUNT(*) n FROM erp_bank_transactions WHERE id=?').get(txn.id).n!==1)
+    throw new Error('the original deposit was erased instead of reversed');
+  return {note:`${receipt.receipt_no}: checker recorded, Finance posted 25,000 to BDO, reversal left a contra`};
+});
+
+await t('a collection naming a bank nobody has set up is refused, not guessed', async()=>{
+  const made=await call('POST','/api/receivables/collections',{
+    stream:'AFTERSALES',txnDate:'2026-05-06',customerName:'UNMAPPED BANK CORP',
+    grossAmount:5000,vatType:'VATable',vatRate:0.12,bankWallet:'Some Rural Bank'});
+  if(!made.json?.ok) throw new Error(made.json?.error);
+  const id=made.json.id;
+  await call('POST','/api/receivables/collections/post',{ids:[id]});
+  const rec=await call('POST',`/api/receivables/collections/${id}/collect`,
+    {receiptDate:'2026-05-07',amount:5000,bankWallet:'Some Rural Bank'});
+  if(!rec.json?.ok) throw new Error(rec.json?.error);
+  const receipt=sqlite.prepare('SELECT id FROM erp_ar_receipts WHERE collection_id=? ORDER BY id DESC').get(id);
+  const post=await call('POST',`/api/receivables/receipts/${receipt.id}/post`,{});
+  if(post.json?.ok) throw new Error('money was posted to a bank account nobody set up');
+  if(!/No bank account is set up/i.test(post.json.error||'')) throw new Error('wrong refusal: '+post.json.error);
+  return {note:post.json.error.slice(0,58)};
+});
+
+/*
+ * A request for payment is a header and the lines it was made of. One RFP
+ * routinely spans several account titles and the ledger posts each separately,
+ * so the split has to survive the round trip out of the register.
+ */
+await t('a payment request carries the lines it was made of', async()=>{
+  const rfp='RFP-TESTLINES2026-0001';
+  sqlite.prepare(`INSERT INTO erp_payment_requests(request_no,entity_id,request_date,requestor_email,
+      payee_name,department,purpose,request_type,gross_amount,vat_amount,withholding_amount,net_payable,status)
+    VALUES(?,(SELECT id FROM erp_legal_entities WHERE entity_code='E88'),'2026-04-02','judy@nrdev.ph',
+      'Multi Account Supplier','Technology','Site deployment','Payment to Vendor',11200,1200,0,11200,'DRAFT')`).run(rfp);
+  const id=sqlite.prepare('SELECT id FROM erp_payment_requests WHERE request_no=?').get(rfp).id;
+  const line=sqlite.prepare(`INSERT INTO erp_payment_request_lines(payment_request_id,rfp_ref,line_no,
+      account_title,source_account_title,procurement_category,description,gross_amount,vat_type,vat_rate,
+      net_of_vat,input_vat,net_payable) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  line.run(id,rfp,1,'Station shell/equipment','PPE - Equipment installation','CAPEX','Shell',8960,'VATable',0.12,8000,960,8960);
+  line.run(id,rfp,2,'Travel and Transportation','Travel/transportation/meals','OPEX','Site travel',2240,'VATable',0.12,2000,240,2240);
+
+  const d=await call('GET','/api/finance/payment-requests/'+id);
+  if(!d.json?.ok) throw new Error(d.json?.error);
+  if((d.json.lines||[]).length!==2) throw new Error('lines returned: '+(d.json.lines||[]).length);
+  const sum=(d.json.lines||[]).reduce((a,l)=>a+Number(l.gross_amount||0),0);
+  if(Math.abs(sum-11200)>0.01) throw new Error('the lines do not add up to the header: '+sum);
+  // The split by account title is what the ledger posts against.
+  const titles=(d.json.byAccount||[]).map(x=>x.label).sort();
+  if(titles.length!==2) throw new Error('account split: '+JSON.stringify(d.json.byAccount));
+  if(!titles.includes('Station shell/equipment')) throw new Error('the budget category is not the posting title');
+  // The sheet's own wording is kept beside it rather than thrown away.
+  const src=(d.json.lines||[]).map(l=>l.source_account_title).filter(Boolean);
+  if(src.length!==2) throw new Error('the original account titles were lost');
+  return {note:'2 lines, 11,200 total, split across '+titles.length+' posting titles'};
+});
+
 await t('a sales order becomes a receivable, once', async()=>{
   const cust=sqlite.prepare("SELECT id FROM erp_partners WHERE partner_type='CUSTOMER' LIMIT 1").get();
   const so=await call('POST','/api/sales',{transactionType:'LEASE',customerId:cust.id,

@@ -94,6 +94,15 @@ const server = createServer(async (req,res)=>{
     if (path === '/api/procurement/landed-cost')
       return res.end(JSON.stringify({ ok:true, rows:[{ id:1, landed_cost_no:'LC-0001', purchase_order_no:'PO-000001',
         allocation_method:'VALUE', total_cost:41000, status:'DRAFT' }] }));
+    // Setup screens are counted panels now, not a list of words.
+    if (path.startsWith('/api/finance/module-setup/') || path.startsWith('/api/inventory/module-setup/'))
+      return res.end(JSON.stringify({ ok:true, code:path.split('/').pop(), panels:[
+        { title:'Where planning gets its numbers', columns:['Source','What it counts','Units'],
+          rows:[['On hand','Confirmed by goods receipt',412],['Incoming','On an expected shipment',84],
+                ['Open purchase order','Approved and not yet shipped',0],['Deployed','With a customer or site',97]] },
+        { title:'Stock by class', columns:['Class','Units','Without a cost','Value'],
+          rows:[['MC',210,3,18400000],['BAT',120,0,2400000]] },
+      ] }));
     if (path === '/api/dashboard/home')
       return res.end(JSON.stringify({ ok:true, user:{ name:'Alexis Mungcal', role:'ADMIN', email:'mmungcal@nrdev.ph' },
         sections:{}, waiting:[], activity:[], progress:{}, trends:{}, period:{ from:'2026-08-01', to:'2026-08-31' } }));
@@ -150,6 +159,27 @@ for (const m of MODULES) {
   check(`${m.label}: the figures are a way in, not a dead end`, clickable >= 1, `${clickable} clickable`);
 
   await page.screenshot({ path:`${SHOTS}centre-${m.code}.png`, fullPage:true });
+}
+
+/*
+ * A setup screen that only names the concepts a module works with tells nobody
+ * whether anything is configured. These are counted panels now, so the check is
+ * that real columns and rows reach the page.
+ */
+for (const m of [{ code:'ip-inventory-analysis', label:'Inventory Analysis' },
+                 { code:'ip-sourcing-purchasing', label:'Sourcing & Purchasing' }]) {
+  if (!MODULES.some(x => x.code === m.code)) continue;
+  await openModule(m.code);
+  await page.evaluate(()=>{ const b=document.querySelector('[data-section="setup"]'); if(b) b.click(); });
+  await page.waitForTimeout(900);
+  const headers = await page.locator('.workspace-card table thead th').allTextContents();
+  const bodyRows = await page.locator('.workspace-card table tbody tr').count();
+  check(`${m.label}: the setup screen is counted panels, not a list of words`,
+    headers.length >= 3 && bodyRows >= 2, `${headers.length} columns, ${bodyRows} rows`);
+  check(`${m.label}: no bare definition list is left on setup`,
+    (await page.locator('.definition-list').count()) === 0,
+    `${await page.locator('.definition-list').count()} definition lists`);
+  await page.screenshot({ path:`${SHOTS}setup-${m.code}.png`, fullPage:true });
 }
 
 check('no script errors on any centre', errors.length === 0, errors.slice(0,3).join(' | ') || 'clean');
