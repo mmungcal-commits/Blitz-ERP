@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, bindViz, compact }
-  from './viz.js?v=20260807-r24';
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R24.0';
+  from './viz.js?v=20260807-r25';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R25.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -203,7 +203,9 @@ function workspaceTabs(code=state.module?.code){
   const connectedTabs={
     'sd-crm':[['center','Sales Pipeline'],['records','Leads & Opportunities'],['approvals','Sales Review'],['reports','CRM Analytics'],['setup','CRM Controls']],
     'sd-demand-planning':[['center','Demand Center'],['records','Forecasts'],['approvals','Baseline & Approval'],['reports','Forecast Analytics'],['setup','Planning Controls']],
-    'sd-order-management':[['center','Order Center'],['records','Sales Orders'],['approvals','Order Approval'],['reports','Order Analytics'],['setup','Order Controls']],
+    // Order Approval and Order Controls are not used - sales approval lives in
+    // the outbound requisition chain, so both tabs are off the rail.
+    'sd-order-management':[['center','Order Center'],['records','Sales Orders'],['reports','Order Analytics']],
     'sd-lease-contract-management':[['center','Lease Center'],['records','Lease Contracts'],['approvals','Contract Approval'],['reports','Lease Analytics'],['setup','Lease Controls']],
     'sd-warranty-management':[['center','Warranty Center'],['records','Claims & Registrations'],['approvals','Claim Approval'],['reports','Warranty Analytics'],['setup','Warranty Rules']],
     'sd-service-management':[['center','Service Center'],['records','Service Jobs'],['approvals','Work Approval'],['reports','Service Analytics'],['setup','Service Controls']],
@@ -319,9 +321,11 @@ async function init(){
     document.body.classList.toggle('scope-admin',state.scope==='ADMIN');
     try{document.title='Blitz - ERP';}catch(e){}
     state.catalog=state.session.workspaceCatalog||{groups:[],tools:[],addons:[]};
-    var __hiddenModules=['sd-crm','sd-demand-planning','sd-warranty-management','sd-pim','sd-customer-portal','sd-lease-contract-management','ip-inventory-analysis','ip-subcontracting'];
+    // 'ip-inventory-analysis' is the inventory Reports screen and belongs in the
+    // group - it was hidden here, which is why Reports never appeared.
+    var __hiddenModules=['sd-crm','sd-demand-planning','sd-warranty-management','sd-pim','sd-customer-portal','sd-lease-contract-management','ip-subcontracting'];
     if(state.catalog&&state.catalog.groups)state.catalog.groups.forEach(function(g){if(g.items)g.items=g.items.filter(function(it){return __hiddenModules.indexOf(it.code)<0;});});
-    if(state.catalog&&state.catalog.groups)state.catalog.groups.forEach(function(g){if(g.items)g.items.forEach(function(it){if(it.code==='fa-receivables-payables')it.label='Payables Management';});});
+    if(state.catalog&&state.catalog.groups)state.catalog.groups.forEach(function(g){if(g.items)g.items.forEach(function(it){if(it.code==='fa-receivables-payables')it.label='Payables Management';if(it.code==='ip-inventory-analysis')it.label='Reports';});});
     state.workspaceAccess=state.session.workspaceAccess||[];
     $('#userBadge').innerHTML=`<b>${esc(state.session.user.displayName||state.session.user.email)}</b><small>${esc(state.session.user.role)} · ${esc(state.session.user.email)}</small>`;
     $('#accessBtn').classList.toggle('hidden',state.session.user.role!=='ADMIN');
