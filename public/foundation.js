@@ -241,8 +241,8 @@ function showAuth(mode='login'){
       </div>
       <div class="auth-heading"><h1>Sign in</h1></div>
       <div class="blitz-scope" role="group" aria-label="Sign-in scope">
-        <button type="button" class="blitz-scope-btn ${startScope==='OPERATIONS'?'active':''}" data-scope-pick="OPERATIONS"><b>Operations</b><small>Transactions, approvals, reports</small></button>
-        <button type="button" class="blitz-scope-btn ${startScope==='ADMIN'?'active':''}" data-scope-pick="ADMIN"><b>System Administration</b><small>Setup, users, backup. No approvals.</small></button>
+        <button type="button" class="blitz-scope-btn ${startScope==='OPERATIONS'?'active':''}" data-scope-pick="OPERATIONS">Operations</button>
+        <button type="button" class="blitz-scope-btn ${startScope==='ADMIN'?'active':''}" data-scope-pick="ADMIN">System Administration</button>
       </div>
       <form id="loginForm" class="auth-form">
         <input type="hidden" name="scope" id="loginScope" value="${esc(startScope)}">
@@ -5539,10 +5539,12 @@ init();
   .blitz-charge i:nth-child(2){animation-delay:.12s}.blitz-charge i:nth-child(3){animation-delay:.24s}
   .blitz-charge i:nth-child(4){animation-delay:.36s}.blitz-charge i:nth-child(5){animation-delay:.48s}
   @keyframes blitzCharge{0%,100%{background:rgba(255,255,255,.25)}50%{background:#4fa8f5;box-shadow:0 0 10px rgba(79,168,245,.7)}}
-  .blitz-scope{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:4px 0 14px}
-  .blitz-scope-btn{text-align:left;padding:9px 11px;border:1.5px solid #dbe4ee;border-radius:10px;background:#fff;cursor:pointer;transition:.16s}
-  .blitz-scope-btn b{display:block;font-size:12.5px;color:var(--blitz-1)}
-  .blitz-scope-btn small{display:block;font-size:10.5px;color:#7c8b9c;line-height:1.3;margin-top:2px}
+  /* Two equal cards on one row. align-items:stretch plus a fixed min-height keeps
+     them the same size whether or not the label wraps. */
+  .blitz-scope{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:4px 0 14px;align-items:stretch}
+  .blitz-scope-btn{display:flex;align-items:center;justify-content:center;text-align:center;
+    min-height:44px;padding:10px 12px;border:1.5px solid #dbe4ee;border-radius:10px;background:#fff;
+    cursor:pointer;transition:.16s;font-size:12.5px;font-weight:600;line-height:1.25;color:var(--blitz-1)}
   .blitz-scope-btn:hover{border-color:#bcd0e4;transform:translateY(-1px)}
   .blitz-scope-btn.active{border-color:var(--blitz-3);background:#f2f8ff;box-shadow:0 0 0 3px rgba(30,136,229,.12)}
   .auth-submit{background:linear-gradient(135deg,var(--blitz-2),var(--blitz-3));border:0}
