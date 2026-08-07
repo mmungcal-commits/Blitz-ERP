@@ -21,8 +21,21 @@ CREATE TABLE IF NOT EXISTS erp_department_heads (
 
 -- Matched to erp_users.department exactly; the lookup is case-insensitive but
 -- an exact match keeps the data readable.
+-- Samuel heads several departments; one person can hold as many as they need,
+-- because this is keyed by department rather than by person.
+--
+-- Both 'Sales' and 'Sales and Marketing' are listed on purpose: erp_departments
+-- calls it 'Sales' while erp_users.department says 'Sales and Marketing', and
+-- the RFP carries whichever string the form supplied. Listing both means the
+-- head is found either way instead of the request silently stalling.
 INSERT INTO erp_department_heads(department,head_email) VALUES
   ('Supply Chain',           'samuel@nrdev.ph'),
+  ('Logistics',              'samuel@nrdev.ph'),
+  ('Warehouse',              'samuel@nrdev.ph'),
+  ('After Sales',            'samuel@nrdev.ph'),
+  ('Operations & Product',   'samuel@nrdev.ph'),
+  ('Sales',                  'samuel@nrdev.ph'),
+  ('Sales and Marketing',    'samuel@nrdev.ph'),
   ('Human Resources',        'haide@nrdev.ph'),
   ('Technology',             'ferdinand@nrdev.ph'),
   ('Finance and Accounting', 'mmungcal@nrdev.ph')
@@ -30,11 +43,12 @@ ON CONFLICT(department) DO UPDATE SET
   head_email=excluded.head_email,
   updated_at=datetime('now');
 
--- Sales and Marketing has no head yet. Requests raised there will sit at the
--- DEPARTMENT stage until one is appointed:
+-- To appoint a head for any other department:
 --   INSERT INTO erp_department_heads(department,head_email)
---     VALUES('Sales and Marketing','<email>')
+--     VALUES('<department>','<email>')
 --     ON CONFLICT(department) DO UPDATE SET head_email=excluded.head_email;
+-- A department with no row here has no approver, and requests raised against it
+-- will sit at the DEPARTMENT stage.
 
 ----------------------------------------------------------------------
 -- Details captured for a unit that is counted but is not yet in the system.
