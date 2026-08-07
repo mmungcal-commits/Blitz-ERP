@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
-  from './viz.js?v=20260808-r34';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R34.0';
+  from './viz.js?v=20260808-r35';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R35.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -242,7 +242,7 @@ function showAuth(mode='login'){
     const startScope=state.scope==='ADMIN'?'ADMIN':'OPERATIONS';
     host.innerHTML=`<div class="blitz-auth">
       <div class="blitz-auth-brand">
-        <img class="blitz-mark" src="/logo-white.png?v=20260808-r34" alt="E88 Ventures Inc.">
+        <img class="blitz-mark" src="/logo-white.png?v=20260808-r35" alt="E88 Ventures Inc.">
         <div class="blitz-charge" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
       </div>
       <div class="auth-heading"><h1>Welcome back</h1><p>Sign in to continue.</p></div>
@@ -382,6 +382,23 @@ async function renderHomeDashboard(){
   const greet=hour<12?'Good morning':hour<18?'Good afternoon':'Good evening';
 
   // What has this person's name on it, biggest queue first.
+  /*
+   * Every number being zero is a fact about the data, not a fault in the
+   * screen. Say which, and say what would change it - otherwise an empty
+   * system is indistinguishable from a broken one.
+   */
+  const m0=sec.management, i0=sec.inventory;
+  const noUnits=(m0?(m0.availableUnits+m0.leasedUnits+m0.soldUnits+m0.deployedUnits):(i0?i0.available:0))===0;
+  const noMoney=!m0||(!m0.billed&&!m0.outstanding);
+  const counting=(i0&&i0.openCounts)||0;
+  const emptyHtml=(noUnits&&noMoney)
+    ? '<div class="home-empty"><b>No inventory is registered yet.</b>'
+      +(counting
+        ? '<span>You have '+counting+' count sheet'+(counting===1?'':'s')+' open. Units become available once Finance posts the count \u2014 that is what turns counted serials into registered stock.</span>'
+        : '<span>Post a physical count, or receive a shipment, and these numbers start filling in.</span>')
+      +'</div>'
+    : '';
+
   const waiting=(d.waiting||[]).slice().sort((a,b)=>b.count-a.count);
   const waitingHtml=waiting.length
     ? '<div class="home-waiting">'+waiting.map(w=>
@@ -405,8 +422,14 @@ async function renderHomeDashboard(){
   if(sec.management){
     const m=sec.management;
     tiles=vizTiles([
-      {label:'Pending approvals',value:(d.waiting||[]).reduce((t,w)=>t+Number(w.count||0),0),
-       tone:(d.waiting||[]).length?'warning':'good',sub:'awaiting your sign-off',module:'fa-receivables-payables#records'},
+      // Pending approval is the RFP queue: requests in the chain, not drafts.
+      {label:'Pending approvals',value:m.pendingApprovals||0,
+       tone:m.pendingApprovals?'warning':'good',
+       sub:m.pendingApprovals
+         ? (m.pendingMine?m.pendingMine+' waiting on you \u00b7 '+money(m.pendingApprovalValue)
+                         :money(m.pendingApprovalValue)+' in the chain')
+         : 'no requests in the chain',
+       module:'fa-receivables-payables#records'},
       {label:'Available units',value:m.availableUnits,tone:'good',sub:'ready to move',
        module:'ip-warehouse-management#records'},
       {label:'Leased units',value:m.leasedUnits,sub:'out on contract',module:'ip-warehouse-management#records'},
@@ -482,8 +505,8 @@ async function renderHomeDashboard(){
        open:'sd-service-management#records',openLabel:'Open the job orders'}));
 
   if(tr.all&&tr.all.series)
-    cards.push(vizLine([{label:'Activity',points:tr.all.series.map(p=>(
-      {label:new Date(p.label+'T00:00:00').toLocaleDateString('en-US',{weekday:'short'}),value:p.value}))}],
+    cards.push(vizColumns(tr.all.series.map(p=>(
+      {label:new Date(p.label+'T00:00:00').toLocaleDateString('en-US',{weekday:'short'}),value:p.value})),
       {title:'Activity across the last 7 days',keyLabel:'Day',valueLabel:'Events'}));
 
   /*
@@ -515,6 +538,7 @@ async function renderHomeDashboard(){
       +(d.department?' \u00b7 '+esc(String(d.department).toLowerCase().replace(/\b\w/g,function(ch){return ch.toUpperCase();})):'')
       +'</p></div>'+rangeHtml+'</div>'
     +waitingHtml
+    +emptyHtml
     +tiles
     +'<div class="viz-grid home-grid">'+cards.join('')+'</div>'
     +'<footer class="home-foot"><span>Blitz - ERP</span><span>&copy; 2026 E88 Ventures Inc.</span></footer>'
@@ -6457,6 +6481,10 @@ init();
     background:#fff;color:#42506a;font-size:12.5px;
     box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
 
+  .home-empty{margin-bottom:14px;padding:14px 16px;border:1px solid #e8eef4;border-radius:10px;background:#fff;
+    box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
+  .home-empty b{display:block;font-size:13px;color:#0a2239;margin-bottom:3px}
+  .home-empty span{font-size:12.5px;color:#657586;line-height:1.45}
   .home-grid{margin-bottom:14px}
   .home-foot{display:flex;justify-content:space-between;margin-top:18px;padding-top:12px;
     border-top:1px solid #e2e9f0;color:#9fb0c0;font-size:11px}
