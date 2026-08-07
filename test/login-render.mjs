@@ -93,9 +93,14 @@ const order = await page.evaluate(() => {
   const kids = [...document.querySelector('.blitz-auth').children].map(el => el.className.split(' ')[0]);
   return kids.join(' > ');
 });
-check('the administration switch sits below the heading, above the form',
-  order.indexOf('auth-heading') < order.indexOf('blitz-scope-note')
-  && order.indexOf('blitz-scope-note') < order.indexOf('auth-form'), order);
+check('the administration switch sits below the reset link, last in the card',
+  order.indexOf('auth-links') < order.indexOf('blitz-scope-note')
+  && order.trim().endsWith('blitz-scope-note'), order);
+check('nothing explains the switch underneath it',
+  (await page.locator('.blitz-scope-note small').count()) === 0);
+check('the switch reads as a destination, not an afterthought',
+  (await page.locator('#scopeAdminToggle').innerText()).trim() === 'Sign in to System Administration',
+  (await page.locator('#scopeAdminToggle').innerText()).trim());
 
 await page.screenshot({ path:SHOTS+'login-desktop.png' });
 
