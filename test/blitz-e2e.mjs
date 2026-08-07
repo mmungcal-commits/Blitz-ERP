@@ -746,6 +746,33 @@ await t('an open count sheet can be removed, a submitted one cannot', async()=>{
   return {note:'cancelled, off the register, not erased'};
 });
 
+await t('odd casing in the item master never duplicates a count line', async()=>{
+  // erp_items.item_code is UNIQUE but case-sensitively so - both of these fit.
+  sqlite.prepare(`INSERT OR IGNORE INTO erp_items(item_code,item_name,normalized_name,category,
+    serialized,base_uom,standard_cost,active) VALUES('ZZCASE001','Rear shock absorber','rear shock absorber zzcase','SP',1,'PCS',1200,1)`).run();
+  sqlite.prepare(`INSERT OR IGNORE INTO erp_items(item_code,item_name,normalized_name,category,
+    serialized,base_uom,standard_cost,active) VALUES('zzcase001','Rear shock absorber (dup casing)','rear shock lower zzcase','SP',1,'PCS',1200,1)`).run();
+  const both=sqlite.prepare("SELECT COUNT(*) n FROM erp_items WHERE UPPER(item_code)='ZZCASE001'").get().n;
+  if(both!==2) throw new Error('fixture needs both casings, got '+both);
+
+  const loc=sqlite.prepare('SELECT id FROM erp_locations LIMIT 1').get();
+  const cc=await call('POST','/api/inventory/cycle-counts',{locationId:loc.id,countDate:'2026-08-07',category:'SP'});
+  const ccId=cc.json.id;
+  await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,{serialNo:'SN-CASE-0001',itemCode:'ZZCASE001'});
+
+  const det=await call('GET',`/api/inventory/cycle-counts/${ccId}`);
+  const hits=(det.json.lines||[]).filter(x=>x.actual_serial_no==='SN-CASE-0001');
+  if(hits.length!==1) throw new Error('the sheet grew to '+hits.length+' rows for one scanned unit');
+  if(!hits[0].item_name) throw new Error('description still blank');
+
+  // The exactly-matching row wins, not whichever the database happened to store first.
+  const stored=sqlite.prepare(`SELECT nu.item_code,nu.item_name FROM erp_cycle_count_new_units nu
+    JOIN erp_cycle_count_lines l ON l.id=nu.line_id WHERE l.actual_serial_no='SN-CASE-0001'`).get();
+  if(stored.item_code!=='ZZCASE001') throw new Error('resolved to '+stored.item_code);
+  if(stored.item_name!=='Rear shock absorber') throw new Error('picked the wrong row: '+stored.item_name);
+  return {note:'two casings in the master -> 1 row, exact match wins'};
+});
+
 
 console.log('\n=== Blitz - ERP end-to-end ===');
 for (const [s, n, note] of results) console.log(`${s}  ${n}${note ? '  ·  ' + note : ''}`);
