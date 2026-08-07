@@ -8,6 +8,7 @@ import { captureFinanceEvent, entityByCode, ensureAccountingPeriod } from '../li
 import { decideCoreWorkflowApproval } from '../lib/specialist-engine.js';
 import { saveAttachments, attachmentsFor } from '../lib/attachments.js';
 import { sendMailQuiet, mailLayout, mailButton, mailFacts, mailAttachments } from '../lib/mailer.js';
+import { raiseRfpForPurchaseOrder } from '../lib/po-to-rfp.js';
 
 export const procurementRoutes = new Hono();
 
@@ -101,6 +102,69 @@ procurementRoutes.get('/purchase-orders/:id', requirePermission('PROCUREMENT','V
   return ok(c,{header:{...header,doc},lines:linesX,shipments,attachments,approvals});
 });
 
+/*
+ * A purchase order can be corrected while it is a draft. Once it has been
+ * routed, somebody is being asked to sign for a figure, and that figure cannot
+ * move underneath them - so anything past DRAFT is refused here and has to be
+ * raised again. Lines are replaced wholesale rather than patched row by row,
+ * because a half-applied line edit is how a total stops matching its rows.
+ */
+procurementRoutes.patch('/purchase-orders/:id', requirePermission('PROCUREMENT','EDIT'), async c => {
+  const id=Number(c.req.param('id'));
+  const before=await first(c.env.DB,`SELECT * FROM erp_purchase_orders WHERE id=?`,[id]);
+  if(!before)return fail(c,'Purchase order not found',404);
+  if(before.status!=='DRAFT')
+    return fail(c,`${before.purchase_order_no} is ${String(before.status).toLowerCase().replace(/_/g,' ')} and can no longer be edited.`,409);
+  const b=await jsonBody(c);
+  const pick=(k,fallback)=>b[k]===undefined?fallback:normalizeText(b[k]);
+
+  let subtotal=Number(before.subtotal||0);
+  const lines=Array.isArray(b.lines)
+    ? b.lines.filter(x=>normalizeText(x.description||x.itemName||x.itemCode)&&numberValue(x.qty)>0)
+    : null;
+  if(lines){
+    if(!lines.length)return fail(c,'A purchase order needs at least one line.');
+    // Anything already received is history and cannot be edited away.
+    const received=await first(c.env.DB,`SELECT COALESCE(SUM(received_qty),0) n FROM erp_purchase_order_lines WHERE purchase_order_id=?`,[id]);
+    if(Number(received?.n||0)>0)
+      return fail(c,'Some of this order has already been received, so its lines can no longer be replaced.',409);
+    await run(c.env.DB,`DELETE FROM erp_purchase_order_lines WHERE purchase_order_id=?`,[id]);
+    subtotal=0; let lineNo=0;
+    for(const line of lines){
+      lineNo+=1;
+      const item=await ensureItem(c.env.DB,{itemCode:line.itemCode,itemName:line.itemName||line.description,
+        category:line.category,manufacturer:line.manufacturer,model:line.model,color:line.color,
+        serialized:!!line.serialized,standardCost:numberValue(line.unitCost),
+        sourceSystem:'PO',sourceKey:`${before.purchase_order_no}|${lineNo}`});
+      const qty=numberValue(line.qty), cost=numberValue(line.unitCost);
+      subtotal+=qty*cost;
+      await run(c.env.DB,`INSERT INTO erp_purchase_order_lines(purchase_order_id,line_no,item_id,item_code,description,category,ordered_qty,unit_cost,line_amount) VALUES(?,?,?,?,?,?,?,?,?)`,
+        [id,lineNo,item.id,item.item_code,line.description||item.item_name,item.category,qty,cost,qty*cost]);
+    }
+  }
+  const tax=b.taxAmount===undefined?Number(before.tax_amount||0):numberValue(b.taxAmount);
+  const total=Math.round((subtotal+tax)*100)/100;
+
+  let vendorId=before.vendor_id, vendorName=before.vendor_name;
+  if(normalizeText(b.vendorName)&&normalizeText(b.vendorName)!==before.vendor_name){
+    const vendor=await ensurePartner(c.env.DB,{name:b.vendorName,type:'VENDOR',
+      address:normalizeText(b.vendorAddress),sourceSystem:'E88_FINSYS'});
+    vendorId=vendor.id; vendorName=vendor.name;
+  }
+  await run(c.env.DB,`UPDATE erp_purchase_orders SET vendor_id=?,vendor_name=?,order_date=?,
+      expected_delivery_date=?,currency=?,incoterm=?,payment_terms=?,subtotal=?,tax_amount=?,
+      total_amount=?,updated_at=datetime('now') WHERE id=?`,
+    [vendorId,vendorName,pick('orderDate',before.order_date),
+     pick('expectedDeliveryDate',before.expected_delivery_date),pick('currency',before.currency)||'PHP',
+     pick('incoterm',before.incoterm),pick('paymentTerms',before.payment_terms),
+     Math.round(subtotal*100)/100,tax,total,id]);
+  const after=await first(c.env.DB,`SELECT * FROM erp_purchase_orders WHERE id=?`,[id]);
+  await audit(c,{action:'EDIT',module:'PROCUREMENT',recordType:'PURCHASE_ORDER',
+    recordId:id,recordNo:after.purchase_order_no,before,after});
+  const rows=await all(c.env.DB,`SELECT * FROM erp_purchase_order_lines WHERE purchase_order_id=? ORDER BY line_no`,[id]);
+  return ok(c,{purchaseOrder:after,lines:rows});
+});
+
 procurementRoutes.post('/purchase-orders/:id/approve', requirePermission('PROCUREMENT','APPROVE'), async c => {
   const id=Number(c.req.param('id')); const before=await first(c.env.DB,`SELECT * FROM erp_purchase_orders WHERE id=?`,[id]); if(!before)return fail(c,'Purchase order not found',404); if(before.status!=='DRAFT')return fail(c,'Only draft purchase orders can be approved',409);
   const body=await jsonBody(c);let approvalDecision;
@@ -114,7 +178,11 @@ procurementRoutes.post('/purchase-orders/:id/approve', requirePermission('PROCUR
     return ok(c,{approved:false,pendingApproval:true,approvalDecision});
   }
   await run(c.env.DB,`UPDATE erp_purchase_orders SET status='APPROVED',approved_by=?,approved_at=datetime('now'),updated_at=datetime('now') WHERE id=?`,[c.get('erpUser').email,id]);
-  const after=await first(c.env.DB,`SELECT * FROM erp_purchase_orders WHERE id=?`,[id]); await audit(c,{action:'APPROVE',module:'PROCUREMENT',recordType:'PURCHASE_ORDER',recordId:id,recordNo:after.purchase_order_no,before,after}); return ok(c,{purchaseOrder:after,approved:true,approvalDecision});
+  const after=await first(c.env.DB,`SELECT * FROM erp_purchase_orders WHERE id=?`,[id]);
+  // An approved commitment raises its own request to pay, so nobody retypes it.
+  const rfp=await raiseRfpForPurchaseOrder(c.env.DB,after,c.get('erpUser').email);
+  await audit(c,{action:'APPROVE',module:'PROCUREMENT',recordType:'PURCHASE_ORDER',recordId:id,recordNo:after.purchase_order_no,before,after:{...after,rfp}});
+  return ok(c,{purchaseOrder:after,approved:true,approvalDecision,paymentRequest:rfp});
 });
 
 procurementRoutes.get('/landed-cost', requirePermission('PROCUREMENT','VIEW'), async c => {

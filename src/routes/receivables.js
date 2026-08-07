@@ -286,6 +286,197 @@ receivableRoutes.post('/receipts/:id/void', requirePermission('RECEIVABLES','POS
   return ok(c, { voided: row.receipt_no, reason });
 });
 
+/* --------------------------------------------------- statement of account */
+/*
+ * A statement is generated, never typed: the month's posted charges and the
+ * receipts against them, in date order, with the balance carried forward from
+ * everything before the period. Generating it again from the register is how it
+ * stays honest.
+ *
+ * It is editable while it is a draft, because a real statement sometimes needs
+ * a line the ledger does not carry - an agreed adjustment, a note on a disputed
+ * charge. Issuing freezes it, because a document the customer has seen cannot
+ * change afterwards.
+ */
+const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
+const monthEnd = month => {
+  const [y, m] = month.split('-').map(Number);
+  return `${month}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`;
+};
+
+receivableRoutes.get('/statements', requirePermission('RECEIVABLES','VIEW'), async c => {
+  const month = normalizeText(c.req.query('month'));
+  const status = normalizeText(c.req.query('status'));
+  const q = `%${normalizeText(c.req.query('q'))}%`;
+  const w = []; const args = [];
+  if (month) { w.push('period_month=?'); args.push(month); }
+  if (status) { w.push('status=?'); args.push(status); }
+  if (q !== '%%') { w.push('(customer_name LIKE ? OR statement_no LIKE ?)'); args.push(q, q); }
+  const where = w.length ? `WHERE ${w.join(' AND ')}` : '';
+  const rows = await all(c.env.DB, `SELECT * FROM erp_ar_statements ${where}
+    ORDER BY period_month DESC, customer_name LIMIT 500`, args);
+  const months = await all(c.env.DB, `SELECT DISTINCT substr(txn_date,1,7) label
+    FROM erp_ar_collections WHERE txn_date<>'' ORDER BY label DESC`);
+  const customers = await all(c.env.DB, `SELECT customer_name label, COUNT(*) n
+    FROM erp_ar_collections WHERE status='POSTED' GROUP BY customer_name ORDER BY customer_name`);
+  return ok(c, { rows, months, customers });
+});
+
+receivableRoutes.get('/statements/:id', requirePermission('RECEIVABLES','VIEW'), async c => {
+  const id = Number(c.req.param('id'));
+  const statement = await first(c.env.DB, `SELECT * FROM erp_ar_statements WHERE id=?`, [id]);
+  if (!statement) return fail(c, 'Statement not found', 404);
+  const lines = await all(c.env.DB, `SELECT * FROM erp_ar_statement_lines
+    WHERE statement_id=? ORDER BY line_no`, [id]);
+  return ok(c, { statement, lines });
+});
+
+receivableRoutes.post('/statements/generate', requirePermission('RECEIVABLES','CREATE'), async c => {
+  const b = await jsonBody(c);
+  const month = normalizeText(b.month);
+  const customer = normalizeText(b.customerName);
+  if (!MONTH.test(month)) return fail(c, 'Pick a month, as YYYY-MM.');
+  if (!customer) return fail(c, 'Pick a customer.');
+  const from = `${month}-01`, to = monthEnd(month);
+
+  const existing = await first(c.env.DB,
+    `SELECT id,statement_no,status FROM erp_ar_statements WHERE customer_name=? AND period_month=?`,
+    [customer, month]);
+  if (existing && existing.status !== 'DRAFT')
+    return fail(c, `${existing.statement_no} for ${month} has already been issued.`, 409);
+
+  // Everything the customer owed before this month opened.
+  const priorCharge = await first(c.env.DB, `SELECT COALESCE(SUM(gross_amount),0) v
+    FROM erp_ar_collections WHERE customer_name=? AND status='POSTED' AND txn_date<?`, [customer, from]);
+  const priorPaid = await first(c.env.DB, `SELECT COALESCE(SUM(r.amount),0) v
+    FROM erp_ar_receipts r JOIN erp_ar_collections c2 ON c2.id=r.collection_id
+    WHERE c2.customer_name=? AND c2.status='POSTED' AND r.status='ACTIVE' AND r.receipt_date<?`, [customer, from]);
+  const opening = round2(Number(priorCharge?.v || 0) - Number(priorPaid?.v || 0));
+
+  const charges = await all(c.env.DB, `SELECT id,entry_no,txn_date,description,contract_ref,document_no,gross_amount
+    FROM erp_ar_collections WHERE customer_name=? AND status='POSTED' AND txn_date BETWEEN ? AND ?
+    ORDER BY txn_date, id`, [customer, from, to]);
+  const receipts = await all(c.env.DB, `SELECT r.id,r.receipt_no,r.receipt_date,r.amount,r.payment_method,r.or_no,c2.entry_no
+    FROM erp_ar_receipts r JOIN erp_ar_collections c2 ON c2.id=r.collection_id
+    WHERE c2.customer_name=? AND c2.status='POSTED' AND r.status='ACTIVE'
+      AND r.receipt_date BETWEEN ? AND ? ORDER BY r.receipt_date, r.id`, [customer, from, to]);
+
+  const entries = charges.map(r => ({
+    date: r.txn_date, reference: r.entry_no,
+    description: normalizeText(r.description) || normalizeText(r.contract_ref) || normalizeText(r.document_no) || 'Charge',
+    charge: round2(r.gross_amount), credit: 0, sourceType: 'COLLECTION', sourceId: r.id,
+  })).concat(receipts.map(r => ({
+    date: r.receipt_date, reference: r.receipt_no,
+    description: 'Payment received' + (r.payment_method ? ` (${r.payment_method})` : '')
+      + (r.or_no ? ` OR ${r.or_no}` : '') + (r.entry_no ? ` against ${r.entry_no}` : ''),
+    charge: 0, credit: round2(r.amount), sourceType: 'RECEIPT', sourceId: r.id,
+  }))).sort((x, y) => String(x.date).localeCompare(String(y.date)));
+
+  if (!entries.length && !opening)
+    return fail(c, `${customer} has nothing posted in ${month} and no balance brought forward.`, 409);
+
+  const billed = round2(entries.reduce((s, e) => s + e.charge, 0));
+  const collected = round2(entries.reduce((s, e) => s + e.credit, 0));
+  const closing = round2(opening + billed - collected);
+
+  let id;
+  if (existing) {
+    id = existing.id;
+    await run(c.env.DB, `DELETE FROM erp_ar_statement_lines WHERE statement_id=?`, [id]);
+    await run(c.env.DB, `UPDATE erp_ar_statements SET period_from=?,period_to=?,opening_balance=?,
+        billed_amount=?,collected_amount=?,closing_balance=?,updated_at=datetime('now') WHERE id=?`,
+      [from, to, opening, billed, collected, closing, id]);
+  } else {
+    const no = await nextCode(c.env.DB, 'AR_STATEMENT', 'SOA-2026', 5);
+    const cust = await first(c.env.DB, `SELECT id FROM erp_partners WHERE upper(name)=upper(?) LIMIT 1`, [customer]);
+    const r = await run(c.env.DB, `INSERT INTO erp_ar_statements(statement_no,customer_id,customer_name,
+        period_month,period_from,period_to,opening_balance,billed_amount,collected_amount,closing_balance,
+        notes,created_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [no, cust?.id || null, customer, month, from, to, opening, billed, collected, closing,
+       normalizeText(b.notes), c.get('erpUser').email]);
+    id = r.meta.last_row_id;
+  }
+  let lineNo = 0;
+  for (const e of entries) {
+    lineNo += 1;
+    await run(c.env.DB, `INSERT INTO erp_ar_statement_lines(statement_id,line_no,line_date,reference,
+        description,charge,credit,source_type,source_id) VALUES(?,?,?,?,?,?,?,?,?)`,
+      [id, lineNo, e.date, e.reference, e.description, e.charge, e.credit, e.sourceType, e.sourceId]);
+  }
+  const statement = await first(c.env.DB, `SELECT * FROM erp_ar_statements WHERE id=?`, [id]);
+  await audit(c, { action: existing ? 'REGENERATE' : 'CREATE', module:'FINANCE',
+    recordType:'AR_STATEMENT', recordId:id, recordNo:statement.statement_no,
+    after:{ month, customer, opening, billed, collected, closing, lines: lineNo } });
+  return ok(c, { id, statementNo: statement.statement_no, lines: lineNo, opening, billed, collected, closing },
+    existing ? 200 : 201);
+});
+
+// Editable while draft: the notes, and the lines, which is where an agreed
+// adjustment goes. Totals are always recomputed from the lines, never taken on
+// trust, so a statement cannot show a closing balance its own rows do not give.
+receivableRoutes.patch('/statements/:id', requirePermission('RECEIVABLES','EDIT'), async c => {
+  const id = Number(c.req.param('id'));
+  const b = await jsonBody(c);
+  const before = await first(c.env.DB, `SELECT * FROM erp_ar_statements WHERE id=?`, [id]);
+  if (!before) return fail(c, 'Statement not found', 404);
+  if (before.status !== 'DRAFT')
+    return fail(c, `${before.statement_no} has been issued and can no longer be edited.`, 409);
+
+  const opening = b.openingBalance === undefined ? Number(before.opening_balance) : round2(numberValue(b.openingBalance));
+  if (Array.isArray(b.lines)) {
+    const lines = b.lines.filter(l => normalizeText(l.description) || numberValue(l.charge) || numberValue(l.credit));
+    await run(c.env.DB, `DELETE FROM erp_ar_statement_lines WHERE statement_id=?`, [id]);
+    let lineNo = 0;
+    for (const l of lines) {
+      lineNo += 1;
+      await run(c.env.DB, `INSERT INTO erp_ar_statement_lines(statement_id,line_no,line_date,reference,
+          description,charge,credit,source_type,source_id) VALUES(?,?,?,?,?,?,?,?,?)`,
+        [id, lineNo, normalizeText(l.lineDate), normalizeText(l.reference), normalizeText(l.description),
+         round2(numberValue(l.charge)), round2(numberValue(l.credit)),
+         normalizeText(l.sourceType) || 'MANUAL', l.sourceId ? Number(l.sourceId) : null]);
+    }
+  }
+  const sums = await first(c.env.DB, `SELECT COALESCE(SUM(charge),0) charge, COALESCE(SUM(credit),0) credit
+    FROM erp_ar_statement_lines WHERE statement_id=?`, [id]);
+  const billed = round2(sums?.charge), collected = round2(sums?.credit);
+  await run(c.env.DB, `UPDATE erp_ar_statements SET opening_balance=?,billed_amount=?,collected_amount=?,
+      closing_balance=?,notes=?,updated_at=datetime('now') WHERE id=?`,
+    [opening, billed, collected, round2(opening + billed - collected),
+     b.notes === undefined ? before.notes : normalizeText(b.notes), id]);
+  const after = await first(c.env.DB, `SELECT * FROM erp_ar_statements WHERE id=?`, [id]);
+  await audit(c, { action:'EDIT', module:'FINANCE', recordType:'AR_STATEMENT',
+    recordId:id, recordNo:after.statement_no, before, after });
+  const lines = await all(c.env.DB, `SELECT * FROM erp_ar_statement_lines WHERE statement_id=? ORDER BY line_no`, [id]);
+  return ok(c, { statement: after, lines });
+});
+
+receivableRoutes.post('/statements/:id/issue', requirePermission('RECEIVABLES','EDIT'), async c => {
+  const id = Number(c.req.param('id'));
+  const row = await first(c.env.DB, `SELECT * FROM erp_ar_statements WHERE id=?`, [id]);
+  if (!row) return fail(c, 'Statement not found', 404);
+  if (row.status !== 'DRAFT') return fail(c, `${row.statement_no} is already ${row.status.toLowerCase()}.`, 409);
+  const lines = await first(c.env.DB, `SELECT COUNT(*) n FROM erp_ar_statement_lines WHERE statement_id=?`, [id]);
+  if (!Number(lines?.n) && !Number(row.opening_balance))
+    return fail(c, 'An empty statement has nothing to tell the customer.', 409);
+  await run(c.env.DB, `UPDATE erp_ar_statements SET status='ISSUED',issued_by=?,issued_at=datetime('now'),
+    updated_at=datetime('now') WHERE id=?`, [c.get('erpUser').email, id]);
+  await audit(c, { action:'ISSUE', module:'FINANCE', recordType:'AR_STATEMENT',
+    recordId:id, recordNo:row.statement_no, before:row, after:{ closing: row.closing_balance } });
+  return ok(c, { issued: row.statement_no, closingBalance: row.closing_balance });
+});
+
+receivableRoutes.delete('/statements/:id', requirePermission('RECEIVABLES','EDIT'), async c => {
+  const id = Number(c.req.param('id'));
+  const row = await first(c.env.DB, `SELECT * FROM erp_ar_statements WHERE id=?`, [id]);
+  if (!row) return fail(c, 'Statement not found', 404);
+  if (row.status !== 'DRAFT') return fail(c, 'An issued statement is a document and stays on the record.', 409);
+  await run(c.env.DB, `DELETE FROM erp_ar_statement_lines WHERE statement_id=?`, [id]);
+  await run(c.env.DB, `DELETE FROM erp_ar_statements WHERE id=?`, [id]);
+  await audit(c, { action:'DELETE', module:'FINANCE', recordType:'AR_STATEMENT',
+    recordId:id, recordNo:row.statement_no, before:row });
+  return ok(c, { removed: row.statement_no });
+});
+
 /* ------------------------------------------------- from an order to cash */
 /*
  * The link the client asked for: a sales order becomes a receivable here, so

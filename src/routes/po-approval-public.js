@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { all, first, run } from '../lib/db.js';
 import { ok, fail, jsonBody } from '../lib/http.js';
 import { sendMailQuiet, mailLayout, mailButton, mailFacts, mailAttachments } from '../lib/mailer.js';
+import { raiseRfpForPurchaseOrder } from '../lib/po-to-rfp.js';
 import { attachmentsFor } from '../lib/attachments.js';
 
 const esc = (v) => String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -84,17 +85,21 @@ poApprovalPublicRoutes.post('/:token', async c => {
   if(!next){
     await run(c.env.DB, `UPDATE erp_purchase_orders SET status='APPROVED', approved_by=?, approved_at=datetime('now'), updated_at=datetime('now') WHERE id=?`,
       [step.approver_email || step.approver_name || 'approver', step.purchase_order_id]);
+    // The last signature is what raises the payment request, so the approved
+    // figure and the figure Finance pays are the same figure.
+    const approved = await first(c.env.DB, `SELECT * FROM erp_purchase_orders WHERE id=?`, [step.purchase_order_id]);
+    const rfp = await raiseRfpForPurchaseOrder(c.env.DB, approved, step.approver_email);
     const to = participants(after);
     if (to.length) await sendMailQuiet(c.env, {
       to,
       subject: `Fully approved: Purchase Order ${step.purchase_order_no}`,
       html: mailLayout('Purchase order fully approved',
-        `<p>All approvers have signed. The purchase order is now <b>APPROVED</b> and can be sent to the vendor. A request for payment can be raised against it in Payables Management.</p>`
-        + mailFacts(facts)
+        `<p>All approvers have signed. The purchase order is now <b>APPROVED</b> and can be sent to the vendor.</p>`
+        + mailFacts(rfp.created ? facts.concat([['Payment request', rfp.requestNo + ' (draft)']]) : facts)
         + mailAttachments(attachments),
         'Purchase order approval routing'),
     });
-    return ok(c, { decision, poStatus: 'APPROVED', done: true, notified: to });
+    return ok(c, { decision, poStatus: 'APPROVED', done: true, notified: to, paymentRequest: rfp });
   }
   // Hand the baton to the next approver automatically.
   const nextLink = `${origin}/approve.html?token=${next.token}`;
