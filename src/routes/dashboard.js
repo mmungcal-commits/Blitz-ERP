@@ -67,8 +67,16 @@ dashboardRoutes.get('/home', async (c) => {
 
   const sections = {};
   const num = r => Number((r && (r.n ?? r.total)) || 0);
+  // A dashboard is a summary, not a transaction. If one panel's query fails -
+  // a renamed column, a view that is not there yet - the rest still renders and
+  // the failure is reported, rather than the whole screen hanging.
+  const failures = [];
+  const attempt = async (name, fn) => {
+    try { return await fn(); }
+    catch (err) { failures.push({ section:name, error:String(err && err.message || err) }); return null; }
+  };
 
-  if (can.INVENTORY) {
+  if (can.INVENTORY) await attempt('inventory', async () => {
     const [avail, quarantine, unvalued, openCounts, variances, classes] = await Promise.all([
       first(db, `SELECT COUNT(*) n FROM vw_erp_serialized_assets WHERE current_status IN ('AVAILABLE','IN_STOCK')`),
       first(db, `SELECT COUNT(*) n FROM vw_erp_serialized_assets WHERE current_status='QUARANTINE'`),
@@ -80,9 +88,9 @@ dashboardRoutes.get('/home', async (c) => {
     ]);
     sections.inventory = { available:num(avail), quarantine:num(quarantine), unvalued:num(unvalued),
       openCounts:num(openCounts), variances:num(variances), byClass:classes||[] };
-  }
+  });
 
-  if (can.PROCUREMENT) {
+  if (can.PROCUREMENT) await attempt('procurement', async () => {
     const [forApproval, approved, spend] = await Promise.all([
       first(db, `SELECT COUNT(*) n FROM erp_purchase_orders WHERE status='FOR_APPROVAL'`),
       first(db, `SELECT COUNT(*) n FROM erp_purchase_orders WHERE status='APPROVED'`),
@@ -91,52 +99,94 @@ dashboardRoutes.get('/home', async (c) => {
                  GROUP BY vendor_name ORDER BY value DESC LIMIT 6`),
     ]);
     sections.procurement = { forApproval:num(forApproval), approved:num(approved), topVendors:spend||[] };
-  }
+  });
 
-  if (can.FINANCE) {
+  if (can.FINANCE) await attempt('finance', async () => {
     const [rfpOpen, rfpMine, byStage] = await Promise.all([
       first(db, `SELECT COUNT(*) n FROM erp_payment_requests WHERE status NOT IN ('PAID','REJECTED','CANCELLED')`),
-      first(db, `SELECT COUNT(*) n FROM erp_payment_requests WHERE LOWER(COALESCE(requested_by,''))=?`,
+      first(db, `SELECT COUNT(*) n FROM erp_payment_requests WHERE LOWER(COALESCE(requestor_email,''))=?`,
         [String(user.email).toLowerCase()]),
       all(db,   `SELECT status label, COUNT(*) value FROM erp_payment_requests GROUP BY status ORDER BY value DESC`),
     ]);
     sections.finance = { open:num(rfpOpen), mine:num(rfpMine), byStage:byStage||[] };
-  }
+  });
 
-  if (can.CUSTOMERS) {
+  if (can.CUSTOMERS) await attempt('service', async () => {
     const jobs = await all(db, `SELECT status label, COUNT(*) value FROM erp_service_jobs GROUP BY status`);
     sections.service = { byStatus: jobs || [] };
-  }
+  });
 
   // The queue with this person's name on it. Cheap counts, not full rows -
   // the landing page says how many and where, the module says which.
   const waiting = [];
-  if (can.FINANCE) {
+  if (can.FINANCE) await attempt('waiting.finance', async () => {
     const r = await first(db, `SELECT COUNT(*) n FROM erp_payment_requests WHERE status='FINANCE_REVIEWED'`);
     if (num(r)) waiting.push({ label:'Payment requests for your validation', count:num(r), module:'fa-receivables-payables' });
-  }
-  if (can.INVENTORY) {
+  });
+  if (can.INVENTORY) await attempt('waiting.counts', async () => {
     const step = await first(db, `SELECT COUNT(*) n FROM erp_cycle_count_approvals a
       JOIN erp_cycle_counts cc ON cc.id=a.cycle_count_id
       WHERE a.status='PENDING' AND cc.status='SUBMITTED'
         AND a.step_no=(SELECT MIN(step_no) FROM erp_cycle_count_approvals p
                        WHERE p.cycle_count_id=a.cycle_count_id AND p.status='PENDING')`);
     if (num(step)) waiting.push({ label:'Physical counts awaiting approval', count:num(step), module:'ip-cycle-counting' });
-  }
-  if (can.PROCUREMENT) {
+  });
+  if (can.PROCUREMENT) await attempt('waiting.po', async () => {
     const r = await first(db, `SELECT COUNT(*) n FROM erp_purchase_orders WHERE status='FOR_APPROVAL'`);
     if (num(r)) waiting.push({ label:'Purchase orders in the approval chain', count:num(r), module:'ip-inbound-logistics' });
-  }
-  if (can.RECEIVING) {
+  });
+  if (can.RECEIVING) await attempt('waiting.variances', async () => {
     const r = await first(db, `SELECT COUNT(*) n FROM erp_receiving_variances WHERE status IN ('OPEN','RESOLVED')`);
     if (num(r)) waiting.push({ label:'Receiving discrepancies to clear', count:num(r), module:'ip-inbound-logistics' });
-  }
+  });
 
-  const activity = await all(db, `SELECT event_at,user_email,action,module,record_no
-    FROM erp_audit_log ORDER BY id DESC LIMIT 10`);
+  const activity = await attempt('activity', () => all(db, `SELECT event_at,user_email,action,module,record_no
+    FROM erp_audit_log ORDER BY id DESC LIMIT 10`)) || [];
+
+  /*
+   * Real seven-day trend, from the audit log. A sparkline on a stat tile is
+   * only worth drawing if it is the actual shape of the last week - a
+   * decorative squiggle is worse than no chart, so anything without history
+   * simply gets no spark.
+   */
+  const trends = await attempt('trends', async () => {
+    const rows = await all(db, `SELECT module, date(event_at) d, COUNT(*) n
+      FROM erp_audit_log
+      WHERE event_at >= date('now','-6 days')
+      GROUP BY module, date(event_at)`);
+    const days = [];
+    for (let i = 6; i >= 0; i -= 1) {
+      const dt = new Date(Date.now() - i*86400000).toISOString().slice(0,10);
+      days.push(dt);
+    }
+    const shape = (mod) => {
+      const hit = {};
+      rows.filter(r => !mod || r.module === mod).forEach(r => { hit[r.d] = (hit[r.d]||0) + Number(r.n||0); });
+      const series = days.map(d => ({ label:d, value: hit[d] || 0 }));
+      return series.some(p => p.value > 0) ? series : null;
+    };
+    // Week on week, from the same source, so the delta and the spark agree.
+    const half = (series, from, to) => series.slice(from,to).reduce((t,p)=>t+p.value,0);
+    const withDelta = (series) => {
+      if (!series) return null;
+      const recent = half(series,3,7), prior = half(series,0,3);
+      const delta = prior > 0 ? ((recent - prior) / prior) * 100 : null;
+      return { series, delta };
+    };
+    return { all: withDelta(shape(null)), inventory: withDelta(shape('INVENTORY')),
+      finance: withDelta(shape('FINANCE')), procurement: withDelta(shape('PROCUREMENT')) };
+  });
+
+  // Completion of the counts actually in progress - a real percentage, not a score.
+  const progress = await attempt('progress', async () => {
+    const r = await first(db, `SELECT COALESCE(SUM(counted_units),0) counted, COALESCE(SUM(expected_units),0) expected
+      FROM erp_cycle_counts WHERE status IN ('OPEN','SUBMITTED')`);
+    const expected = Number(r?.expected||0), counted = Number(r?.counted||0);
+    return { counted, expected, pct: expected ? Math.min(100,(counted/expected)*100) : null };
+  });
 
   return ok(c, { user:{ name:user.display_name||user.email, role, email:user.email },
-    sections, waiting, activity: activity||[] });
+    sections, waiting, activity, trends: trends||{}, progress: progress||null, failures });
 });
 
 dashboardRoutes.get('/detail/:metric', async (c) => {
