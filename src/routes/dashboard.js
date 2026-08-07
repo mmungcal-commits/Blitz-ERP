@@ -121,7 +121,7 @@ dashboardRoutes.get('/home', async (c) => {
   const waiting = [];
   if (can.FINANCE) await attempt('waiting.finance', async () => {
     const r = await first(db, `SELECT COUNT(*) n FROM erp_payment_requests WHERE status='FINANCE_REVIEWED'`);
-    if (num(r)) waiting.push({ label:'Payment requests for your validation', count:num(r), module:'fa-receivables-payables' });
+    if (num(r)) waiting.push({ label:'Payment requests for your validation', count:num(r), module:'fa-receivables-payables#records' });
   });
   if (can.INVENTORY) await attempt('waiting.counts', async () => {
     const step = await first(db, `SELECT COUNT(*) n FROM erp_cycle_count_approvals a
@@ -129,15 +129,15 @@ dashboardRoutes.get('/home', async (c) => {
       WHERE a.status='PENDING' AND cc.status='SUBMITTED'
         AND a.step_no=(SELECT MIN(step_no) FROM erp_cycle_count_approvals p
                        WHERE p.cycle_count_id=a.cycle_count_id AND p.status='PENDING')`);
-    if (num(step)) waiting.push({ label:'Physical counts awaiting approval', count:num(step), module:'ip-cycle-counting' });
+    if (num(step)) waiting.push({ label:'Physical counts awaiting approval', count:num(step), module:'ip-cycle-counting#approvals' });
   });
   if (can.PROCUREMENT) await attempt('waiting.po', async () => {
     const r = await first(db, `SELECT COUNT(*) n FROM erp_purchase_orders WHERE status='FOR_APPROVAL'`);
-    if (num(r)) waiting.push({ label:'Purchase orders in the approval chain', count:num(r), module:'ip-inbound-logistics' });
+    if (num(r)) waiting.push({ label:'Purchase orders in the approval chain', count:num(r), module:'ip-inbound-logistics#records' });
   });
   if (can.RECEIVING) await attempt('waiting.variances', async () => {
     const r = await first(db, `SELECT COUNT(*) n FROM erp_receiving_variances WHERE status IN ('OPEN','RESOLVED')`);
-    if (num(r)) waiting.push({ label:'Receiving discrepancies to clear', count:num(r), module:'ip-inbound-logistics' });
+    if (num(r)) waiting.push({ label:'Receiving discrepancies to clear', count:num(r), module:'ip-inbound-logistics#records' });
   });
 
   const activity = await attempt('activity', () => all(db, `SELECT event_at,user_email,action,module,record_no
