@@ -295,6 +295,78 @@ dashboardRoutes.get('/home', async (c) => {
         ? Math.round((measured.reduce((s2, d) => s2 + d, 0) / measured.length) * 10) / 10 : null,
       slaWorstDays: measured.length ? Math.max(...measured) : null,
     };
+
+    /*
+     * The swapping network read on its own.
+     *
+     * RideBox builds and runs the stations, and its spend was mixed in with
+     * everything else, so neither "what does the network cost" nor "what does
+     * the rest of the company cost" could be answered. The rule for what
+     * belongs to which line lives in erp_business_line_rules, and the view
+     * applies it, so this reads the split rather than deciding it.
+     */
+    try {
+      const lines = await all(db, `SELECT b.line_code, b.name, b.description, b.sort_order,
+          COUNT(r.id) requests,
+          ROUND(COALESCE(SUM(r.net_payable),0),2) raised,
+          ROUND(COALESCE(SUM(CASE WHEN v.line_code IS NOT NULL THEN (
+            SELECT COALESCE(SUM(s.amount),0) FROM erp_payment_settlements s
+             WHERE s.request_no=r.request_no AND s.status<>'VOID') ELSE 0 END),0),2) settled
+        FROM erp_business_lines b
+        LEFT JOIN v_payment_request_line v ON v.line_code=b.line_code
+        LEFT JOIN erp_payment_requests r ON r.request_no=v.request_no
+             AND r.status NOT IN ('REJECTED','CANCELLED')
+             AND r.request_date BETWEEN ? AND ?
+        WHERE b.active=1
+        GROUP BY b.line_code ORDER BY b.sort_order, b.line_code`, [from, to]);
+      sections.businessLines = (lines || []).map(l => {
+        const raised = Number(l.raised || 0);
+        const settled = Number(l.settled || 0);
+        return {
+          code: l.line_code, name: l.name, description: l.description,
+          requests: Number(l.requests || 0),
+          raised, settled,
+          owed: Math.max(0, Math.round((raised - settled) * 100) / 100),
+          paidPct: raised > 0 ? (settled / raised) * 100 : null,
+        };
+      });
+      /*
+       * Inside the swapping line: what the network cost to build against what
+       * it costs to keep standing. The running cost is the site rents and the
+       * station power, which are small, frequent and paid to the shops the
+       * stations live in.
+       */
+      const kinds = await all(db, `SELECT k.cost_kind, COUNT(*) lines,
+          ROUND(COALESCE(SUM(k.gross_amount),0),2) amount,
+          COUNT(DISTINCT k.request_no) requests
+        FROM v_bss_cost_kind k
+        JOIN erp_payment_requests r ON r.request_no=k.request_no
+        WHERE r.status NOT IN ('REJECTED','CANCELLED') AND r.request_date BETWEEN ? AND ?
+        GROUP BY k.cost_kind`, [from, to]);
+      const kind = c => (kinds || []).find(k => k.cost_kind === c) || {};
+      sections.swappingNetwork = {
+        build: { amount: Number(kind('BUILD').amount || 0), lines: Number(kind('BUILD').lines || 0) },
+        sites: { amount: Number(kind('SITES').amount || 0), lines: Number(kind('SITES').lines || 0),
+          requests: Number(kind('SITES').requests || 0) },
+        // Who the company pays to keep a station where it stands.
+        hosts: await all(db, `SELECT r.payee_name label, COUNT(*) n,
+            ROUND(SUM(k.gross_amount),2) value
+          FROM v_bss_cost_kind k
+          JOIN erp_payment_requests r ON r.request_no=k.request_no
+          WHERE k.cost_kind='SITES' AND r.status NOT IN ('REJECTED','CANCELLED')
+            AND r.request_date BETWEEN ? AND ?
+          GROUP BY r.payee_name ORDER BY value DESC LIMIT 8`, [from, to]),
+      };
+    } catch (e) {
+      /*
+       * The views arrive with migration 0057, so an older database has no split
+       * to show and that is fine. Anything else is a fault, and a blank card
+       * with nobody told is worse than a missing one: it reads as "no spend".
+       */
+      sections.businessLines = [];
+      sections.swappingNetwork = null;
+      failures.push({ section: 'businessLines', error: String(e && e.message || e) });
+    }
   });
 
   if (can.CUSTOMERS) await attempt('service', async () => {

@@ -963,7 +963,11 @@ function statusForSettlement(request,summary,cutoff){
   if(summary.coverage==='NONE')return null;
   const needsProof=String(request.request_date||'')>=String(cutoff||'');
   if(summary.coverage==='FULLY'){
-    if(needsProof&&!summary.proofComplete)return 'PARTIALLY_PAID';
+    // Settled to the centavo but nobody has shown the bank advice. That is not
+    // "part paid" - the balance is nil - and it is not "paid" either, because
+    // paid is a claim somebody has to be able to support. It is its own state,
+    // and the only thing missing is a document.
+    if(needsProof&&!summary.proofComplete)return 'PAID_UNPROVEN';
     return 'PAID';
   }
   return 'PARTIALLY_PAID';
@@ -981,7 +985,7 @@ async function applySettlementStatus(c,request){
       paid_by=COALESCE(paid_by,?),updated_at=datetime('now') WHERE id=?`,
       [want,paidAt,c.get('erpUser').email,request.id]);
   }
-  if(!want&&['PAID','PARTIALLY_PAID'].includes(String(request.status||''))){
+  if(!want&&['PAID','PARTIALLY_PAID','PAID_UNPROVEN'].includes(String(request.status||''))){
     // Every settlement was voided: the request goes back to owing the money.
     await run(c.env.DB,`UPDATE erp_payment_requests SET status='APPROVED',paid_at=NULL,
       updated_at=datetime('now') WHERE id=?`,[request.id]);
@@ -1039,6 +1043,17 @@ financeRoutes.post('/payment-requests/:id/settlements', requirePermission('FINAN
     `MANUAL:${row.request_no}:${Date.now()}`,
   ]);
   const settlementId=r.meta.last_row_id;
+  /*
+   * A reference typed here counts as evidence, so it has to be written into the
+   * proof trail as well. Without that the record says "proved" while the trail
+   * says nothing, and the register loader reads the trail.
+   */
+  if(normalizeText(b.proofReference)){
+    await run(c.env.DB,`INSERT INTO erp_rfp_proof_of_payment(rfp_ref,reference,paid_at,actor)
+      VALUES(?,?,?,?)`,[row.request_no,normalizeText(b.proofReference),paidDate,user.email]);
+    await run(c.env.DB,`UPDATE erp_payment_settlements SET proof_uploaded_by=?,
+      proof_uploaded_at=datetime('now') WHERE id=?`,[user.email,settlementId]);
+  }
   // Proof of payment, if it came with the entry.
   let attach={saved:[],failed:[]};
   if(Array.isArray(b.attachments)&&b.attachments.length){
@@ -1307,6 +1322,10 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
         final_approved_by=?,final_approved_at=datetime('now'),supplier_bill_id=?,
         updated_at=datetime('now') WHERE id=?`,[user,billId||null,id]);
     }else if(action==='MARK_PAID'){
+      // Instructing the bank is a Finance act. FINANCE/EDIT alone is held by
+      // department heads and by the requestor on their own request, which is
+      // not who should be moving money.
+      if(!canSettle(c.get('erpUser')))throw new Error('Only Finance prepares a payment.');
       if(request.status!=='APPROVED')throw new Error('Only an approved request can be paid.');
       if(!b.bankAccountId||!normalizeText(b.paymentReference))throw new Error('Bank account and payment reference are required.');
       if(!request.payee_partner_id)throw new Error('A supplier master record is required before payment.');
@@ -1334,6 +1353,7 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
         bank.id,payment.id,normalizeText(b.paymentReference),id,
       ]);
     }else if(action==='CONFIRM_PAID'){
+      if(!canSettle(c.get('erpUser')))throw new Error('Only Finance closes a payment.');
       if(request.status!=='PAYMENT_PREPARED')throw new Error('Payment journal has not been prepared.');
       const payment=await first(c.env.DB,
         `SELECT d.*,h.status journal_status FROM erp_subledger_documents d
@@ -1363,21 +1383,36 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
       const proofAttachment=await first(c.env.DB,`SELECT id FROM erp_attachments
         WHERE record_type IN ('PAYMENT_PROOF','PAYMENT_REQUEST') AND record_no=? AND active=1
         ORDER BY id DESC LIMIT 1`,[request.request_no]);
-      await run(c.env.DB,`INSERT OR IGNORE INTO erp_payment_settlements
-        (request_no,payment_request_id,amount,paid_date,payment_reference,bank_account_id,
-         proof_attachment_id,proof_reference,proof_uploaded_by,proof_uploaded_at,
-         source,recorded_by,natural_key)
-        VALUES(?,?,?,?,?,?,?,?,?,datetime('now'),'SYSTEM',?,?)`,[
-        request.request_no,id,request.net_payable,
-        b.paymentDate||new Date().toISOString().slice(0,10),
-        request.payment_reference||normalizeText(b.paymentReference)||null,
-        request.bank_account_id||null,
-        proofFiles?(proofAttachment?proofAttachment.id:null):null,
-        normalizeText(b.proofReference)||null,user,user,
-        `CONFIRM:${request.request_no}`,
-      ]);
-      await run(c.env.DB,`UPDATE erp_payment_requests SET status='PAID',paid_by=?,
-        paid_at=datetime('now'),updated_at=datetime('now') WHERE id=?`,[user,id]);
+      /*
+       * The payment itself, for whatever is still owed rather than the whole
+       * request: closing a request that was already part paid must not record
+       * the full amount a second time.
+       *
+       * The key carries the moment, because a confirmation that was later
+       * voided has to be able to happen again - a fixed key made the second
+       * one a silent no-op that still flipped the request to paid.
+       */
+      const openBefore=await settlementSummary(c.env.DB,request.request_no,request.net_payable);
+      if(openBefore.balance>0.01){
+        await run(c.env.DB,`INSERT INTO erp_payment_settlements
+          (request_no,payment_request_id,amount,paid_date,payment_reference,bank_account_id,
+           proof_attachment_id,proof_reference,proof_uploaded_by,proof_uploaded_at,
+           source,recorded_by,natural_key)
+          VALUES(?,?,?,?,?,?,?,?,?,datetime('now'),'SYSTEM',?,?)`,[
+          request.request_no,id,openBefore.balance,
+          b.paymentDate||new Date().toISOString().slice(0,10),
+          request.payment_reference||normalizeText(b.paymentReference)||null,
+          request.bank_account_id||null,
+          proofFiles?(proofAttachment?proofAttachment.id:null):null,
+          normalizeText(b.proofReference)||null,user,user,
+          `CONFIRM:${request.request_no}:${Date.now()}`,
+        ]);
+      }
+      // Let the settlements decide the status rather than asserting it, so a
+      // request can never stand as paid with nothing behind it.
+      await applySettlementStatus(c,request);
+      await run(c.env.DB,`UPDATE erp_payment_requests SET paid_by=COALESCE(paid_by,?),
+        updated_at=datetime('now') WHERE id=?`,[user,id]);
     }else if(action==='RETURN'||action==='CANCEL'||action==='REJECT'){
       if(['PAID','REJECTED','CANCELLED'].includes(request.status))throw new Error('This request can no longer be returned.');
       // Spec section 6: the reason is mandatory and no signature is required.
