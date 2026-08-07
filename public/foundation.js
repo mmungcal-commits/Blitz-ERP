@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
-  from './viz.js?v=20260807-r32';
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R32.0';
+  from './viz.js?v=20260808-r34';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R34.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -12,6 +12,7 @@ const state={
   mobileFull:false,
   mobileGroup:null,
   showModuleMap:false,
+  homeRange:null,
   inbound:{preview:null,receiptLines:[],shipment:null,locationId:null},
   cycleCount:null,
   scannerStream:null,
@@ -241,7 +242,7 @@ function showAuth(mode='login'){
     const startScope=state.scope==='ADMIN'?'ADMIN':'OPERATIONS';
     host.innerHTML=`<div class="blitz-auth">
       <div class="blitz-auth-brand">
-        <img class="blitz-mark" src="/logo-white.png?v=20260807-r32" alt="E88 Ventures Inc.">
+        <img class="blitz-mark" src="/logo-white.png?v=20260808-r34" alt="E88 Ventures Inc.">
         <div class="blitz-charge" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
       </div>
       <div class="auth-heading"><h1>Welcome back</h1><p>Sign in to continue.</p></div>
@@ -364,8 +365,10 @@ async function renderHomeDashboard(){
   document.body.classList.remove('workbench-view');
   document.body.classList.add('launchpad-view');
   content.innerHTML='<div class="workspace-loading">Loading your dashboard\u2026</div>';
+  const rng=state.homeRange||{};
+  const qs=(rng.from&&rng.to)?('?from='+encodeURIComponent(rng.from)+'&to='+encodeURIComponent(rng.to)):'';
   let d;
-  try{ d=await api('/dashboard/home'); }
+  try{ d=await api('/dashboard/home'+qs); }
   catch(err){
     // Fall through to the module map - and set the flag first, or renderLaunchpad
     // routes straight back here and the loading message spins forever.
@@ -393,10 +396,53 @@ async function renderHomeDashboard(){
     ? {value:tr[k].delta,period:'vs the 3 days before',upIsGood:upIsGood!==false} : null;
   let tiles='';
   const cards=[];
+
+  /*
+   * Finance opens on the money. These are the six numbers asked for, plus the
+   * period they cover, because a management figure without a period is not a
+   * figure.
+   */
+  if(sec.management){
+    const m=sec.management;
+    tiles=vizTiles([
+      {label:'Pending approvals',value:(d.waiting||[]).reduce((t,w)=>t+Number(w.count||0),0),
+       tone:(d.waiting||[]).length?'warning':'good',sub:'awaiting your sign-off',module:'fa-receivables-payables#records'},
+      {label:'Available units',value:m.availableUnits,tone:'good',sub:'ready to move',
+       module:'ip-warehouse-management#records'},
+      {label:'Leased units',value:m.leasedUnits,sub:'out on contract',module:'ip-warehouse-management#records'},
+      {label:'Sold units',value:m.soldUnits,sub:'disposed',module:'ip-warehouse-management#records'},
+      {label:'Collection',value:m.collectionPct==null?0:Math.round(m.collectionPct),suffix:'%',
+       pct:null,tone:m.collectionPct==null?null:(m.collectionPct>=80?'good':m.collectionPct>=50?'warning':'critical'),
+       sub:m.collectionPct==null?'nothing billed in this period':'of '+money(m.billed)+' billed',
+       module:'fa-receivables-payables#records'},
+      {label:'Receivables',value:m.receivablesPct==null?0:Math.round(m.receivablesPct),suffix:'%',
+       tone:m.receivablesPct==null?null:(m.receivablesPct<=20?'good':m.receivablesPct<=50?'warning':'critical'),
+       sub:m.receivablesPct==null?'nothing outstanding':money(m.outstanding)+' outstanding',
+       module:'fa-receivables-payables#records'}
+    ]);
+    if(m.collectionPct!=null)
+      cards.push(vizRing(m.collectionPct,{title:'Collection rate',
+        subtitle:money(m.collected)+' of '+money(m.billed)+' billed',caption:'collected',
+        tipLabel:'Collected against billed',open:'fa-receivables-payables#records',
+        openLabel:'Open the payment requests',
+        tone:m.collectionPct>=80?'good':m.collectionPct>=50?'warning':'critical'}));
+    if((m.aging||[]).some(r=>Number(r.value)>0))
+      cards.push(vizBars(m.aging.map(r=>({label:r.label,value:Number(r.value)||0})).filter(r=>r.value>0),
+        {title:'Receivables ageing',money:true,color:VIZ.status.serious,
+         keyLabel:'Bucket',valueLabel:'Outstanding',labelWidth:104,
+         open:'fa-receivables-payables#records',openLabel:'Open the receivables'}));
+    if(m.availableUnits+m.leasedUnits+m.soldUnits+m.deployedUnits>0)
+      cards.push(vizDonut([
+        {label:'Available',value:m.availableUnits},{label:'Leased',value:m.leasedUnits},
+        {label:'Sold',value:m.soldUnits},{label:'Deployed',value:m.deployedUnits}],
+        {title:'Where the fleet is',totalLabel:'Units',keyLabel:'State',valueLabel:'Units',
+         open:'ip-warehouse-management#records',openLabel:'Open unit visibility'}));
+  }
+
   if(sec.inventory){
     const i=sec.inventory;
     // Every tile goes somewhere. A number you cannot click is a dead end.
-    tiles=vizTiles([
+    const invTiles=vizTiles([
       {label:'Available',value:i.available,tone:'good',sub:'ready to move',module:'ip-warehouse-management#records',
        spark:sparkOf('inventory'),delta:deltaOf('inventory')},
       {label:'Quarantine',value:i.quarantine,tone:i.quarantine?'serious':'good',sub:'held back',
@@ -408,6 +454,7 @@ async function renderHomeDashboard(){
       {label:'Variances',value:i.variances,tone:i.variances?'critical':'good',sub:'units in question',
        module:'ip-cycle-counting#reports'}
     ]);
+    if(!tiles)tiles=invTiles;
     if((i.byClass||[]).length)
       cards.push(vizDonut(i.byClass.map(r=>({label:r.label||'Unclassified',value:Number(r.value)||0})),
         {title:'Inventory by class',totalLabel:'Units',keyLabel:'Class',valueLabel:'Units',
@@ -439,6 +486,21 @@ async function renderHomeDashboard(){
       {label:new Date(p.label+'T00:00:00').toLocaleDateString('en-US',{weekday:'short'}),value:p.value}))}],
       {title:'Activity across the last 7 days',keyLabel:'Day',valueLabel:'Events'}));
 
+  /*
+   * The period control. A management figure without a period is not a figure,
+   * so the range is always visible and always stated, not hidden behind a
+   * filter somebody has to remember to open.
+   */
+  const per=d.period||{};
+  const presets=[['This month','month'],['Last 30 days','30d'],['This quarter','quarter'],['This year','year']];
+  const rangeHtml='<div class="home-range">'
+    +'<div class="home-range-presets">'+presets.map(function(x){
+      return '<button type="button" data-range="'+x[1]+'"'
+        +((rng.preset===x[1]||(!rng.preset&&x[1]==='month'))?' class="on"':'')+'>'+esc(x[0])+'</button>';}).join('')
+    +'</div><div class="home-range-dates"><input type="date" id="homeFrom" value="'+esc(per.from||'')+'">'
+    +'<span>to</span><input type="date" id="homeTo" value="'+esc(per.to||'')+'">'
+    +'<button type="button" class="command" id="homeApply">Apply</button></div></div>';
+
   content.innerHTML='<section class="home-shell">'
     +'<header class="home-top">'
       +'<div class="home-brand"><img src="/logo-navy.png" alt=""><div>'
@@ -448,8 +510,10 @@ async function renderHomeDashboard(){
         +'<button type="button" class="command primary home-open" id="homeModules">Open modules</button>'
         +'<button type="button" class="command" id="homeSignOut">Sign out</button></div>'
     +'</header>'
-    +'<div class="home-hello"><h1>'+esc(greet)+', '+esc(String(who).split(' ')[0]||who)+'</h1>'
-      +'<p>'+esc(new Date().toLocaleDateString('en-US',{weekday:'long',day:'numeric',month:'long',year:'numeric'}))+'</p></div>'
+    +'<div class="home-hello"><div><h1>'+esc(greet)+', '+esc(String(who).split(' ')[0]||who)+'</h1>'
+      +'<p>'+esc(new Date().toLocaleDateString('en-US',{weekday:'long',day:'numeric',month:'long',year:'numeric'}))
+      +(d.department?' \u00b7 '+esc(String(d.department).toLowerCase().replace(/\b\w/g,function(ch){return ch.toUpperCase();})):'')
+      +'</p></div>'+rangeHtml+'</div>'
     +waitingHtml
     +tiles
     +'<div class="viz-grid home-grid">'+cards.join('')+'</div>'
@@ -471,6 +535,21 @@ async function renderHomeDashboard(){
   bindViz(content,null,go);
   $$('[data-home-go]').forEach(b=>b.onclick=()=>go(b.dataset.homeGo));
   // canWorkspace only knows module codes, so strip any section before the check.
+  const setRange=(from,to,preset)=>{state.homeRange={from,to,preset};renderHomeDashboard();};
+  const iso=dt=>dt.toISOString().slice(0,10);
+  $$('[data-range]').forEach(b=>b.onclick=()=>{
+    const now=new Date(), k=b.dataset.range;
+    if(k==='month')  return setRange(iso(new Date(now.getFullYear(),now.getMonth(),1)),iso(now),'month');
+    if(k==='30d')    return setRange(iso(new Date(now.getTime()-29*864e5)),iso(now),'30d');
+    if(k==='quarter')return setRange(iso(new Date(now.getFullYear(),Math.floor(now.getMonth()/3)*3,1)),iso(now),'quarter');
+    if(k==='year')   return setRange(iso(new Date(now.getFullYear(),0,1)),iso(now),'year');
+  });
+  if($('#homeApply'))$('#homeApply').onclick=()=>{
+    const f=$('#homeFrom').value, t=$('#homeTo').value;
+    if(!f||!t)return toast('Pick both dates.','error');
+    if(f>t)return toast('The start date is after the end date.','error');
+    setRange(f,t,null);
+  };
   $('#homeModules').onclick=()=>{state.showModuleMap=true;renderLaunchpad();};
   $('#homeSignOut').onclick=logout;
   // Let the cards arrive rather than snap in.
@@ -4960,10 +5039,55 @@ function openSalesOrderForm(lookups){
     <label><span>Rate per day</span><input name="ratePerDay" type="number" min="0" step="0.01" placeholder="0.00"></label>
     <label><span>Rate currency</span><select name="rateCurrency"><option>PHP</option><option>USD</option></select></label>
     <label class="wide"><span>Delivery / Deployment Address</span><input name="deliveryAddress" required></label>
+    <div class="wide so-lines-head"><span>Order lines</span>
+      <button type="button" class="table-action" id="soAddLine">+ Add line</button></div>
+    <div id="salesLines" class="wide"></div>
+    <div class="wide so-total"><span>Order total</span><b id="soTotal">0.00</b></div>
     <label class="wide"><span>Signed contract / attachments</span><input id="soContract" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.docx,.doc"></label>
     <div id="soContractList" class="po-doc-list wide"></div>
     <button class="command primary">Create Sales Order</button>
   </form>`);
+
+  /*
+   * Order lines. Sales prices the deal; it does not pick serials - the spec is
+   * explicit that serial allocation belongs to supply chain on the outbound
+   * requisition - so a line is item, quantity and price, and nothing else.
+   */
+  const soItems=(lookups.items||[]);
+  const soTotal=()=>{
+    let t=0;
+    $$('#salesLines .sales-line').forEach(row=>{
+      t+=(Number(row.querySelector('[data-sales="qty"]').value)||0)
+        *(Number(row.querySelector('[data-sales="unitPrice"]').value)||0);
+    });
+    const el=$('#soTotal'); if(el)el.textContent=t.toFixed(2);
+  };
+  const soAddLine=()=>{
+    const row=document.createElement('div');
+    row.className='sales-line';
+    row.innerHTML=`<select data-sales="itemCode"><option value="">Select item</option>`
+      +soItems.map(i=>`<option value="${esc(i.item_code)}" data-name="${esc(i.item_name||'')}" data-price="${Number(i.standard_cost)||0}">${esc(i.item_code)} · ${esc(i.item_name||'')}</option>`).join('')
+      +`</select>`
+      +`<input data-sales="description" placeholder="Description">`
+      +`<input data-sales="qty" type="number" min="1" step="1" value="1" placeholder="Qty">`
+      +`<input data-sales="unitPrice" type="number" min="0" step="0.01" value="0" placeholder="Unit price">`
+      +`<button type="button" class="table-action danger remove-line">&times;</button>`;
+    const pick=row.querySelector('[data-sales="itemCode"]');
+    pick.onchange=()=>{
+      const opt=pick.selectedOptions[0];
+      if(!opt||!opt.value)return;
+      const desc=row.querySelector('[data-sales="description"]');
+      if(!desc.value.trim())desc.value=opt.dataset.name||'';
+      const price=row.querySelector('[data-sales="unitPrice"]');
+      if(!Number(price.value)&&Number(opt.dataset.price))price.value=Number(opt.dataset.price);
+      soTotal();
+    };
+    row.querySelectorAll('[data-sales="qty"],[data-sales="unitPrice"]').forEach(i=>i.oninput=soTotal);
+    row.querySelector('.remove-line').onclick=()=>{row.remove();soTotal();};
+    $('#salesLines').append(row);
+  };
+  if($('#soAddLine'))$('#soAddLine').onclick=soAddLine;
+  soAddLine();   // an order always has at least one line to fill in
   const soFiles=[];
   const soRender=()=>{const host=$('#soContractList');if(!host)return;
     host.innerHTML=soFiles.length?soFiles.map((f,i)=>`<span class="po-doc-chip">${esc(f.name)} <button type="button" data-so-drop="${i}">&times;</button></span>`).join(''):'<span class="po-doc-empty">No contract attached</span>';
@@ -5015,7 +5139,14 @@ function openSalesOrderForm(lookups){
     body.customerId=Number(body.customerId);
     body.ratePerDay=Number(body.ratePerDay||0);
     body.attachments=await soReadFiles();
-    body.lines=[];
+    body.lines=$$('#salesLines .sales-line').map(row=>({
+      itemCode:row.querySelector('[data-sales="itemCode"]').value,
+      itemName:row.querySelector('[data-sales="itemCode"]').selectedOptions[0]?.dataset.name||'',
+      description:row.querySelector('[data-sales="description"]').value.trim(),
+      qty:Number(row.querySelector('[data-sales="qty"]').value)||0,
+      unitPrice:Number(row.querySelector('[data-sales="unitPrice"]').value)||0,
+    })).filter(l=>(l.itemCode||l.description)&&l.qty>0);
+    if(!body.lines.length)return toast('Add at least one order line.','error');
     try{const result=await api('/sales',{method:'POST',body:JSON.stringify(body)});closeModal();toast(`${result.salesOrderNo} created`);await renderSalesOrderWorkspace('records');}
     catch(error){toast(error.message,'error');}
   };
@@ -6274,6 +6405,18 @@ init();
   .mtile.green{background:linear-gradient(140deg,#4aa564,#358a4d)}
   .mtile.blue{background:linear-gradient(140deg,#2a86dd,#1a68b5)}
   .mtile-full{width:100%;margin-top:14px}
+  /* Sales order lines */
+  .so-lines-head{display:flex;align-items:center;justify-content:space-between;
+    margin-top:6px;padding-bottom:4px;border-bottom:1px solid #e3e9f1}
+  .so-lines-head span{font-size:11px;font-weight:700;color:#42576a;text-transform:uppercase;letter-spacing:.5px}
+  .sales-line{display:grid;grid-template-columns:1.4fr 1.4fr 70px 110px 32px;gap:6px;margin-top:6px}
+  .sales-line select,.sales-line input{min-height:34px;padding:6px 8px;border:1px solid #c6d3de;border-radius:4px;min-width:0}
+  .so-total{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:8px;
+    padding-top:8px;border-top:1px solid #e3e9f1}
+  .so-total span{font-size:11px;font-weight:700;color:#42576a;text-transform:uppercase;letter-spacing:.5px}
+  .so-total b{font-size:17px;color:#0a2239;font-variant-numeric:tabular-nums}
+  @media (max-width:720px){.sales-line{grid-template-columns:1fr 1fr;gap:5px}}
+
   /* ---------- Landing cockpit ---------- */
   .home-shell{max-width:1320px;margin:0 auto;padding:18px 20px 30px}
   .home-top{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:18px}
@@ -6285,7 +6428,19 @@ init();
   .home-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .home-scope{padding:5px 11px;border:1px solid #cfdbe6;border-radius:999px;background:#fff;color:#42506a;font-size:11px}
   .home-open{font-weight:700}
-  .home-hello{margin:0 0 16px}
+  .home-hello{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:0 0 16px}
+  .home-range{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .home-range-presets{display:flex;gap:4px}
+  .home-range-presets button{padding:6px 11px;border:1px solid #d8e2ea;border-radius:999px;background:#fff;
+    color:#42506a;font-size:11.5px;cursor:pointer}
+  .home-range-presets button:hover{border-color:#a9c3d6}
+  .home-range-presets button.on{background:#0a2239;border-color:#0a2239;color:#fff;font-weight:700}
+  .home-range-dates{display:flex;align-items:center;gap:6px}
+  .home-range-dates input{min-height:32px;padding:5px 8px;border:1px solid #d8e2ea;border-radius:8px;font-size:12px}
+  .home-range-dates span{font-size:11.5px;color:#7c8b9c}
+  .home-range-dates .command{min-height:32px;padding:5px 12px;font-size:12px}
+  @media (max-width:720px){.home-hello{align-items:flex-start}.home-range{width:100%}
+    .home-range-dates{width:100%}.home-range-dates input{flex:1;min-width:0}}
   .home-hello h1{margin:0;font-size:27px;color:#0a2239;letter-spacing:-.3px}
   .home-hello p{margin:3px 0 0;color:#7c8b9c;font-size:12.5px}
 

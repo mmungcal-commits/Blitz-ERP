@@ -385,7 +385,8 @@ export function vizTiles(tiles, opts){
       + (t.match?' data-viz-match="'+esc(t.match)+'"':'')
       + '><span class="viz-tile-label">'+esc(t.label)+'</span>'
       + (spark?'<span class="viz-tile-spark">'+spark+'</span>':'')
-      + '<span class="viz-tile-row"><b class="viz-tile-value">'+esc(compact(t.value))+'</b>'+pct+'</span>'
+      + '<span class="viz-tile-row"><b class="viz-tile-value">'+esc(compact(t.value))
+        + (t.suffix?'<i class="viz-tile-unit">'+esc(t.suffix)+'</i>':'')+'</b>'+pct+'</span>'
       + (delta || (t.sub?'<small>'+esc(t.sub)+'</small>':''))+'</button>';
   }).join('')+'</div>';
 }
@@ -500,7 +501,7 @@ export const VIZ_CSS = `
   background:#fff;color:#42506a;font-size:10px;cursor:pointer}
 .viz-tbl-toggle.on{background:#eef4f9;border-color:#a9c3d6;color:#14507f}
 .viz-plot{min-height:40px}
-.viz-svg{display:block;width:100%;height:auto;overflow:visible}
+.viz-svg{display:block;width:100%;height:auto;max-height:230px;overflow:visible}
 .viz-donut{max-width:190px;margin:0 auto}
 .viz-cat{font-size:10px;fill:${VIZ.ink2}}
 .viz-tick{font-size:9.5px;fill:${VIZ.muted};font-variant-numeric:tabular-nums}
@@ -538,6 +539,7 @@ export const VIZ_CSS = `
 .viz-tile.critical .viz-tile-label:before{background:${VIZ.status.critical}}
 .viz-tile-row{display:flex;align-items:baseline;justify-content:space-between;gap:6px}
 .viz-tile-value{font-size:22px;font-weight:700;color:${VIZ.ink};line-height:1.05}
+.viz-tile-unit{font-style:normal;font-size:14px;font-weight:700;color:${VIZ.ink2};margin-left:1px}
 .viz-tile-pct{font-size:11px;font-weight:700;color:${VIZ.ink2}}
 .viz-tile small{font-size:10px;color:${VIZ.muted}}
 
@@ -563,14 +565,18 @@ export const VIZ_CSS = `
 .viz-meter-track{display:block;height:8px;border-radius:999px;background:#e8eef4;overflow:hidden}
 .viz-meter-track i{display:block;height:100%;border-radius:999px}
 
-.viz-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:9px;margin-bottom:10px}
-.viz-grid.two{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+/* Cards have an upper width as well as a lower one: one chart on its own must
+   not stretch across a 1700px screen just because there is room. */
+.viz-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,460px));
+  justify-content:start;gap:9px;margin-bottom:10px}
+.viz-grid.two{grid-template-columns:repeat(auto-fit,minmax(320px,560px))}
 
 .viz-tip{position:fixed;z-index:9999;padding:5px 9px;border-radius:5px;background:rgba(11,11,11,.92);
   color:#fff;font-size:11px;pointer-events:none;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.28)}
 
 @media (max-width:720px){
   .viz-grid,.viz-grid.two{grid-template-columns:1fr}
+  .viz-svg{max-height:200px}
   .viz-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
   .viz-tile-value{font-size:19px}
 }
