@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
-  from './viz.js?v=20260807-r31';
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R31.0';
+  from './viz.js?v=20260807-r32';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R32.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -241,21 +241,10 @@ function showAuth(mode='login'){
     const startScope=state.scope==='ADMIN'?'ADMIN':'OPERATIONS';
     host.innerHTML=`<div class="blitz-auth">
       <div class="blitz-auth-brand">
-        <img class="blitz-mark" src="/logo-white.png?v=20260807-r31" alt="E88 Ventures Inc.">
+        <img class="blitz-mark" src="/logo-white.png?v=20260807-r32" alt="E88 Ventures Inc.">
         <div class="blitz-charge" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
       </div>
       <div class="auth-heading"><h1>Welcome back</h1><p>Sign in to continue.</p></div>
-      <!--
-        Operations is what almost everybody signs in as, so it is simply the
-        default rather than a choice to make every morning. Administration is
-        the exception, and reads as one.
-      -->
-      <div class="blitz-scope-note">
-        <button type="button" id="scopeAdminToggle" class="${startScope==='ADMIN'?'on':''}"
-          aria-pressed="${startScope==='ADMIN'?'true':'false'}">
-          <span class="dot" aria-hidden="true"></span>Sign in to System Administration instead</button>
-        <small>Setup, users and backup. Approvals are blocked in this scope.</small>
-      </div>
       <form id="loginForm" class="auth-form">
         <input type="hidden" name="scope" id="loginScope" value="${esc(startScope)}">
         ${authField('Corporate email','email','email',email,'autocomplete="username" placeholder="name@nrdev.ph" required')}
@@ -264,6 +253,16 @@ function showAuth(mode='login'){
       </form>
       <div id="authMessage" class="auth-message"></div>
       <div class="auth-links"><button type="button" data-auth="activate">Activate account</button><button type="button" data-auth="reset">Reset password</button></div>
+      <!--
+        Operations is what almost everybody signs in as, so it is simply the
+        default rather than a choice to make every morning. Administration is
+        the exception, and reads as one.
+      -->
+      <div class="blitz-scope-note">
+        <button type="button" id="scopeAdminToggle" class="${startScope==='ADMIN'?'on':''}"
+          aria-pressed="${startScope==='ADMIN'?'true':'false'}">
+          <span class="dot" aria-hidden="true"></span>Sign in to System Administration</button>
+      </div>
     </div>`;
     const scopeBtn=$('#scopeAdminToggle');
     if(scopeBtn)scopeBtn.onclick=()=>{
@@ -946,8 +945,7 @@ async function renderFinanceCenter(title,subtitle,payablesMode){
           <div><b>Submitted</b><span>${dashboard.worklist?.submitted||0}</span></div>
           <div><b>Approved</b><span>${dashboard.worklist?.approved||0}</span></div>
           <div><b>Source Errors</b><span>${dashboard.events?.errors||0}</span></div></div></section>
-        <section><header>Accounting Control</header><div class="control-note"><b>Balanced and period controlled</b>
-          <p>Every posted journal balances, is linked to its source, and cannot post into a closed period.</p></div></section>
+        
       </aside></div>`;
     content.innerHTML=workbenchShell(body,'center');bindWorkbench();
     bindFinanceFilters(()=>renderFinanceCenter(title,subtitle,payablesMode));
@@ -1054,7 +1052,7 @@ async function openFinanceJournal(id){
       }catch(error){toast(error.message,'error');}
     };
     const request=type=>modal(`${type} ${h.journal_no}`,`<form id="financeChangeForm" class="operational-form">
-      <div class="control-note"><b>Independent approval required</b><p>The original journal remains permanently auditable.</p></div>
+      
       <label><span>Reason</span><textarea name="reason" minlength="8" required></textarea></label>
       <button class="command primary">Submit Request</button></form>`);
     if($('#journalReverse'))$('#journalReverse').onclick=()=>{request('Reverse');bindFinanceChange(id,'REVERSE');};
@@ -1349,7 +1347,7 @@ function runRfpAction(action,id,master){
       <label class="wide"><span>Disbursing bank / partner email (MNC)</span><input name="bankInstructionEmail" type="email" placeholder="treasury@bank.com"></label>
       <label class="wide"><span>Bank account</span><select name="bankAccountId">${banks.map(b=>`<option value="${b.id}">${esc(b.bank_name||b.account_name||b.bank_account_code||('Bank '+b.id))}</option>`).join('')}</select></label>
       <label class="wide"><span>Bank payment reference</span><input name="paymentReference" required placeholder="e.g. BT-2026-0102"></label>
-      <p class="form-note">A payment instruction email is issued to the bank (MNC) at this step once the mail relay is connected.</p>
+      
       <button class="command primary">Prepare payment</button></form>`);
     $('#rfpPayForm').onsubmit=event=>{event.preventDefault();const f=formDataObject(event.currentTarget);if(!f.paymentReference)return;closeModal();submitRfpAction(id,{action:action,bankAccountId:f.bankAccountId||banks[0].id,paymentReference:f.paymentReference,bankInstructionEmail:f.bankInstructionEmail});};
     return;
@@ -1358,7 +1356,7 @@ function runRfpAction(action,id,master){
     modal('Confirm Payment - Attach Proof',`<form id="rfpProofForm" class="operational-form grid">
       <label class="wide"><span>Proof of payment reference / link</span><input name="proofReference" required placeholder="Bank receipt no. or document URL"></label>
       <label class="wide"><span>Attach proof of payment</span><input id="rfpProofFile" type="file" multiple accept=".pdf,.png,.jpg,.jpeg"></label>
-      <p class="form-note">On confirm, the requestor is notified that payment is complete (once the mail relay is connected).</p>
+      
       <button class="command primary">Confirm payment</button></form>`);
     $('#rfpProofForm').onsubmit=async event=>{event.preventDefault();const f=formDataObject(event.currentTarget);if(!f.proofReference)return;
       const input=$('#rfpProofFile');
@@ -2159,9 +2157,7 @@ function openMobileCount(countId,data){
       <input id="mcSerial" inputmode="text" autocomplete="off" placeholder="Or type / scan with a hardware scanner">
       <details class="mr-newunit" id="mcNewWrap">
         <summary>Details for units not yet in the system</summary>
-        <p class="form-note">Set the model once and keep scanning - it is applied to every unit that the
-          system has never seen. Anything counted without an item code is still registered, and flagged
-          for review so it can be tidied up later.</p>
+        
         <label><span>Item code</span><input id="mcItemCode" autocomplete="off" placeholder="e.g. MC-0001"></label>
         <label><span>Item / model name</span><input id="mcItemName" autocomplete="off"></label>
         <label><span>Class</span><select id="mcCategory">
@@ -2506,7 +2502,7 @@ async function renderConsolidation(section){
       <section class="workspace-card"><header><h2>Entity Financial Statements</h2></header>
         ${financeTable(['Entity','Revenue','COGS','Operating Expense','Net Income','Assets','Liabilities'],rows)}</section>
       <section class="workspace-card"><header><h2>Consolidation Control</h2></header>
-        <div class="control-note"><b>Elimination entries use General Accounting</b><p>Create an elimination journal, tag the entity and source reference, route it for approval, then post before final consolidated reporting.</p></div></section>`;
+        </section>`;
     content.innerHTML=workbenchShell(body,section==='reports'?'reports':section==='records'?'records':'center');bindWorkbench();
   }catch(error){showWorkspaceError(error);}
 }
@@ -2903,8 +2899,7 @@ async function renderExpectedShipments(){
               <td>${date(row.eta)}</td><td>${statusBadge(row.status)}</td></tr>`))}
           </section>
         </div>
-        <aside class="ramco-rail"><section><header>ATLAS Control</header><div class="control-note"><b>Expected only</b><p>ATLAS never creates warehouse inventory. Actual Goods Receipt creates the inventory serial.</p></div></section>
-        <section><header>Required Link</header><div class="control-note"><b>Purchase Order</b><p>Every import and shipment retains its approved PO reference.</p></div></section></aside>
+        
       </div>`;
     content.innerHTML=workbenchShell(body,'approvals');
     bindOperationalShell();
@@ -3037,8 +3032,7 @@ async function renderGoodsReceipt(selectedShipmentId=''){
           <section class="workspace-card"><header><div><h2>ATLAS Expected Units</h2><span>${workbench.expectedAssets.length} units on the manifest · ${openExpected.length} still to receive</span></div></header>
             ${operationalTable(['Class','Primary key','Secondary key','Item','Description','Model / Colour','Actual Serial','Status'],expectedRows,{key:'atlas-expected'})}</section>
         </div>
-        <aside class="ramco-rail"><section><header>Receipt Control</header><div class="control-note"><b>Actual creates inventory</b><p>Matched units become available. Substituted or unexpected units go to quarantine with a discrepancy.</p></div></section>
-        <section><header>Destination</header><div class="control-note"><b>Required location</b><p>Every confirmed serial is assigned to the selected warehouse or retail location.</p></div></section></aside>
+        
       </div>`:operationalEmpty('No expected shipments are ready for receiving.')}`;
     content.innerHTML=workbenchShell(body,'reports');
     bindOperationalShell();
@@ -3168,7 +3162,7 @@ async function renderOutboundOverview(){
       </section></div><aside class="ramco-rail"><section><header>Transaction Launchpad</header><div class="ramco-action-links">
         <button data-section-link="records">Create Requisition</button><button data-section-link="approvals">Pre-release Inspection</button>
         <button data-section-link="reports">Post Goods Issuance</button><button data-section-link="setup">Delivery & Goods Return</button>
-      </div></section><section><header>Control</header><div class="control-note"><b>One serial history</b><p>Every selected unit remains linked from requisition through custody, delivery, and return.</p></div></section></aside></div>`;
+      </div></section></aside></div>`;
     content.innerHTML=workbenchShell(body,'center');bindOperationalShell();
   }catch(error){showWorkspaceError(error);}
 }
@@ -3644,7 +3638,7 @@ async function renderAssemblyWorkbench(){
         </form></section>
       <section class="workspace-card"><header><div><h2>Assembly Register</h2><span>${(data.rows||[]).length} assemblies</span></div></header>
         ${operationalTable(['Assembly','Output','Parts','Rolled Cost','Location','Status','Action'],rows)}</section>
-      </div><aside class="ramco-rail"><section><header>Assembly / BOM</header><div class="control-note"><b>Cost roll-up</b><p>The assembled unit's cost is the sum of its parts. Disassembling returns each serialized part to Available.</p></div></section>
+      </div><aside class="ramco-rail">
       <section><header>Go to</header><div class="ramco-action-links"><button type="button" id="asmBackMove">Stock Movement</button></div></section></aside></div>`;
     content.innerHTML=workbenchShell(body,'approvals');bindOperationalShell();
     const recalc=()=>{let t=0;$$('.asm-line').forEach(r=>{const q=Number(r.querySelector('[data-a="qty"]').value||0),c=Number(r.querySelector('[data-a="cost"]').value||0);t+=q*c;});const el=$('#asmTotal');if(el)el.textContent=money(t);};
@@ -3775,7 +3769,7 @@ async function renderQrTrace(){
     <header><h2>QR / Serial Trace</h2></header>
     <div class="scan-entry"><input id="traceSerial" placeholder="Scan or enter serial number"><button class="command primary" id="traceLookup">Trace Unit</button>
       <button class="command" id="traceCamera">Scan QR</button></div><div id="traceResult">${operationalEmpty('Scan a unit to see its current location and status.')}</div>
-  </section></div><aside class="ramco-rail"><section><header>Trace Result</header><div class="control-note"><b>Inventory or expected</b><p>The lookup checks received inventory, ATLAS expected shipments, and open serial exceptions.</p></div></section></aside></div>`;
+  </section></div></div>`;
   content.innerHTML=workbenchShell(body,'reports');
   bindOperationalShell();
   const lookup=async value=>{
@@ -3809,7 +3803,7 @@ async function renderLocationMaster(){
             <option>WAREHOUSE</option><option>RETAIL</option><option>STORE</option><option>DEPOT</option><option>STATION</option><option>OTHER</option>
           </select></label><button class="command primary">Add Location</button></form>
         ${operationalTable(['Code','Location','Type','Partner'],rows)}
-      </section></div><aside class="ramco-rail"><section><header>Location Rule</header><div class="control-note"><b>Required for receipts</b><p>Goods receipts cannot post without an active destination location.</p></div></section></aside></div>`;
+      </section></div></div>`;
     content.innerHTML=workbenchShell(body,'setup');bindOperationalShell();
     $('#locationForm').onsubmit=async event=>{
       event.preventDefault();
@@ -3908,7 +3902,7 @@ async function renderCyclePlans(){
       </section>
       <section class="workspace-card"><header><h2>Cycle Count Register</h2><span>${data.total} plans</span></header>
         ${operationalTable(['Count No.','Date','Location','Type','Category','Assigned To','Expected','Status',''],rows)}</section>
-      </div><aside class="ramco-rail"><section><header>Count Sheet</header><div class="control-note"><b>System snapshot</b><p>The plan freezes the expected serial list for printing or mobile QR counting.</p></div></section></aside></div>`;
+      </div></div>`;
     content.innerHTML=workbenchShell(body,'records');bindOperationalShell();
     $('#cyclePlanForm').onsubmit=async event=>{
       event.preventDefault();
@@ -3971,7 +3965,7 @@ function identifyCountedUnit(countId,line,opts){
   return new Promise(resolve=>{
     modal(opts.title||('Identify '+esc(d.actual_serial_no||'this unit')),
       `<form id="iduForm" class="operational-form grid">
-        <p class="form-note">${esc(opts.note||'This serial is not in the system yet. Tell us what it is and it will be registered at this location when the count is posted.')}</p>
+        
         <label class="wide"><span>Serial</span><input name="serialNo" value="${esc(d.actual_serial_no||'')}" ${opts.lockSerial?'readonly':''}></label>
         <label><span>Item code</span><input name="itemCode" value="${esc(d.item_code||'')}" placeholder="e.g. MC-0001" list="iduItems"></label>
         <label><span>Item / model name</span><input name="itemName" value="${esc(d.item_name||'')}"></label>
@@ -4048,8 +4042,7 @@ function openCountUpload(countId,header){
     DUPLICATE:'bad',ALREADY_COUNTED:'warn',SKIPPED:'bad'};
   modal('Upload count sheet · '+esc((header&&header.count_no)||''),
     '<div class="operational-form">'
-    +'<p class="form-note">One row per physical unit. Only <b>serial_no</b> is required - everything else fills in '
-    +'what the "identify this unit" question would have asked. Nothing is written until you press Import.</p>'
+    +''
     +'<p><button type="button" class="command" id="cuTemplate">Download template (.csv)</button></p>'
     +'<label class="wide"><span>Count sheet file (.csv)</span><input id="cuFile" type="file" accept=".csv,text/csv"></label>'
     +'<div id="cuPreview"></div>'
@@ -4077,8 +4070,7 @@ function openCountUpload(countId,header){
       });
       const willAdd=(r.rows||[]).filter(function(x){return ['COUNTED','NEW_UNIT','LOCATION_MISMATCH'].indexOf(x.status)>=0;}).length;
       mb.querySelector('#cuPreview').innerHTML='<div class="cu-summary">'+counts+'</div>'
-        +'<p class="form-note">'+willAdd+' of '+r.totalRows+' row(s) will be added.'
-        +((r.rows||[]).length>300?' Showing the first 300.':'')+'</p>'
+        +''
         +'<div class="cu-table">'+operationalTable(['Row','Serial','Item','Result','Note'],rows)+'</div>';
       mb.querySelector('#cuImport').disabled=willAdd===0;
     }catch(error){toast(error.message,'error');}
@@ -4120,7 +4112,7 @@ async function renderPhysicalCount(countId=state.cycleCount){
         <div class="scan-summary">${kpi('Expected',data.summary.expected)}${kpi('Scanned',data.summary.counted)}${kpi('Variances',data.summary.variances)}
           ${kpi('Missing',data.summary.missing)}${kpi('Location Mismatch',data.summary.locationMismatch)}</div>
         ${operationalTable(['Item','Description','Expected Serial','Actual Serial','Count Status','Variance','Actual Location',''],rows)}
-      </section></div><aside class="ramco-rail"><section><header>Mobile Count</header><div class="control-note"><b>Fast serial scan</b><p>Each QR scan checks the frozen count sheet and detects missing, unexpected, unknown, or wrong-location units.</p></div></section></aside></div>`:operationalEmpty('Create or select a cycle count plan.')}`;
+      </section></div></div>`:operationalEmpty('Create or select a cycle count plan.')}`;
     content.innerHTML=workbenchShell(body,'approvals');bindOperationalShell();
     $('#physicalCountSelect').onchange=event=>renderPhysicalCount(Number(event.target.value));
     if(!data)return;
@@ -4363,12 +4355,12 @@ async function renderSupplierPortal(section){
       '<div class="workspace-kpis">'+kpi('Vendors',vendors.length)+kpi('Accredited',vendors.filter(function(v){return /^accredited$/i.test((v.status||'').trim());}).length)+kpi('Required Documents',docList.length)+kpi('Portal',portalUrl?'Linked':'Not linked')+'</div>'+
       '<div class="ramco-layout"><div class="ramco-main">'+
         '<section class="workspace-card"><header><div><h2>How vendor accreditation works</h2></div></header>'+
-          '<div class="control-note"><p>A vendor submits its documents and banking details, the E88 requestor endorses it, the documents are reviewed for completeness, then Finance and the owner give final approval. Accreditation confirms a vendor is qualified - it is not an award. Every engagement still requires the 1-3-1 canvass, the Vendor Selection Scorecard, and CEO approval before any funds are released.</p></div></section>'+
+          '</section>'+
         '<section class="workspace-card"><header><div><h2>Vendor Directory</h2></div></header>'+
           operationalTable(['Vendor','Vendor Code','Status'],vrows,{key:'vendor-directory',emptyMessage:'No accredited vendors loaded.'})+'</section>'+
       '</div><aside class="ramco-rail">'+
         '<section><header>Required Documents</header><ul class="doc-checklist">'+docItems+'</ul></section>'+
-        '<section><header>Approval Stages</header><div class="control-note"><p>1. Vendor submits<br>2. Requestor endorses<br>3. Document review<br>4. Finance / Owner approval<br>5. Accredited</p></div></section>'+
+        ''+
       '</aside></div>';
     content.innerHTML=workbenchShell(body,'center');bindOperationalShell();
     var sp=$('#setPortalUrl');if(sp)sp.onclick=function(){var u=window.prompt('Paste your Vendor Accreditation Portal URL (the Google Apps Script web-app link):',portalUrl);if(u!=null){localStorage.setItem('e88-accreditation-url',u.trim());renderSupplierPortal(section);}};
@@ -4686,7 +4678,7 @@ async function renderInventoryPlans(){
       </section>
       <section class="workspace-card"><header><h2>Inventory Plan Register</h2><span>${plans.total} plans</span></header>
         ${operationalTable(['Plan','Date','Type','Source','Destination','Lines','Units','Status','Action'],rows)}</section>
-      </div><aside class="ramco-rail"><section><header>Planning Rule</header><div class="control-note"><b>Analysis to action</b><p>Plans preserve the live available and incoming quantities used when the decision was created.</p></div></section></aside></div>`;
+      </div></div>`;
     content.innerHTML=workbenchShell(body,'approvals');bindOperationalShell();
     const addLine=()=>{
       const row=document.createElement('div');row.className='line-editor-row plan-line';
@@ -4737,7 +4729,7 @@ async function renderInventoryPlanningReports(){
     const clip=v=>{v=String(v||'');return v.length>60?v.slice(0,60)+'...':v;};
     const spareRows=spareReorder.map(r=>`<tr><td><b>${esc(r.item_code)}</b></td><td>${esc(clip(r.item_name))}</td><td class="num">${esc(r.available_qty)}</td><td class="num">${esc(r.incoming_qty)}</td><td class="num">${esc(r.open_po_qty)}</td></tr>`);
     const deployRows=deployable.map(r=>`<tr><td><b>${esc(r.item_code)}</b></td><td>${esc(clip(r.item_name))}</td><td>${esc(r.category)}</td><td>${esc(r.primary_location||'-')}</td><td class="num">${Number(r.available_qty||0).toLocaleString()}</td></tr>`);
-    const body=`<section class="workspace-card"><header><div><h2>How planning works here</h2></div></header><div class="control-note"><p>Motorcycles, batteries and lockers are unique serialized units - each is received once and cannot be re-ordered. For them the planning signal is how many are available to deploy (idle capital), not a reorder point. Only Spare Parts &amp; Accessories behave like recurring stock that runs out and is reordered.</p></div></section>
+    const body=`<section class="workspace-card"><header><div><h2>How planning works here</h2></div></header></section>
       <div class="workspace-kpis">${kpi('Spare Parts to Reorder',spareReorder.length)}${kpi('Motorcycles Idle',mcAvail.toLocaleString())}${kpi('Batteries Available',batAvail.toLocaleString())}${kpi('Spare-Part Units on Hand',spUnits.toLocaleString())}</div>
       <section class="workspace-card"><header><h2>Spare Parts to Reorder</h2></header>
         ${operationalTable(['Material Code','Item','Available','Incoming','Open PO'],spareRows,{emptyMessage:'No spare-part lines are out of stock.'})}</section>
@@ -4841,7 +4833,7 @@ async function renderModuleSetup(){
       <div class="connected-module-grid">${connections||operationalEmpty('No downstream module is configured.')}</div></section>
     <section class="workspace-card wide-card"><header><h2>Approval-Controlled Workflow</h2></header>
       ${operationalTable(['Action','Allowed From','Result','Required Authority'],actionRows)}
-      <div class="control-note"><b>Protected history</b><p>Posted, active, completed, closed, terminated, expired, or reversed records cannot be edited. Void and reversal require a reason and approval by another authorized user.</p></div></section>
+      </section>
     ${submoduleRows.length?`<section class="workspace-card wide-card"><header><h2>Functional Submodules</h2><span>${submoduleRows.length} connected process areas</span></header>
       ${operationalTable(['Submodule','Primary Record','Connected Module','Finance Event'],submoduleRows)}</section>`:''}
     <section class="workspace-card wide-card"><header><h2>Amount-Based Approval Matrix</h2></header>
@@ -4853,7 +4845,7 @@ async function renderModuleSetup(){
   $$('[data-connected-module]').forEach(button=>button.onclick=()=>openWorkspace(button.dataset.connectedModule));
   const host=$('#approvalMatrixHost');
   if(state.session.user.role_code!=='ADMIN'){
-    host.innerHTML='<div class="control-note"><b>Configured by the system administrator</b><p>The applicable approval steps are displayed on each transaction and enforced by amount, document type, department, role, and requester/approver segregation.</p></div>';
+    host.innerHTML='';
     return;
   }
   try{
@@ -4873,7 +4865,7 @@ async function renderModuleSetup(){
       try{await api('/enterprise/approval-matrices',{method:'POST',body:JSON.stringify(form)});toast('Approval rule saved');await renderModuleSetup();}
       catch(error){toast(error.message,'error');}
     };
-  }catch(error){host.innerHTML=`<div class="control-note error"><b>Approval matrix unavailable</b><p>${esc(error.message)}</p></div>`;}
+  }catch(error){host.innerHTML=`<div class="workspace-error"><b>Approval matrix unavailable</b><span>${esc(error.message)}</span></div>`;}
 }
 
 async function renderSalesOrderWorkspace(section){
@@ -5088,7 +5080,7 @@ function bindProcurementRows(){
         <td>${esc(line.ordered_qty)}</td><td class="num">${money(line.unit_cost)}</td><td class="num">${money(line.line_amount)}</td></tr>`);
       modal(`${data.header.purchase_order_no} · ${data.header.vendor_name}`,`${workflowStrip(['PO Draft','Approval','Expected Shipment','Goods Receipt','AP'],data.header.status==='DRAFT'?0:1)}
         ${operationalTable(['Line','Item','Description','Qty','Unit Cost','Amount'],lines)}
-        <div class="control-note"><b>${data.shipments.length} linked expected shipment(s)</b><p>ATLAS uploads must reference this approved purchase order before receiving.</p></div>`);
+        `);
     }catch(error){toast(error.message,'error');}
   });
 }
@@ -5253,7 +5245,7 @@ function approvalWorkflowSection(approvals,editing){
 function specialistLineSection(specialist,editing,immutable,allowed){
   if(!editing||!specialist?.config)return '';
   const config=specialist.config;
-  if(String(config.engine_code||'').startsWith('CORE_'))return `<section class="record-sublist connected-record-section specialist-engine-status"><header><div><h3>Connected Transaction Engine</h3><p>${esc(config.notes||config.engine_code)}</p></div><span>${esc(config.rollout_level)}</span></header><div class="control-note"><b>${esc(config.engine_code)}</b><p>This module uses the dedicated core transaction engine and the connected Finance, inventory, document-flow, approval, and audit controls.</p></div></section>`;
+  if(String(config.engine_code||'').startsWith('CORE_'))return `<section class="record-sublist connected-record-section specialist-engine-status"><header><div><h3>Connected Transaction Engine</h3><p>${esc(config.notes||config.engine_code)}</p></div><span>${esc(config.rollout_level)}</span></header></section>`;
   const lines=specialist.lines||[];
   const rows=lines.map(line=>`<tr><td><b>${esc(line.lineNo||'-')}</b></td><td>${esc(line.lineType||'-')}</td><td>${esc(line.referenceCode||'-')}</td>
     <td>${esc(line.description||'-')}</td><td class="num">${esc(line.quantity??line.hours??'-')}</td><td class="num">${money(line.rate||0)}</td>
@@ -5399,7 +5391,7 @@ function renderRecordForm(record=null,documents=[],connected={}){
 }
 function openRecordChangeRequest(record,actionType){
   modal(`${actionType==='REVERSE'?'Reverse':'Void'} ${record.record_no}`,`<form id="changeRequestForm" class="operational-form grid">
-    <div class="control-note wide"><b>Approval required</b><p>The original record will remain in the audit trail. A different authorized approver must approve this request.</p></div>
+
     <label class="wide"><span>Reason</span><textarea name="reason" required minlength="8" placeholder="Explain why this record must be ${actionType==='REVERSE'?'reversed':'voided'}"></textarea></label>
     <button class="command primary">Submit Approval Request</button>
   </form>`);
@@ -6185,7 +6177,7 @@ init();
     animation:blitzRise .5s cubic-bezier(.2,.8,.25,1) both;color:#eaf2fb}
   /* One padding for every child, the brand block included. */
   .blitz-auth>*{padding-left:28px;padding-right:28px}
-  .blitz-auth>.auth-links{padding-bottom:22px}
+  .blitz-auth>.auth-links{padding-bottom:14px}
   @keyframes blitzRise{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:none}}
   .blitz-auth-brand{text-align:center;padding-top:34px;padding-bottom:4px;color:#fff;position:relative}
   .blitz-auth-brand:after{content:"";position:absolute;left:50%;top:-46px;width:220px;height:110px;
@@ -6230,7 +6222,7 @@ init();
 
   /* Administration is the exception, so it reads as one rather than as half
      of a choice you have to make every morning. */
-  .blitz-scope-note{padding-top:0;padding-bottom:16px;text-align:center}
+  .blitz-scope-note{padding-top:0;padding-bottom:22px;text-align:center}
   .blitz-scope-note button{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;
     border:1px solid rgba(255,255,255,.16);border-radius:999px;background:rgba(255,255,255,.04);
     color:rgba(234,242,251,.72);font-size:12px;cursor:pointer;transition:all .16s ease}
@@ -6238,7 +6230,6 @@ init();
   .blitz-scope-note button .dot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.25)}
   .blitz-scope-note button.on{border-color:var(--blitz-accent);color:#ffe08a;background:rgba(255,196,0,.10)}
   .blitz-scope-note button.on .dot{background:var(--blitz-accent)}
-  .blitz-scope-note small{display:block;margin-top:7px;font-size:10.5px;color:rgba(234,242,251,.42)}
   .blitz-auth.is-admin{border-color:rgba(255,196,0,.34);box-shadow:0 34px 80px rgba(0,0,0,.55),0 0 0 1px rgba(255,196,0,.18)}
 
   .blitz-charge{position:relative;z-index:1;display:flex;gap:5px;justify-content:center;margin-top:14px}
