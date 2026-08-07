@@ -1463,7 +1463,9 @@ await t('nothing raised from the cutoff is called paid without proof', async()=>
   if(s1.json.balance>0.01) throw new Error('balance '+s1.json.balance);
   const held=sqlite.prepare('SELECT status FROM erp_payment_requests WHERE id=?').get(id).status;
   if(held==='PAID') throw new Error('a request from the cutoff was called paid with no proof');
-  if(held!=='PARTIALLY_PAID') throw new Error('unexpected status: '+held);
+  // Settled in full with nothing to show is its own state: the balance is nil,
+  // so calling it part paid would be a lie in the other direction.
+  if(held!=='PAID_UNPROVEN') throw new Error('unexpected status: '+held);
 
   // The proof closes it. A reference counts as proof once somebody puts their
   // name to it, which is what the uploader records.
@@ -1475,6 +1477,8 @@ await t('nothing raised from the cutoff is called paid without proof', async()=>
   if(now!=='PAID') throw new Error('proof did not close the request: '+now);
   const proof=sqlite.prepare('SELECT proof_uploaded_by,proof_reference FROM erp_payment_settlements WHERE id=?').get(sid);
   if(!proof.proof_uploaded_by) throw new Error('the uploader was not recorded');
+  const trail=sqlite.prepare('SELECT COUNT(*) n FROM erp_rfp_proof_of_payment WHERE rfp_ref=(SELECT request_no FROM erp_payment_requests WHERE id=?)').get(id).n;
+  if(!trail) throw new Error('the proof left no trail for the register loader to read');
   // And an empty upload is refused rather than silently accepted.
   const bare=await call('POST',`/api/finance/payment-requests/${id}/settlements/${sid}/proof`,{});
   if(bare.json?.ok) throw new Error('an empty proof upload was accepted');
@@ -1496,6 +1500,163 @@ await t('every request standing as paid carries a settlement', async()=>{
        GROUP BY r.request_no HAVING paid > r.net_payable + 0.01)`).get().n;
   if(over) throw new Error(over+' requests are settled beyond their net payable');
   return {note:'no paid request without a payment, no payment beyond the net payable'};
+});
+
+await t('the proof of payment came out of the sheet with the payment', async()=>{
+  // Every advice hyperlinked in the register is on the record as a document of
+  // its own kind, not mixed in with quotations.
+  const docs=sqlite.prepare(`SELECT COUNT(*) n, COUNT(DISTINCT record_no) rfps
+    FROM erp_attachments WHERE record_type='PAYMENT_PROOF' AND active=1`).get();
+  if(docs.n<200) throw new Error('only '+docs.n+' proof documents loaded');
+  // A request carrying an advice is paid, and the payment points at the advice.
+  const unproved=sqlite.prepare(`SELECT COUNT(*) n FROM erp_attachments a
+    JOIN erp_payment_requests r ON r.request_no=a.record_no
+    WHERE a.record_type='PAYMENT_PROOF' AND a.active=1 AND r.status NOT IN ('PAID','PARTIALLY_PAID')`).get().n;
+  if(unproved) throw new Error(unproved+' requests have an advice but are not paid');
+  const unlinked=sqlite.prepare(`SELECT COUNT(*) n FROM erp_payment_settlements s
+    WHERE s.status<>'VOID' AND s.proof_attachment_id IS NULL
+      AND EXISTS(SELECT 1 FROM erp_attachments a WHERE a.record_type='PAYMENT_PROOF'
+                  AND a.record_no=s.request_no AND a.active=1)`).get().n;
+  if(unlinked) throw new Error(unlinked+' payments have an advice on the record but do not point at it');
+  // The uploader is recorded on every one of them, which is the whole point.
+  const anon=sqlite.prepare(`SELECT COUNT(*) n FROM erp_payment_settlements
+    WHERE proof_attachment_id IS NOT NULL AND COALESCE(proof_uploaded_by,'')=''`).get().n;
+  if(anon) throw new Error(anon+' proofs have nobody against them');
+  // And the down payment is untouched: no advice, still part paid.
+  const x=sqlite.prepare(`SELECT status FROM erp_payment_requests WHERE request_no='RFP-OPS2026-00101'`).get();
+  if(x && x.status!=='PARTIALLY_PAID') throw new Error('the down payment was closed: '+x.status);
+  return {note:docs.n+' advices on '+docs.rfps+' requests, every one linked and attributed'};
+});
+
+await t('the swapping network is its own business line', async()=>{
+  const lines=sqlite.prepare(`SELECT v.line_code, COUNT(*) n, ROUND(SUM(r.net_payable),2) v
+    FROM erp_payment_requests r JOIN v_payment_request_line v ON v.request_no=r.request_no
+    WHERE r.status NOT IN ('REJECTED','CANCELLED') GROUP BY v.line_code ORDER BY v DESC`).all();
+  const by=Object.fromEntries(lines.map(l=>[l.line_code,l]));
+  if(!by.BSS||!by.CORE) throw new Error('expected both lines, got '+lines.map(l=>l.line_code).join(','));
+  if(Number(by.BSS.v)<=0) throw new Error('the swapping line has no spend against it');
+
+  // A station bought on a Supply Chain request is still a station: the account
+  // title has to beat the department, or the network total is understated.
+  const elsewhere=sqlite.prepare(`SELECT COUNT(*) n FROM erp_payment_requests r
+    JOIN v_payment_request_line v ON v.request_no=r.request_no
+    WHERE v.line_code='BSS' AND UPPER(r.department)<>'RIDEBOX'`).get().n;
+  if(!elsewhere) throw new Error('no station spend was found outside the RideBox department');
+
+  // The name tidying: RideBox must be one department, not two spellings.
+  const spellings=sqlite.prepare(`SELECT COUNT(DISTINCT department) n FROM erp_payment_requests
+    WHERE UPPER(TRIM(department))='RIDEBOX'`).get().n;
+  if(spellings!==1) throw new Error('RideBox is still spelled '+spellings+' ways');
+
+  // Building a station and keeping it standing are different costs.
+  const kinds=sqlite.prepare(`SELECT cost_kind, ROUND(SUM(gross_amount),2) v
+    FROM v_bss_cost_kind GROUP BY cost_kind`).all();
+  const kb=Object.fromEntries(kinds.map(k=>[k.cost_kind,Number(k.v)]));
+  if(!(kb.BUILD>0)||!(kb.SITES>0)) throw new Error('build/sites split is empty: '+JSON.stringify(kb));
+
+  // The site rents are small and go to the shops the stations stand in.
+  const hosts=sqlite.prepare(`SELECT r.payee_name p, ROUND(SUM(k.gross_amount),2) v
+    FROM v_bss_cost_kind k JOIN erp_payment_requests r ON r.request_no=k.request_no
+    WHERE k.cost_kind='SITES' GROUP BY r.payee_name ORDER BY v DESC LIMIT 5`).all();
+  if(!hosts.some(h=>/ALFAMART|POWER ?FILL|ENERGIZER/i.test(h.p||'')))
+    throw new Error('no host merchant among the site costs: '+hosts.map(h=>h.p).join(', '));
+
+  // Moving the ceiling moves the rule, which is why it is data and not code.
+  const before=sqlite.prepare(`SELECT COUNT(*) n FROM v_payment_request_line WHERE line_code='BSS'`).get().n;
+  sqlite.prepare(`UPDATE erp_rfp_settings SET value='1' WHERE key='bss_site_cost_ceiling'`).run();
+  const after=sqlite.prepare(`SELECT COUNT(*) n FROM v_payment_request_line WHERE line_code='BSS'`).get().n;
+  sqlite.prepare(`UPDATE erp_rfp_settings SET value='6000' WHERE key='bss_site_cost_ceiling'`).run();
+  if(after>=before) throw new Error('the site cost ceiling had no effect');
+  return {note:`BSS ${by.BSS.n} requests / ${Number(by.BSS.v).toLocaleString()} · `
+    +`build ${kb.BUILD.toLocaleString()} vs sites ${kb.SITES.toLocaleString()} · `
+    +`${elsewhere} station requests raised outside RideBox`};
+});
+
+await t('a redeploy does not settle anything twice or undo a correction', async()=>{
+  /*
+   * Migrations re-run on every deploy. The register loader used to check only
+   * for its own key, so a request settled through the app was settled a second
+   * time on the next deploy, and a payment somebody had voided was deleted and
+   * re-asserted. Both are money bugs, and both are invisible until the deploy.
+   */
+  const rerun=()=>{
+    for(const f of readdirSync(join(ROOT,'migrations'))
+        .filter(f=>/^005[4-7].*\.sql$/.test(f)).sort()){
+      sqlite.exec(readFileSync(join(ROOT,'migrations',f),'utf8'));
+    }
+  };
+
+  // A request paid through the workflow, then the register loader runs again.
+  const mk=await call('POST','/api/finance/payment-requests',{
+    payeeName:'Redeploy Vendor',department:'Operations',purpose:'Once, not twice',
+    requestType:'Payment to Vendor',grossAmount:250000,supplierInvoiceNo:'INV-REDEPLOY-1'});
+  if(!mk.json?.ok) throw new Error(mk.json?.error);
+  const id=mk.json.id, rfp=mk.json.requestNo;
+  sqlite.prepare("UPDATE erp_payment_requests SET net_payable=250000,request_date='2026-02-02' WHERE id=?").run(id);
+  const s1=await call('POST','/api/finance/payment-requests/'+id+'/settlements',
+    {amount:250000,paidDate:'2026-02-10',paymentReference:'BT-REDEPLOY-1'});
+  if(!s1.json?.ok) throw new Error(s1.json?.error);
+
+  rerun();
+  const after=sqlite.prepare(`SELECT COUNT(*) n, ROUND(COALESCE(SUM(amount),0),2) v
+    FROM erp_payment_settlements WHERE request_no=? AND status<>'VOID'`).get(rfp);
+  if(after.n!==1) throw new Error('a redeploy left '+after.n+' payments on '+rfp);
+  if(Math.abs(after.v-250000)>0.01) throw new Error('a redeploy settled '+after.v+' against 250,000');
+
+  // A correction: the import claimed a payment, Finance voided it and recorded
+  // the real one. A redeploy must leave both the void and the correction alone.
+  const imported=sqlite.prepare(`SELECT s.id, s.request_no, r.id rid, r.net_payable
+    FROM erp_payment_settlements s JOIN erp_payment_requests r ON r.id=s.payment_request_id
+    WHERE s.source='REGISTER_IMPORT' AND s.status<>'VOID' AND r.net_payable>1000
+    ORDER BY s.id LIMIT 1`).get();
+  if(imported){
+    const v=await call('POST',`/api/finance/payment-requests/${imported.rid}/settlements/${imported.id}/void`,
+      {reason:'Only part of this moved'});
+    if(!v.json?.ok) throw new Error(v.json?.error);
+    const part=Math.round(imported.net_payable*0.4*100)/100;
+    const s2=await call('POST','/api/finance/payment-requests/'+imported.rid+'/settlements',
+      {amount:part,paidDate:'2026-06-01',paymentReference:'BT-CORRECTION'});
+    if(!s2.json?.ok) throw new Error(s2.json?.error);
+
+    rerun();
+    const voided=sqlite.prepare('SELECT status,void_reason FROM erp_payment_settlements WHERE id=?').get(imported.id);
+    if(!voided) throw new Error('the redeploy deleted the voided payment and its reason with it');
+    if(voided.status!=='VOID') throw new Error('the redeploy un-voided a payment');
+    if(!voided.void_reason) throw new Error('the reason for the void was lost');
+    const live=sqlite.prepare(`SELECT COUNT(*) n, ROUND(COALESCE(SUM(amount),0),2) v
+      FROM erp_payment_settlements WHERE request_no=? AND status<>'VOID'`).get(imported.request_no);
+    if(live.n!==1||Math.abs(live.v-part)>0.01)
+      throw new Error(`the redeploy re-asserted the import: ${live.n} payments totalling ${live.v}`);
+    const st=sqlite.prepare('SELECT status FROM erp_payment_requests WHERE id=?').get(imported.rid).status;
+    if(st!=='PARTIALLY_PAID') throw new Error('the redeploy put the corrected request back to '+st);
+  }
+  return {note:'no double settlement, no resurrected import, the void and its reason survive'};
+});
+
+await t('closing a payment is a Finance act, and settles only the balance', async()=>{
+  const mk=await call('POST','/api/finance/payment-requests',{
+    payeeName:'Confirm Vendor',department:'Operations',purpose:'Confirm path',
+    requestType:'Payment to Vendor',grossAmount:120000,supplierInvoiceNo:'INV-CONFIRM-1'});
+  if(!mk.json?.ok) throw new Error(mk.json?.error);
+  const id=mk.json.id, rfp=mk.json.requestNo;
+  sqlite.prepare("UPDATE erp_payment_requests SET net_payable=120000,request_date='2026-03-03',status='PAYMENT_PREPARED' WHERE id=?").run(id);
+  // Part paid already: confirming must record what is left, not the whole thing.
+  sqlite.prepare(`INSERT INTO erp_payment_settlements(request_no,payment_request_id,amount,paid_date,
+    source,recorded_by,natural_key) VALUES(?,?,?,?,'SYSTEM',?,?)`)
+    .run(rfp,id,50000,'2026-03-04','mmungcal@nrdev.ph','TEST:'+rfp);
+
+  // Somebody without Finance cannot close it.
+  sqlite.prepare("UPDATE erp_users SET role_code='STAFF' WHERE email='mmungcal@nrdev.ph'").run();
+  const nope=await call('POST','/api/finance/payment-requests/'+id+'/action',
+    {action:'CONFIRM_PAID',proofReference:'anything'});
+  sqlite.prepare("UPDATE erp_users SET role_code='FINANCE' WHERE email='mmungcal@nrdev.ph'").run();
+  if(nope.json?.ok) throw new Error('a non-Finance user closed a payment');
+  if(!/finance/i.test(nope.json.error||'')) throw new Error('wrong refusal: '+nope.json.error);
+
+  const total=sqlite.prepare(`SELECT ROUND(COALESCE(SUM(amount),0),2) v FROM erp_payment_settlements
+    WHERE request_no=? AND status<>'VOID'`).get(rfp).v;
+  if(Math.abs(total-50000)>0.01) throw new Error('the refused action still moved money: '+total);
+  return {note:'Finance only; the part already paid is not recorded again'};
 });
 
 console.log('\n=== Blitz - ERP end-to-end ===');

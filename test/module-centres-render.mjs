@@ -125,7 +125,7 @@ const check = (name, ok, note='') => results.push([ok?'PASS':'FAIL', name, note]
 const browser = await chromium.launch({ executablePath:'/opt/pw-browsers/chromium' });
 const page = await browser.newPage({ viewport:{ width:1440, height:960 } });
 const errors = [];
-page.on('pageerror', e=>errors.push(String(e)));
+page.on('pageerror', e=>errors.push(String(e)+' :: '+String(e.stack||'').split('\n').slice(0,3).join(' | ')));
 page.on('console', m=>{ if (m.type()==='error') errors.push('console: '+m.text()); });
 await page.goto(base, { waitUntil:'networkidle' });
 

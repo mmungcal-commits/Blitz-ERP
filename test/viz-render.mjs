@@ -440,6 +440,52 @@ check('the fallback does not loop',
 await broken.close();
 breakHome = false;
 
+// Back to the dashboard: the checks above walked into a module.
+await page.goto(base, { waitUntil:'networkidle' });
+await page.waitForSelector('.home-grid > .viz', { timeout:8000 });
+
+/*
+ * The dashboard is arrangeable. Which number matters most is not the same
+ * question every week, so the cards move and the order is remembered. Keys
+ * rather than positions, or adding a card would shuffle everything below it.
+ */
+const keys = await page.evaluate(()=>[...document.querySelectorAll('.home-grid > .viz')]
+  .map(c=>c.dataset.vizKey));
+check('every card carries a key that survives a re-render',
+  keys.length > 2 && keys.every(k=>k && /^[a-z0-9-]+$/.test(k)), keys.slice(0,4).join(', '));
+check('the keys are distinct', new Set(keys).size === keys.length, keys.length+' cards');
+check('the cards say they can be moved',
+  await page.locator('.home-grid > .viz.viz-movable').count() === keys.length);
+check('there is a way back to the order it shipped with',
+  await page.locator('#homeResetLayout').count() === 1);
+
+// Move the last card to the front with the keyboard, which is also the path
+// anyone not using a mouse has to take.
+await page.locator('.home-grid > .viz').last().focus();
+for (let i = 0; i < keys.length - 1; i += 1)
+  await page.keyboard.press('Alt+ArrowLeft');
+const moved = await page.evaluate(()=>[...document.querySelectorAll('.home-grid > .viz')]
+  .map(c=>c.dataset.vizKey));
+check('a card can be moved to the front', moved[0] === keys[keys.length-1],
+  `${moved[0]} vs ${keys[keys.length-1]}`);
+check('the order is written down',
+  await page.evaluate(()=>{ try{ const v=JSON.parse(localStorage.getItem('blitz-home-layout')||'[]');
+    return Array.isArray(v) && v.length > 2; }catch(e){ return false; } }));
+
+// And it survives a reload, which is the whole point of remembering it.
+await page.reload({ waitUntil:'networkidle' });
+await page.waitForSelector('.home-grid > .viz', { timeout:8000 });
+const after = await page.evaluate(()=>[...document.querySelectorAll('.home-grid > .viz')]
+  .map(c=>c.dataset.vizKey));
+check('the arrangement survives a reload', after[0] === moved[0], `${after[0]} vs ${moved[0]}`);
+
+// Reset puts it back rather than leaving the person stuck with their own mess.
+await page.locator('#homeResetLayout').click();
+await page.waitForTimeout(600);
+const reset = await page.evaluate(()=>[...document.querySelectorAll('.home-grid > .viz')]
+  .map(c=>c.dataset.vizKey));
+check('reset restores the order it shipped with', reset[0] === keys[0], `${reset[0]} vs ${keys[0]}`);
+
 await page.screenshot({ path:SHOTS+'viz-cockpit.png', fullPage:false });
 
 // And the same cockpit on a phone.
