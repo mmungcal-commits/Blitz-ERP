@@ -183,11 +183,26 @@ dashboardRoutes.get('/home', async (c) => {
         WHERE document_type IN ${AR} AND status<>'CANCELLED' AND open_balance>0
         GROUP BY label`),
     ]);
+    /*
+     * "Pending approval" means an RFP sitting in the chain - submitted, not yet
+     * paid or rejected. A draft is not pending anybody; it is still being
+     * written. Counting drafts would inflate the number Finance manages to.
+     */
+    const RFP_PENDING = `('SUBMITTED','DEPARTMENT_APPROVED','FINANCE_REVIEWED','FINANCE_VALIDATED','MANCOM_APPROVED','APPROVED','FOR_APPROVAL')`;
+    const [rfpPending, rfpMine] = await Promise.all([
+      first(db, `SELECT COUNT(*) n, COALESCE(SUM(gross_amount),0) v FROM erp_payment_requests
+        WHERE status IN ${RFP_PENDING}`),
+      first(db, `SELECT COUNT(*) n FROM erp_payment_requests WHERE status='FINANCE_REVIEWED'`),
+    ]);
+
     const billedV = Number(billed?.v || 0);
     const openV = Number(outstanding?.v || 0);
     const collected = Math.max(0, billedV - openV);
     sections.management = {
       period: { from, to },
+      pendingApprovals: Number(rfpPending?.n || 0),
+      pendingApprovalValue: Number(rfpPending?.v || 0),
+      pendingMine: Number(rfpMine?.n || 0),
       availableUnits: Number(units?.available || 0),
       leasedUnits: Number(units?.leased || 0),
       soldUnits: Number(units?.sold || 0),
