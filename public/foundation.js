@@ -1,4 +1,4 @@
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R18.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R18.1';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
