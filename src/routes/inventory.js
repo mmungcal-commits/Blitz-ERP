@@ -27,6 +27,108 @@ inventoryRoutes.get('/', requirePermission('INVENTORY','VIEW'), async(c)=>{
   return ok(c,{rows,page,size,total:total?.n||0});
 });
 
+/*
+ * What actually governs an inventory module.
+ *
+ * These screens used to name the concepts a module works with and stop there.
+ * A name is not a control: it cannot tell you whether anything is on hand
+ * against it, whether a count found the units, or whether a location has ever
+ * been used. So each panel counts real rows, and an empty one is a finding.
+ */
+inventoryRoutes.get('/module-setup/:code', requirePermission('INVENTORY','VIEW'), async c => {
+  const code = normalizeText(c.req.param('code'));
+  const out = { code, panels: [] };
+  const panel = (title, columns, rows, note) => out.panels.push({ title, columns, rows, note });
+  const attempt = async fn => { try { return await fn(); } catch { return []; } };
+
+  if (code === 'ip-cycle-counting') {
+    // The vocabulary, with the number of times each has actually happened.
+    const variance = await attempt(() => all(c.env.DB, `SELECT variance_type label, COUNT(*) n,
+        COUNT(CASE WHEN status='OPEN' THEN 1 END) open,
+        COUNT(CASE WHEN status='CLEARED' THEN 1 END) cleared
+      FROM erp_cycle_count_variances GROUP BY label ORDER BY n DESC`));
+    panel('Variance types found on counts', ['Type', 'Raised', 'Open', 'Cleared'],
+      variance.map(v => [String(v.label || '').replace(/_/g, ' '), v.n, v.open, v.cleared]),
+      variance.length ? 'A type with nothing against it has never been raised on a count.'
+        : 'No count has raised a variance yet.');
+    const plans = await attempt(() => all(c.env.DB, `SELECT status label, COUNT(*) n,
+        COALESCE(SUM(expected_units),0) expected, COALESCE(SUM(counted_units),0) counted
+      FROM erp_cycle_counts GROUP BY label ORDER BY n DESC`));
+    panel('Count plans by state', ['State', 'Plans', 'Expected units', 'Counted'],
+      plans.map(p => [p.label, p.n, p.expected, p.counted]));
+    const chain = await attempt(() => all(c.env.DB, `SELECT step_no, role, COUNT(*) n,
+        COUNT(CASE WHEN status='PENDING' THEN 1 END) pending
+      FROM erp_cycle_count_approvals GROUP BY step_no, role ORDER BY step_no`));
+    panel('Who signs a count off', ['Step', 'Role', 'Signatures', 'Still pending'],
+      chain.map(x => [x.step_no, String(x.role || '').replace(/_/g, ' '), x.n, x.pending]),
+      'Submit signs the first step. Only Finance posts.');
+    const locations = await attempt(() => all(c.env.DB, `SELECT COALESCE(NULLIF(location_name,''),location_code) label,
+        COUNT(*) plans, MAX(count_date) last FROM erp_cycle_counts GROUP BY label ORDER BY last DESC LIMIT 30`));
+    panel('Locations counted', ['Location', 'Counts', 'Last counted'],
+      locations.map(l => [l.label, l.plans, l.last]));
+  }
+
+  if (code === 'ip-inventory-analysis' || code === 'ip-warehouse-management') {
+    const sources = [];
+    const onHand = await attempt(() => first(c.env.DB, `SELECT COUNT(*) n FROM erp_assets WHERE active=1`));
+    const incoming = await attempt(() => first(c.env.DB,
+      `SELECT COALESCE(SUM(expected_qty-COALESCE(received_qty,0)),0) n FROM erp_shipments
+       WHERE status NOT IN ('RECEIVED','CANCELLED')`));
+    const openPo = await attempt(() => first(c.env.DB,
+      `SELECT COALESCE(SUM(l.ordered_qty-COALESCE(l.received_qty,0)),0) n
+       FROM erp_purchase_order_lines l JOIN erp_purchase_orders p ON p.id=l.purchase_order_id
+       WHERE p.status IN ('APPROVED','PARTIALLY_RECEIVED')`));
+    const deployed = await attempt(() => first(c.env.DB,
+      `SELECT COUNT(*) n FROM erp_assets WHERE active=1 AND current_holder_name IS NOT NULL AND current_holder_name<>''`));
+    sources.push(['On hand', 'Confirmed by goods receipt, by serial and location', Number(onHand?.n || 0)]);
+    sources.push(['Incoming', 'On an expected shipment and not yet received', Number(incoming?.n || 0)]);
+    sources.push(['Open purchase order', 'Approved and not yet shipped', Number(openPo?.n || 0)]);
+    sources.push(['Deployed', 'With a customer, site, employee or station', Number(deployed?.n || 0)]);
+    panel('Where planning gets its numbers', ['Source', 'What it counts', 'Units'], sources);
+
+    const byClass = await attempt(() => all(c.env.DB, `SELECT COALESCE(NULLIF(category,''),'Unclassified') label,
+        COUNT(*) units, COUNT(CASE WHEN COALESCE(unit_cost,0)<=0 THEN 1 END) unvalued,
+        ROUND(SUM(COALESCE(unit_cost,0)),2) value FROM erp_assets WHERE active=1
+      GROUP BY label ORDER BY units DESC`));
+    panel('Stock by class', ['Class', 'Units', 'Without a cost', 'Value'],
+      byClass.map(x => [x.label, x.units, x.unvalued, x.value]),
+      byClass.some(x => x.unvalued > 0) ? 'Units with no cost cannot be valued or capitalised.' : '');
+
+    const statuses = await attempt(() => all(c.env.DB, `SELECT COALESCE(NULLIF(current_status,''),'(not set)') label,
+        COUNT(*) units FROM erp_assets WHERE active=1 GROUP BY label ORDER BY units DESC`));
+    panel('Unit states in use', ['Status', 'Units'], statuses.map(x => [x.label, x.units]));
+
+    const locations = await attempt(() => all(c.env.DB, `SELECT l.code, l.name, l.location_type,
+        (SELECT COUNT(*) FROM erp_assets a WHERE a.current_location_id=l.id AND a.active=1) units
+      FROM erp_locations l WHERE l.active=1 ORDER BY units DESC, l.code LIMIT 40`));
+    panel('Locations holding stock', ['Code', 'Location', 'Type', 'Units'],
+      locations.map(l => [l.code, l.name, l.location_type, l.units]),
+      'A location with no units has been set up but never used.');
+  }
+
+  if (code === 'ip-inbound-logistics') {
+    const shipments = await attempt(() => all(c.env.DB, `SELECT status label, COUNT(*) n,
+        COALESCE(SUM(expected_qty),0) expected, COALESCE(SUM(received_qty),0) received
+      FROM erp_shipments GROUP BY label ORDER BY n DESC`));
+    panel('Shipments by state', ['State', 'Shipments', 'Expected', 'Received'],
+      shipments.map(s => [s.label, s.n, s.expected, s.received]));
+    const variances = await attempt(() => all(c.env.DB, `SELECT variance_type label, COUNT(*) n,
+        COUNT(CASE WHEN status='OPEN' THEN 1 END) open FROM erp_receiving_variances
+      GROUP BY label ORDER BY n DESC`));
+    panel('Receiving discrepancies', ['Type', 'Raised', 'Still open'],
+      variances.map(v => [String(v.label || '').replace(/_/g, ' '), v.n, v.open]),
+      variances.length ? 'Only Finance clears one, and somebody else acknowledges it.'
+        : 'Every shipment received so far has matched its manifest.');
+    const vendors = await attempt(() => all(c.env.DB, `SELECT vendor_name label, COUNT(*) orders,
+        ROUND(SUM(total_amount),2) value FROM erp_purchase_orders
+      WHERE status IN ('APPROVED','PARTIALLY_RECEIVED','RECEIVED') GROUP BY label ORDER BY value DESC LIMIT 30`));
+    panel('Suppliers under commitment', ['Supplier', 'Orders', 'Committed'],
+      vendors.map(v => [v.label, v.orders, v.value]));
+  }
+
+  return ok(c, out);
+});
+
 inventoryRoutes.get('/by-class', requirePermission('INVENTORY','VIEW'), async(c)=>{
   const rows=await all(c.env.DB,`
     SELECT class_code cls,class_name,COUNT(DISTINCT item_id) item_count,

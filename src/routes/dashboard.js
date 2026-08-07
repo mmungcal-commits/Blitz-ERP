@@ -204,11 +204,45 @@ dashboardRoutes.get('/home', async (c) => {
      * written. Counting drafts would inflate the number Finance manages to.
      */
     const RFP_PENDING = `('SUBMITTED','DEPARTMENT_APPROVED','FINANCE_REVIEWED','FINANCE_VALIDATED','MANCOM_APPROVED','APPROVED','FOR_APPROVAL')`;
-    const [rfpPending, rfpMine] = await Promise.all([
+    const [rfpPending, rfpMine, rfpRaised, rfpPaid, slaRows, slaTarget] = await Promise.all([
       first(db, `SELECT COUNT(*) n, COALESCE(SUM(gross_amount),0) v FROM erp_payment_requests
         WHERE status IN ${RFP_PENDING}`),
       first(db, `SELECT COUNT(*) n FROM erp_payment_requests WHERE status='FINANCE_REVIEWED'`),
+      // What the company was asked to pay in the period, and what it paid.
+      first(db, `SELECT COUNT(*) n, COALESCE(SUM(net_payable),0) v FROM erp_payment_requests
+        WHERE status<>'REJECTED' AND status<>'CANCELLED' AND request_date BETWEEN ? AND ?`, [from, to]),
+      first(db, `SELECT COUNT(*) n, COALESCE(SUM(net_payable),0) v FROM erp_payment_requests
+        WHERE status='PAID' AND request_date BETWEEN ? AND ?`, [from, to]),
+      all(db, `SELECT request_date, paid_at FROM erp_payment_requests
+        WHERE status='PAID' AND paid_at IS NOT NULL AND paid_at<>''
+          AND request_date BETWEEN ? AND ?`, [from, to]),
+      first(db, `SELECT target_days FROM erp_service_levels WHERE code='RFP_PAYMENT'`).catch(() => null),
     ]);
+
+    /*
+     * Finance works to a service level: a vendor is paid within ten banking days
+     * of the request. Banking days means weekdays - Philippine public holidays
+     * are not in the system, so a run of holidays flatters the figure slightly,
+     * and it is better to say so than to pretend a calendar we do not have.
+     */
+    const bankingDays = (a, b) => {
+      const d1 = new Date(String(a).slice(0, 10) + 'T00:00:00Z');
+      const d2 = new Date(String(b).slice(0, 10) + 'T00:00:00Z');
+      if (Number.isNaN(d1.getTime()) || Number.isNaN(d2.getTime()) || d2 < d1) return null;
+      let days = 0;
+      const cur = new Date(d1);
+      while (cur < d2) {
+        cur.setUTCDate(cur.getUTCDate() + 1);
+        const day = cur.getUTCDay();
+        if (day !== 0 && day !== 6) days += 1;
+      }
+      return days;
+    };
+    const targetDays = Number(slaTarget?.target_days) || 10;
+    const measured = (slaRows || []).map(r => bankingDays(r.request_date, r.paid_at)).filter(d => d != null);
+    const withinSla = measured.filter(d => d <= targetDays).length;
+    const raisedV = Number(rfpRaised?.v || 0);
+    const paidV = Number(rfpPaid?.v || 0);
 
     const billedV = Number(billed?.v || 0);
     const collectedValue = Math.min(billedV, Number(collected?.v || 0));
@@ -229,6 +263,20 @@ dashboardRoutes.get('/home', async (c) => {
       receivablesPct: billedV > 0 ? (openV / billedV) * 100 : null,
       overdue: Number(overdue?.v || 0), overdueCount: Number(overdue?.n || 0),
       aging: aging || [],
+
+      // The payable side of the same question: what was asked for, what went out.
+      payableRaised: raisedV, payableRaisedCount: Number(rfpRaised?.n || 0),
+      payablePaid: paidV, payablePaidCount: Number(rfpPaid?.n || 0),
+      payableOutstanding: Math.max(0, Math.round((raisedV - paidV) * 100) / 100),
+      payablePct: raisedV > 0 ? (paidV / raisedV) * 100 : null,
+
+      slaTargetDays: targetDays,
+      slaMeasured: measured.length,
+      slaWithin: withinSla,
+      slaPct: measured.length ? (withinSla / measured.length) * 100 : null,
+      slaAvgDays: measured.length
+        ? Math.round((measured.reduce((s2, d) => s2 + d, 0) / measured.length) * 10) / 10 : null,
+      slaWorstDays: measured.length ? Math.max(...measured) : null,
     };
   });
 

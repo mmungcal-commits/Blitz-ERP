@@ -25,9 +25,20 @@ const STREAMS = {
   MC_SOLD:'Motorcycle sold', MC_LEASED:'Motorcycle leased', BATTERY_SWAP:'Battery swapping',
   AFTERSALES:'After-sales', WAREHOUSE_SERVICE:'Warehouse service',
 };
+/*
+ * Two different rights, because Finance is two different jobs here.
+ *
+ * The checker records and corrects: she enters what came in and puts the
+ * paperwork straight. She does not commit anything - posting an entry or a
+ * collection moves money into the books and a bank balance with it, and that
+ * belongs to the head of Finance. It is the same line the RFP chain draws
+ * between checking a request and approving it.
+ */
 const FINANCE_ROLES = ['FINANCE','FINANCE_MANAGER','CONTROLLER','ACCOUNTING'];
-const isFinance = c => FINANCE_ROLES.includes(
-  String(c.get('erpUser').role_code || c.get('erpUser').role || '').toUpperCase());
+const FINANCE_STAFF = FINANCE_ROLES.concat(['FINANCE_REVIEWER']);
+const roleOf = c => String(c.get('erpUser').role_code || c.get('erpUser').role || '').toUpperCase();
+const isFinance = c => FINANCE_ROLES.includes(roleOf(c));
+const isFinanceStaff = c => FINANCE_STAFF.includes(roleOf(c));
 
 // VAT is derived, never typed twice: gross and rate decide net and output VAT,
 // so the register can never hold a row whose parts do not add up.
@@ -119,7 +130,10 @@ receivableRoutes.post('/collections', requirePermission('RECEIVABLES','CREATE'),
 });
 
 // Editable while draft. A posted row is history, and history is not edited.
+// Editing is Finance's: the people who raise entries can raise them, and the
+// people who answer for the figures are the ones who change them.
 receivableRoutes.patch('/collections/:id', requirePermission('RECEIVABLES','EDIT'), async c => {
+  if (!isFinanceStaff(c)) return fail(c, 'Only Finance can edit an entry on the sales register.', 403);
   const id = Number(c.req.param('id'));
   const b = await jsonBody(c);
   const before = await first(c.env.DB, `SELECT * FROM erp_ar_collections WHERE id=?`, [id]);
@@ -222,12 +236,19 @@ receivableRoutes.get('/collections/:id/receipts', requirePermission('RECEIVABLES
   const row = await first(c.env.DB, `SELECT c.*, ${COLLECTED} collected,
       c.gross_amount - ${COLLECTED} balance FROM erp_ar_collections c WHERE c.id=?`, [id]);
   if (!row) return fail(c, 'Entry not found', 404);
-  const receipts = await all(c.env.DB, `SELECT * FROM erp_ar_receipts WHERE collection_id=?
-    ORDER BY receipt_date DESC, id DESC`, [id]);
+  const receipts = await all(c.env.DB, `SELECT r.*,
+      COALESCE(p.status,'RECORDED') posting_status, p.posted_at, p.posted_by,
+      p.bank_transaction_id, b.bank_account_code, b.bank_name
+    FROM erp_ar_receipts r
+    LEFT JOIN erp_ar_receipt_postings p ON p.receipt_id=r.id
+    LEFT JOIN erp_bank_accounts b ON b.id=p.bank_account_id
+    WHERE r.collection_id=? ORDER BY r.receipt_date DESC, r.id DESC`, [id]);
   return ok(c, { collection: row, receipts });
 });
 
 receivableRoutes.post('/collections/:id/collect', requirePermission('RECEIVABLES','EDIT'), async c => {
+  // Anyone in the business enters the sale. Only Finance says money arrived.
+  if (!isFinanceStaff(c)) return fail(c, 'Only Finance can record a collection.', 403);
   const id = Number(c.req.param('id'));
   const b = await jsonBody(c);
   const row = await first(c.env.DB, `SELECT c.*, ${COLLECTED} collected FROM erp_ar_collections c
@@ -284,6 +305,206 @@ receivableRoutes.post('/receipts/:id/void', requirePermission('RECEIVABLES','POS
   await audit(c, { action:'VOID', module:'FINANCE', recordType:'AR_RECEIPT',
     recordId:id, recordNo:row.receipt_no, before:row, after:{ reason } });
   return ok(c, { voided: row.receipt_no, reason });
+});
+
+
+/* ----------------------------------------------------- the collection book */
+/*
+ * Every collection on the register, in one place, because Finance works the
+ * money that came in as a queue rather than entry by entry. A collection is
+ * recorded first and posted second: recording says it arrived, posting says it
+ * is in the bank, and only the second one moves a balance.
+ */
+receivableRoutes.get('/receipts', requirePermission('RECEIVABLES','VIEW'), async c => {
+  const { page, size, offset } = pageParams(c);
+  const state = normalizeText(c.req.query('state')).toUpperCase();
+  const from = normalizeText(c.req.query('from'));
+  const to = normalizeText(c.req.query('to'));
+  const q = `%${normalizeText(c.req.query('q'))}%`;
+  const w = ["r.status='ACTIVE'"]; const args = [];
+  if (from) { w.push('r.receipt_date>=?'); args.push(from); }
+  if (to) { w.push('r.receipt_date<=?'); args.push(to); }
+  if (q !== '%%') { w.push('(c2.customer_name LIKE ? OR r.receipt_no LIKE ? OR r.entry_no LIKE ? OR r.bank_ref LIKE ?)');
+    args.push(q, q, q, q); }
+  if (state === 'RECORDED') w.push('p.receipt_id IS NULL');
+  if (state === 'POSTED') w.push("p.status='POSTED'");
+  const where = `WHERE ${w.join(' AND ')}`;
+  const FROM = `FROM erp_ar_receipts r
+    JOIN erp_ar_collections c2 ON c2.id=r.collection_id
+    LEFT JOIN erp_ar_receipt_postings p ON p.receipt_id=r.id
+    LEFT JOIN erp_bank_accounts b ON b.id=p.bank_account_id`;
+  const rows = await all(c.env.DB, `SELECT r.*, c2.customer_name, c2.stream, c2.gross_amount entry_gross,
+      COALESCE(p.status,'RECORDED') posting_status, p.posted_at, p.posted_by,
+      b.bank_account_code, b.bank_name
+    ${FROM} ${where} ORDER BY r.receipt_date DESC, r.id DESC LIMIT ? OFFSET ?`, [...args, size, offset]);
+  const totals = await first(c.env.DB, `SELECT COUNT(*) n,
+      COALESCE(SUM(r.amount),0) total,
+      COALESCE(SUM(CASE WHEN p.receipt_id IS NULL THEN r.amount END),0) recorded,
+      COALESCE(SUM(CASE WHEN p.status='POSTED' THEN r.amount END),0) posted,
+      COUNT(CASE WHEN p.receipt_id IS NULL THEN 1 END) recordedCount
+    ${FROM} ${where}`, args);
+  const byMethod = await all(c.env.DB, `SELECT COALESCE(NULLIF(r.payment_method,''),'Unspecified') label,
+      COALESCE(SUM(r.amount),0) value ${FROM} ${where} GROUP BY label ORDER BY value DESC`, args);
+  const byBank = await all(c.env.DB, `SELECT COALESCE(NULLIF(r.bank_wallet,''),'Unassigned') label,
+      COALESCE(SUM(r.amount),0) value ${FROM} ${where} GROUP BY label ORDER BY value DESC`, args);
+  return ok(c, { rows, page, size, total: Number(totals?.n || 0), totals, byMethod, byBank });
+});
+
+/*
+ * Which bank account a collection lands in. The register names a wallet in the
+ * words Finance uses; the alias table turns that into an account. A name nobody
+ * has mapped is refused rather than guessed - money posted to the wrong account
+ * is worse than money not posted yet.
+ */
+async function bankAccountFor(db, receipt) {
+  const name = normalizeText(receipt.bank_wallet) || normalizeText(receipt.payment_method);
+  if (!name) return { error: 'This collection does not say which bank or wallet it went into.' };
+  const alias = await first(db, `SELECT bank_account_code FROM erp_bank_aliases WHERE upper(alias)=upper(?)`, [name]);
+  const code = alias?.bank_account_code || name;
+  const account = await first(db, `SELECT * FROM erp_bank_accounts WHERE upper(bank_account_code)=upper(?) AND active=1`, [code]);
+  if (!account) return { error: `No bank account is set up for "${name}". Add it under Accounts & Periods, or map the name in the bank aliases.` };
+  return { account };
+}
+
+receivableRoutes.post('/receipts/:id/post', requirePermission('RECEIVABLES','POST'), async c => {
+  if (!isFinance(c)) return fail(c, 'Only Finance can post a collection.', 403);
+  const id = Number(c.req.param('id'));
+  const receipt = await first(c.env.DB, `SELECT r.*, c2.customer_name, c2.entry_no coll_entry_no
+    FROM erp_ar_receipts r JOIN erp_ar_collections c2 ON c2.id=r.collection_id WHERE r.id=?`, [id]);
+  if (!receipt) return fail(c, 'Collection not found', 404);
+  if (receipt.status !== 'ACTIVE') return fail(c, 'A reversed collection cannot be posted.', 409);
+  const already = await first(c.env.DB, `SELECT * FROM erp_ar_receipt_postings WHERE receipt_id=?`, [id]);
+  if (already && already.status === 'POSTED')
+    return fail(c, `${receipt.receipt_no} was already posted on ${String(already.posted_at || '').slice(0,10)}.`, 409);
+
+  const resolved = await bankAccountFor(c.env.DB, receipt);
+  if (resolved.error) return fail(c, resolved.error, 409);
+  const account = resolved.account;
+  const amount = round2(receipt.amount);
+
+  // The bank register is a ledger, so a deposit carries the balance it left the
+  // account at. Taken from the last movement rather than a stored total, which
+  // is what stops the two disagreeing.
+  const last = await first(c.env.DB, `SELECT running_balance FROM erp_bank_transactions
+    WHERE bank_account_id=? ORDER BY transaction_date DESC, id DESC LIMIT 1`, [account.id]);
+  const opening = last?.running_balance != null ? Number(last.running_balance) : Number(account.opening_balance || 0);
+  const running = round2(opening + amount);
+  const reference = normalizeText(receipt.bank_ref) || normalizeText(receipt.or_no) || receipt.receipt_no;
+
+  let txnId = null;
+  try {
+    const t = await run(c.env.DB, `INSERT INTO erp_bank_transactions(bank_account_id,transaction_date,value_date,
+        bank_reference,description,direction,amount,running_balance,import_batch,status)
+      VALUES(?,?,?,?,?,'CREDIT',?,?,?,'MATCHED')`,
+      [account.id, receipt.receipt_date, normalizeText(receipt.settlement_date) || receipt.receipt_date,
+       reference, `Collection ${receipt.receipt_no} from ${receipt.customer_name || 'customer'} against ${receipt.entry_no || ''}`.trim(),
+       amount, running, 'AR_COLLECTION']);
+    txnId = t.meta.last_row_id;
+  } catch (error) {
+    // The bank register refuses the same movement twice on purpose.
+    if (/UNIQUE/i.test(String(error && error.message)))
+      return fail(c, 'That deposit is already on the bank register for this account, date and reference.', 409);
+    throw error;
+  }
+
+  await run(c.env.DB, `INSERT OR REPLACE INTO erp_ar_receipt_postings(receipt_id,status,bank_account_id,
+      bank_transaction_id,posted_amount,posted_by,posted_at) VALUES(?,'POSTED',?,?,?,?,datetime('now'))`,
+    [id, account.id, txnId, amount, c.get('erpUser').email]);
+  await run(c.env.DB, `UPDATE erp_ar_receipts SET cleared_status='CLEARED',updated_at=datetime('now') WHERE id=?`, [id]);
+  await audit(c, { action:'POST', module:'FINANCE', recordType:'AR_RECEIPT', recordId:id,
+    recordNo:receipt.receipt_no, after:{ bank:account.bank_account_code, amount, runningBalance:running } });
+  return ok(c, { posted: receipt.receipt_no, bank: account.bank_account_code,
+    bankName: account.bank_name, amount, runningBalance: running, bankTransactionId: txnId });
+});
+
+// Posting in bulk is the normal case: a day of receipts is checked together.
+receivableRoutes.post('/receipts/post', requirePermission('RECEIVABLES','POST'), async c => {
+  if (!isFinance(c)) return fail(c, 'Only Finance can post a collection.', 403);
+  const b = await jsonBody(c);
+  const ids = (Array.isArray(b.ids) ? b.ids : [b.id]).map(Number).filter(Boolean);
+  if (!ids.length) return fail(c, 'Select at least one collection to post.');
+  const posted = []; const skipped = [];
+  for (const id of ids) {
+    const receipt = await first(c.env.DB, `SELECT r.*, c2.customer_name FROM erp_ar_receipts r
+      JOIN erp_ar_collections c2 ON c2.id=r.collection_id WHERE r.id=?`, [id]);
+    if (!receipt) { skipped.push({ id, reason:'not found' }); continue; }
+    if (receipt.status !== 'ACTIVE') { skipped.push({ id, receiptNo:receipt.receipt_no, reason:'reversed' }); continue; }
+    const already = await first(c.env.DB, `SELECT status FROM erp_ar_receipt_postings WHERE receipt_id=?`, [id]);
+    if (already && already.status === 'POSTED') { skipped.push({ id, receiptNo:receipt.receipt_no, reason:'already posted' }); continue; }
+    const resolved = await bankAccountFor(c.env.DB, receipt);
+    if (resolved.error) { skipped.push({ id, receiptNo:receipt.receipt_no, reason:'no bank account for ' + (receipt.bank_wallet || receipt.payment_method || 'blank') }); continue; }
+    const account = resolved.account;
+    const amount = round2(receipt.amount);
+    const last = await first(c.env.DB, `SELECT running_balance FROM erp_bank_transactions
+      WHERE bank_account_id=? ORDER BY transaction_date DESC, id DESC LIMIT 1`, [account.id]);
+    const opening = last?.running_balance != null ? Number(last.running_balance) : Number(account.opening_balance || 0);
+    const running = round2(opening + amount);
+    const reference = normalizeText(receipt.bank_ref) || normalizeText(receipt.or_no) || receipt.receipt_no;
+    try {
+      const t = await run(c.env.DB, `INSERT INTO erp_bank_transactions(bank_account_id,transaction_date,value_date,
+          bank_reference,description,direction,amount,running_balance,import_batch,status)
+        VALUES(?,?,?,?,?,'CREDIT',?,?,?,'MATCHED')`,
+        [account.id, receipt.receipt_date, normalizeText(receipt.settlement_date) || receipt.receipt_date,
+         reference, `Collection ${receipt.receipt_no} from ${receipt.customer_name || 'customer'}`,
+         amount, running, 'AR_COLLECTION']);
+      await run(c.env.DB, `INSERT OR REPLACE INTO erp_ar_receipt_postings(receipt_id,status,bank_account_id,
+          bank_transaction_id,posted_amount,posted_by,posted_at) VALUES(?,'POSTED',?,?,?,?,datetime('now'))`,
+        [id, account.id, t.meta.last_row_id, amount, c.get('erpUser').email]);
+      await run(c.env.DB, `UPDATE erp_ar_receipts SET cleared_status='CLEARED',updated_at=datetime('now') WHERE id=?`, [id]);
+      posted.push(receipt.receipt_no);
+    } catch (error) {
+      skipped.push({ id, receiptNo:receipt.receipt_no,
+        reason: /UNIQUE/i.test(String(error && error.message)) ? 'already on the bank register' : String(error && error.message) });
+    }
+  }
+  await audit(c, { action:'POST', module:'FINANCE', recordType:'AR_RECEIPT', recordId:ids[0],
+    recordNo:posted[0] || '', after:{ posted:posted.length, skipped:skipped.length } });
+  return ok(c, { posted, skipped });
+});
+
+// A posted collection is reversed, never deleted: the bank register keeps the
+// contra so the account's balance tells the truth about what happened.
+receivableRoutes.post('/receipts/:id/unpost', requirePermission('RECEIVABLES','POST'), async c => {
+  if (!isFinance(c)) return fail(c, 'Only Finance can reverse a posted collection.', 403);
+  const id = Number(c.req.param('id'));
+  const b = await jsonBody(c).catch(() => ({}));
+  const reason = normalizeText(b.reason);
+  if (!reason) return fail(c, 'A reversal needs a reason.');
+  const posting = await first(c.env.DB, `SELECT * FROM erp_ar_receipt_postings WHERE receipt_id=?`, [id]);
+  if (!posting || posting.status !== 'POSTED') return fail(c, 'This collection is not posted.', 409);
+  const receipt = await first(c.env.DB, `SELECT * FROM erp_ar_receipts WHERE id=?`, [id]);
+  const account = await first(c.env.DB, `SELECT * FROM erp_bank_accounts WHERE id=?`, [posting.bank_account_id]);
+  const amount = round2(posting.posted_amount);
+  const last = await first(c.env.DB, `SELECT running_balance FROM erp_bank_transactions
+    WHERE bank_account_id=? ORDER BY transaction_date DESC, id DESC LIMIT 1`, [posting.bank_account_id]);
+  const opening = last?.running_balance != null ? Number(last.running_balance) : Number(account?.opening_balance || 0);
+  await run(c.env.DB, `INSERT INTO erp_bank_transactions(bank_account_id,transaction_date,value_date,
+      bank_reference,description,direction,amount,running_balance,import_batch,status)
+    VALUES(?,date('now'),date('now'),?,?,'DEBIT',?,?,?,'MATCHED')`,
+    [posting.bank_account_id, `REV-${receipt?.receipt_no || id}`,
+     `Reversal of ${receipt?.receipt_no || id}: ${reason}`, amount, round2(opening - amount), 'AR_COLLECTION']);
+  await run(c.env.DB, `UPDATE erp_ar_receipt_postings SET status='REVERSED',reversed_by=?,
+    reversed_at=datetime('now'),reverse_reason=? WHERE receipt_id=?`, [c.get('erpUser').email, reason, id]);
+  await audit(c, { action:'UNPOST', module:'FINANCE', recordType:'AR_RECEIPT', recordId:id,
+    recordNo:receipt?.receipt_no || '', after:{ reason, amount } });
+  return ok(c, { reversed: receipt?.receipt_no, reason });
+});
+
+// What is actually in each bank account, and what is still waiting to be posted.
+receivableRoutes.get('/bank-registry', requirePermission('RECEIVABLES','VIEW'), async c => {
+  const accounts = await all(c.env.DB, `SELECT b.id,b.bank_account_code,b.bank_name,b.account_name,b.currency,
+      b.opening_balance,
+      (SELECT running_balance FROM erp_bank_transactions t WHERE t.bank_account_id=b.id
+        ORDER BY t.transaction_date DESC, t.id DESC LIMIT 1) balance,
+      (SELECT COUNT(*) FROM erp_bank_transactions t WHERE t.bank_account_id=b.id) movements,
+      (SELECT COALESCE(SUM(t.amount),0) FROM erp_bank_transactions t
+        WHERE t.bank_account_id=b.id AND t.direction='CREDIT' AND t.import_batch='AR_COLLECTION') collected
+    FROM erp_bank_accounts b WHERE b.active=1 ORDER BY b.bank_account_code`);
+  const waiting = await first(c.env.DB, `SELECT COUNT(*) n, COALESCE(SUM(r.amount),0) v
+    FROM erp_ar_receipts r LEFT JOIN erp_ar_receipt_postings p ON p.receipt_id=r.id
+    WHERE r.status='ACTIVE' AND p.receipt_id IS NULL`);
+  return ok(c, { accounts: accounts.map(a => ({ ...a, balance: a.balance == null ? Number(a.opening_balance || 0) : a.balance })),
+    waiting: { count: Number(waiting?.n || 0), value: Number(waiting?.v || 0) } });
 });
 
 /* --------------------------------------------------- statement of account */

@@ -646,6 +646,17 @@ financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), 
     WHERE r.id=?${vis.where}`,[id,...vis.args]);
   if(!row)return fail(c,'Payment request not found.',404);
   const attachments=await attachmentsFor(c.env.DB,'PAYMENT_REQUEST',id,row.request_no);
+  /*
+   * The lines a request was made of. One RFP routinely spans several account
+   * titles, and the ledger posts each of them separately, so the detail screen
+   * has to show the split rather than only the total on the header.
+   */
+  const lines=await all(c.env.DB,`SELECT * FROM erp_payment_request_lines
+    WHERE payment_request_id=? OR rfp_ref=? ORDER BY line_no`,[id,row.request_no]);
+  const byAccount=await all(c.env.DB,`SELECT COALESCE(NULLIF(account_title,''),'Unclassified') label,
+      ROUND(SUM(gross_amount),2) value, COUNT(*) n
+    FROM erp_payment_request_lines WHERE payment_request_id=? OR rfp_ref=?
+    GROUP BY label ORDER BY value DESC`,[id,row.request_no]);
   const liquidation=await first(c.env.DB,`SELECT * FROM erp_rfp_liquidations WHERE payment_request_id=?`,[id]);
   const signatures=await all(c.env.DB,`SELECT stage,decision,actor,actor_name,reason,signature,created_at
     FROM erp_rfp_approvals WHERE rfp_ref=? ORDER BY id`,[row.request_no]);
@@ -657,7 +668,7 @@ financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), 
     stages:requiredStages(row.net_payable,min,review),
     nextStage:nextStage(row.net_payable,min,signatures,review),
     attachmentsEditable:['DRAFT','RETURNED'].includes(String(row.status||'').toUpperCase())};
-  return ok(c,{request:row,attachments,liquidation:liquidation||null,signatures,workflow});
+  return ok(c,{request:row,attachments,lines,byAccount,liquidation:liquidation||null,signatures,workflow});
 });
 
 // RFP numbering, spec section 9: RFP-<DEPT><YEAR>-NNNN  e.g. RFP-OPS2026-0081.
@@ -1486,6 +1497,201 @@ financeRoutes.get('/reports/general-ledger', requirePermission('FINANCE', 'VIEW'
       WHERE h.status='POSTED' AND ${f.where.join(' AND ')}
       ORDER BY h.journal_date,h.journal_no,l.line_no`, f.args);
   return ok(c, { filters:f, rows });
+});
+
+/*
+ * What actually governs a finance module.
+ *
+ * These screens used to be a list of sentences describing how the module was
+ * supposed to work. A sentence is not a control: nobody can tell from it
+ * whether the entities are set up, whether anything has been posted against a
+ * dimension, or whether a budget exists for the year. So each one now answers
+ * itself from the database, and every figure is a count of something real.
+ */
+financeRoutes.get('/module-setup/:code', requirePermission('FINANCE', 'VIEW'), async c => {
+  const code = normalizeText(c.req.param('code'));
+  const year = Number(normalizeText(c.req.query('year'))) || new Date().getFullYear();
+  const out = { code, year, panels: [] };
+  const panel = (title, columns, rows, note) => out.panels.push({ title, columns, rows, note });
+  const attempt = async (fn) => { try { return await fn(); } catch { return []; } };
+
+  const entities = await attempt(() => all(c.env.DB, `SELECT e.entity_code,e.entity_name,e.base_currency,
+      (SELECT COUNT(*) FROM erp_journal_headers h WHERE h.entity_id=e.id AND h.status='POSTED') posted,
+      (SELECT COUNT(*) FROM erp_accounting_periods p WHERE p.entity_id=e.id AND p.status='OPEN') openPeriods
+    FROM erp_legal_entities e WHERE e.active=1 ORDER BY e.entity_code`));
+
+  if (code === 'fa-management-accounting' || code === 'fa-consolidation-reporting') {
+    panel('Legal entities', ['Entity', 'Name', 'Currency', 'Posted journals', 'Open periods'],
+      entities.map(e => [e.entity_code, e.entity_name, e.base_currency, e.posted, e.openPeriods]),
+      'Every entity that can be posted to, and how much has been.');
+  }
+
+  if (code === 'fa-management-accounting') {
+    // A dimension is only real if something has been posted against it.
+    for (const [label, column] of [['Department', 'department'], ['Cost centre', 'cost_center'], ['Business line', 'business_line']]) {
+      const rows = await attempt(() => all(c.env.DB,
+        `SELECT COALESCE(NULLIF(l.${column},''),'(not set)') label, COUNT(*) lines,
+           ROUND(SUM(l.base_debit),2) debit, ROUND(SUM(l.base_credit),2) credit
+         FROM erp_journal_lines l JOIN erp_journal_headers h ON h.id=l.journal_id AND h.status='POSTED'
+         GROUP BY label ORDER BY lines DESC LIMIT 40`));
+      panel(`${label}s carrying posted entries`, [label, 'Lines', 'Debit', 'Credit'],
+        rows.map(r => [r.label, r.lines, r.debit, r.credit]),
+        rows.some(r => r.label === '(not set)')
+          ? 'Lines showing "(not set)" were posted without this dimension.' : '');
+    }
+  }
+
+  if (code === 'fa-consolidation-reporting') {
+    const rows = await attempt(() => all(c.env.DB,
+      `SELECT e.entity_code label, p.period_name, p.status, p.start_date, p.end_date
+       FROM erp_accounting_periods p JOIN erp_legal_entities e ON e.id=p.entity_id
+       WHERE substr(p.start_date,1,4)=? ORDER BY e.entity_code, p.start_date`, [String(year)]));
+    panel(`Period status, ${year}`, ['Entity', 'Period', 'Status', 'From', 'To'],
+      rows.map(r => [r.label, r.period_name, r.status, r.start_date, r.end_date]),
+      'Each entity closes on its own before the consolidated close.');
+  }
+
+  if (code === 'fa-financial-services') {
+    const banks = await attempt(() => all(c.env.DB, `SELECT b.bank_account_code,b.bank_name,b.account_name,
+        b.currency,a.account_code gl,
+        (SELECT COUNT(*) FROM erp_bank_transactions t WHERE t.bank_account_id=b.id) movements,
+        (SELECT COUNT(*) FROM erp_bank_transactions t WHERE t.bank_account_id=b.id AND t.status='UNMATCHED') unmatched,
+        (SELECT running_balance FROM erp_bank_transactions t WHERE t.bank_account_id=b.id
+          ORDER BY t.transaction_date DESC, t.id DESC LIMIT 1) balance
+      FROM erp_bank_accounts b LEFT JOIN erp_chart_accounts a ON a.id=b.gl_account_id
+      WHERE b.active=1 ORDER BY b.bank_account_code`));
+    panel('Bank and wallet accounts', ['Account', 'Bank', 'Name', 'Currency', 'GL', 'Movements', 'Unmatched', 'Balance'],
+      banks.map(b => [b.bank_account_code, b.bank_name, b.account_name, b.currency, b.gl || '-',
+        b.movements, b.unmatched, b.balance == null ? 0 : b.balance]),
+      'Each account maps to a control account in the chart of accounts.');
+    const aliases = await attempt(() => all(c.env.DB,
+      `SELECT alias, bank_account_code FROM erp_bank_aliases ORDER BY bank_account_code, alias`));
+    panel('What the words on a receipt mean', ['Name used', 'Posts to'],
+      aliases.map(a => [a.alias, a.bank_account_code]),
+      'A collection naming a wallet posts to the account beside it here.');
+  }
+
+  if (code === 'fa-planning-budgeting') {
+    const years = await attempt(() => all(c.env.DB, `SELECT year label, COUNT(*) lines,
+        ROUND(SUM(amount),2) amount, COUNT(DISTINCT department) departments
+      FROM erp_budget_plan GROUP BY year ORDER BY year DESC`));
+    panel('Budget by year', ['Year', 'Lines', 'Departments', 'Amount'],
+      years.map(y => [y.label, y.lines, y.departments, y.amount]),
+      years.length ? '' : 'No budget has been loaded yet, so variance reporting has nothing to compare against.');
+    const split = await attempt(() => all(c.env.DB, `SELECT COALESCE(NULLIF(capex_opex,''),'(not set)') label,
+        ROUND(SUM(amount),2) amount, COUNT(*) lines FROM erp_budget_plan WHERE year=?
+      GROUP BY label ORDER BY amount DESC`, [year]));
+    panel(`Capital and operating, ${year}`, ['Class', 'Lines', 'Amount'],
+      split.map(s => [s.label, s.lines, s.amount]));
+    const depts = await attempt(() => all(c.env.DB, `SELECT COALESCE(NULLIF(department,''),'(not set)') label,
+        ROUND(SUM(amount),2) amount FROM erp_budget_plan WHERE year=? GROUP BY label ORDER BY amount DESC LIMIT 30`, [year]));
+    panel(`Budget by department, ${year}`, ['Department', 'Amount'], depts.map(d => [d.label, d.amount]));
+  }
+
+  if (code === 'fa-fixed-assets') {
+    const classes = await attempt(() => all(c.env.DB, `SELECT COALESCE(NULLIF(category,''),'Unclassified') label,
+        COUNT(*) units, ROUND(SUM(COALESCE(unit_cost,0)),2) cost,
+        COUNT(CASE WHEN COALESCE(unit_cost,0)<=0 THEN 1 END) unvalued
+      FROM erp_assets WHERE active=1 GROUP BY label ORDER BY cost DESC`));
+    panel('Registered units by class', ['Class', 'Units', 'Cost', 'Without a cost'],
+      classes.map(x => [x.label, x.units, x.cost, x.unvalued]),
+      'A unit with no cost cannot be capitalised or depreciated.');
+    const control = await attempt(() => all(c.env.DB, `SELECT account_code,account_name,control_type
+      FROM erp_chart_accounts WHERE active=1 AND control_type IN ('FIXED_ASSET','INVENTORY')
+      ORDER BY account_code`));
+    panel('Asset and inventory control accounts', ['Code', 'Account', 'Control'],
+      control.map(a => [a.account_code, a.account_name, a.control_type]));
+  }
+
+  if (code === 'fa-grants-funds' || code === 'ip-supplier-portal') {
+    const partners = await attempt(() => all(c.env.DB, `SELECT partner_code,name,partner_type,credit_status,
+        COALESCE(overdue_balance,0) overdue FROM erp_partners
+      WHERE active=1 AND partner_type='VENDOR' ORDER BY name LIMIT 200`));
+    panel('Accredited vendors', ['Code', 'Vendor', 'Type', 'Credit', 'Overdue'],
+      partners.map(p => [p.partner_code, p.name, p.partner_type, p.credit_status, p.overdue]));
+  }
+
+  if (code === 'fa-receivables-payables') {
+    const stages = await attempt(() => all(c.env.DB, `SELECT status label, COUNT(*) n,
+        ROUND(SUM(net_payable),2) value FROM erp_payment_requests GROUP BY status ORDER BY n DESC`));
+    panel('Requests by stage', ['Stage', 'Requests', 'Net payable'],
+      stages.map(s => [String(s.label || '').replace(/_/g, ' '), s.n, s.value]));
+    const settings = await attempt(() => all(c.env.DB, `SELECT key,value FROM erp_rfp_settings ORDER BY key`));
+    panel('Approval controls', ['Setting', 'Value'],
+      settings.filter(s => !String(s.key).startsWith('rfp_doc:')).map(s => [s.key, s.value]),
+      'The chain is Requestor, Department Head, Finance check, Head of Finance, CEO.');
+    const sla = await attempt(() => all(c.env.DB, `SELECT code,label,target_days,basis FROM erp_service_levels ORDER BY code`));
+    panel('Service levels', ['Code', 'What is measured', 'Target', 'Basis'],
+      sla.map(s => [s.code, s.label, s.target_days + ' days', s.basis]));
+  }
+
+  return ok(c, out);
+});
+
+/*
+ * The chart of accounts with money against it.
+ *
+ * A chart of accounts on its own is a list of names; what people actually want
+ * to know is what is sitting in each one and how it got there. Balances are
+ * derived from posted journal lines rather than stored on the account, so a
+ * balance can never drift from the entries that make it up - and every figure
+ * on this screen opens the lines behind it.
+ */
+financeRoutes.get('/accounts/balances', requirePermission('FINANCE', 'VIEW'), async c => {
+  const f = filters(c);
+  const rows = await all(c.env.DB,
+    `SELECT a.id,a.account_code,a.account_name,a.account_type,a.normal_balance,
+       a.financial_statement,a.allow_manual_posting,
+       ROUND(COALESCE(SUM(l.base_debit),0),2) debit,
+       ROUND(COALESCE(SUM(l.base_credit),0),2) credit,
+       COUNT(l.id) entries,
+       ROUND(COALESCE(SUM(CASE WHEN a.normal_balance='DEBIT'
+         THEN l.base_debit-l.base_credit ELSE l.base_credit-l.base_debit END),0),2) balance
+     FROM erp_chart_accounts a
+     LEFT JOIN erp_journal_lines l ON l.account_id=a.id
+     LEFT JOIN erp_journal_headers h ON h.id=l.journal_id AND h.status='POSTED'
+     LEFT JOIN erp_legal_entities e ON e.id=h.entity_id
+     WHERE a.active=1 AND (h.id IS NULL OR (${f.where.join(' AND ')}))
+     GROUP BY a.id ORDER BY a.account_code`, f.args);
+  const byType = {};
+  rows.forEach(r => {
+    const k = r.account_type || 'OTHER';
+    byType[k] = round((byType[k] || 0) + Number(r.balance || 0));
+  });
+  const totals = rows.reduce((out, r) => {
+    out.debit = round(out.debit + Number(r.debit || 0));
+    out.credit = round(out.credit + Number(r.credit || 0));
+    return out;
+  }, { debit: 0, credit: 0 });
+  return ok(c, { filters: f, rows, totals,
+    byType: Object.keys(byType).map(label => ({ label, value: byType[label] })),
+    balanced: Math.abs(totals.debit - totals.credit) <= 0.005 });
+});
+
+// The entries behind one account, so a balance is never a number you have to take on trust.
+financeRoutes.get('/accounts/:code/ledger', requirePermission('FINANCE', 'VIEW'), async c => {
+  const code = normalizeText(c.req.param('code'));
+  const f = filters(c);
+  const account = await first(c.env.DB, `SELECT * FROM erp_chart_accounts WHERE account_code=?`, [code]);
+  if (!account) return fail(c, 'Account not found.', 404);
+  const rows = await all(c.env.DB,
+    `SELECT h.journal_no,h.journal_date,h.journal_type,h.source_type,h.source_no,
+       l.description,l.base_debit,l.base_credit,l.department,l.cost_center,l.business_line,h.id journal_id
+     FROM erp_journal_lines l
+     JOIN erp_journal_headers h ON h.id=l.journal_id AND h.status='POSTED'
+     JOIN erp_legal_entities e ON e.id=h.entity_id
+     WHERE l.account_id=? AND ${f.where.join(' AND ')}
+     ORDER BY h.journal_date, h.id, l.id LIMIT 1000`, [account.id, ...f.args]);
+  // A running balance is what makes a ledger readable rather than a list.
+  let running = 0;
+  const debitNormal = String(account.normal_balance) === 'DEBIT';
+  const lines = rows.map(r => {
+    running = round(running + (debitNormal
+      ? Number(r.base_debit || 0) - Number(r.base_credit || 0)
+      : Number(r.base_credit || 0) - Number(r.base_debit || 0)));
+    return { ...r, running_balance: running };
+  });
+  return ok(c, { account, filters: f, rows: lines, closingBalance: running });
 });
 
 financeRoutes.get('/reports/trial-balance', requirePermission('FINANCE', 'VIEW'), async c => {
