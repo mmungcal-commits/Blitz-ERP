@@ -62,8 +62,18 @@ const HOME = { ok:true,
     { label:'Payment requests for your validation', count:3, module:'fa-receivables-payables' },
   ],
   activity:[{ event_at:'2026-08-07', user_email:'judy@nrdev.ph', action:'SUBMIT_CYCLE_COUNT', module:'INVENTORY', record_no:'CC-0000002' }],
+  progress:{ counted:424, expected:517, pct:82.0 },
+  trends:{
+    all:{ series:[{label:'2026-08-01',value:4},{label:'2026-08-02',value:2},{label:'2026-08-03',value:9},
+                  {label:'2026-08-04',value:6},{label:'2026-08-05',value:11},{label:'2026-08-06',value:7},
+                  {label:'2026-08-07',value:13}], delta:118.7 },
+    inventory:{ series:[{label:'2026-08-01',value:2},{label:'2026-08-02',value:1},{label:'2026-08-03',value:5},
+                        {label:'2026-08-04',value:3},{label:'2026-08-05',value:6},{label:'2026-08-06',value:4},
+                        {label:'2026-08-07',value:8}], delta:112.5 },
+  },
 };
 
+let breakHome = false;
 const results = [];
 const check = (name, pass, detail='') => {
   results.push({ name, pass, detail });
@@ -76,7 +86,13 @@ const server = createServer(async (req,res)=>{
     res.setHeader('content-type','application/json');
     if (path === '/api/session') return res.end(JSON.stringify(SESSION));
     if (path === '/api/inventory/cycle-counts') return res.end(JSON.stringify(COUNTS));
-    if (path === '/api/dashboard/home') return res.end(JSON.stringify(HOME));
+    if (path === '/api/dashboard/home') {
+      // ?boom=1 makes the dashboard endpoint fail, so the fallback is testable.
+      if (String(req.headers['x-boom'] || '') === '1' || breakHome) {
+        res.statusCode = 500; return res.end(JSON.stringify({ ok:false, error:'no such column: requested_by' }));
+      }
+      return res.end(JSON.stringify(HOME));
+    }
     if (path.includes('/definition')) return res.end(JSON.stringify({ ok:true, definition:{ fields:[], statuses:[] } }));
     return res.end(JSON.stringify({ ok:true, rows:[], data:[], counts:[], summary:{} }));
   }
@@ -107,8 +123,19 @@ check('the queue with your name on it leads, biggest first',
   (await page.locator('.home-wait b').allTextContents()).join(',') === '3,2',
   (await page.locator('.home-wait span').allTextContents()).join(' | '));
 check('the dashboard carries live charts',
-  (await page.locator('.home-shell figure.viz').count()) >= 2,
+  (await page.locator('.home-shell figure.viz').count()) >= 3,
   `${await page.locator('.home-shell figure.viz').count()} figures`);
+check('a real percentage is drawn as a ring with the figure inside',
+  (await page.locator('.viz-ring').count()) === 1
+  && (await page.locator('.viz-ring-value').textContent()).trim() === '82%',
+  await page.locator('.viz-ring-value').textContent());
+check('a tile carries a sparkline of the real last 7 days',
+  (await page.locator('.viz-tile .viz-spark rect').count()) === 7,
+  `${await page.locator('.viz-tile .viz-spark rect').count()} bars`);
+check('the delta is signed and named against its period',
+  /^\u2191 112\.5% vs the 3 days before$/.test(
+    (await page.locator('.viz-tile-delta').first().innerText()).replace(/\s+/g,' ').trim()),
+  (await page.locator('.viz-tile-delta').first().innerText()).replace(/\s+/g,' ').trim());
 check('a waiting item opens the module it belongs to',
   (await page.locator('[data-home-go="ip-cycle-counting"]').count()) === 1);
 
@@ -198,6 +225,30 @@ check('every mark describes itself for hover and keyboard',
   described.tipped === described.total, `${described.tipped}/${described.total}`);
 
 check('no script errors', errors.length === 0, errors.slice(0,2).join(' | ') || 'clean');
+
+/*
+ * The failure that actually stranded someone: the dashboard endpoint threw, the
+ * catch called renderLaunchpad(), and renderLaunchpad routed straight back into
+ * the dashboard - so the loading message span forever. A broken dashboard must
+ * degrade to the module map, never trap the user.
+ */
+breakHome = true;
+const broken = await browser.newPage({ viewport:{ width:1440, height:960 } });
+const brokenErrors = [];
+broken.on('pageerror', e => brokenErrors.push(String(e)));
+await broken.goto(base, { waitUntil:'domcontentloaded' });
+let landed = 'timed out on the loading message';
+try {
+  await broken.waitForSelector('.enterprise-launchpad', { timeout:9000 });
+  landed = 'fell through to the module map';
+} catch { /* left as the timeout message */ }
+check('a broken dashboard falls through to the modules instead of hanging',
+  landed === 'fell through to the module map', landed);
+check('the fallback does not loop',
+  !(await broken.locator('.workspace-loading').count()),
+  (await broken.locator('.workspace-loading').textContent().catch(()=>'')) || 'no loading message left on screen');
+await broken.close();
+breakHome = false;
 
 await page.screenshot({ path:SHOTS+'viz-cockpit.png', fullPage:false });
 
