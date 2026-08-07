@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R39.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R40.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -161,7 +161,7 @@ function canWorkspace(code){
 function workspaceTabs(code=state.module?.code){
   if(code==='fa-general-accounting')return [
     ['center','Accounting Center'],['records','Journals'],['approvals','Approvals'],
-    ['reports','Financial Reports'],['setup','Accounts & Periods'],
+    ['balances','Account Balances'],['reports','Financial Reports'],['setup','Accounts & Periods'],
   ];
   if(code==='fa-receivables-payables')return [
     ['center','AP Center'],['records','Subledgers'],['approvals','RFP & Payments'],
@@ -200,8 +200,8 @@ function workspaceTabs(code=state.module?.code){
     ['reports','QR Trace'],['setup','Locations'],
   ];
   if(code==='fa-receivables-management')return [
-    ['center','Receivables Center'],['records','Sales Register'],['approvals','For Posting'],
-    ['statements','Statements'],['reports','Revenue Reports'],['setup','Lists'],
+    ['center','Receivables Center'],['records','Sales Register'],['collections','Collections'],
+    ['approvals','For Posting'],['statements','Statements'],['reports','Revenue Reports'],['setup','Lists'],
   ];
   if(code==='ip-cycle-counting')return [
     ['center','Overview'],['records','Count Plans'],['approvals','Physical Count'],
@@ -255,7 +255,7 @@ function showAuth(mode='login'){
     const startScope=state.scope==='ADMIN'?'ADMIN':'OPERATIONS';
     host.innerHTML=`<div class="blitz-auth">
       <div class="blitz-auth-brand">
-        <img class="blitz-mark" src="/logo-white.png?v=20260808-r39" alt="E88 Ventures Inc.">
+        <img class="blitz-mark" src="/logo-white.png?v=20260808-r40" alt="E88 Ventures Inc.">
         <div class="blitz-charge" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
       </div>
       <div class="auth-heading"><h1>Welcome back</h1><p>Sign in to continue.</p></div>
@@ -455,7 +455,18 @@ async function renderHomeDashboard(){
       {label:'Receivables',value:m.receivablesPct==null?0:Math.round(m.receivablesPct),suffix:'%',
        tone:m.receivablesPct==null?null:(m.receivablesPct<=20?'good':m.receivablesPct<=50?'warning':'critical'),
        sub:m.receivablesPct==null?'nothing outstanding':money(m.outstanding)+' outstanding',
-       module:'fa-receivables-management#records'}
+       module:'fa-receivables-management#records'},
+      // The other side of the same book: what the company owes and how promptly
+      // it settles. Payable rate is money out against money asked for.
+      {label:'Payable',value:m.payablePct==null?0:Math.round(m.payablePct),suffix:'%',
+       tone:m.payablePct==null?null:(m.payablePct>=80?'good':m.payablePct>=50?'warning':'critical'),
+       sub:m.payablePct==null?'nothing requested in this period':'of '+money(m.payableRaised)+' requested',
+       module:'fa-receivables-payables#approvals'},
+      {label:'Payment SLA',value:m.slaPct==null?0:Math.round(m.slaPct),suffix:'%',
+       tone:m.slaPct==null?null:(m.slaPct>=90?'good':m.slaPct>=70?'warning':'critical'),
+       sub:m.slaPct==null?'nothing paid in this period'
+         :'within '+(m.slaTargetDays||10)+' banking days',
+       module:'fa-receivables-payables#approvals'}
     ]);
     cards.push(vizRing(m.collectionPct==null?0:m.collectionPct,{title:'Collection rate',
         subtitle:m.collectionPct==null?'nothing billed in this period':money(m.collected)+' of '+money(m.billed)+' billed',
@@ -463,6 +474,27 @@ async function renderHomeDashboard(){
         tipLabel:'Collected against billed',open:'fa-receivables-management#records',
         openLabel:'Open the sales register',
         tone:m.collectionPct==null?null:(m.collectionPct>=80?'good':m.collectionPct>=50?'warning':'critical')}));
+    /*
+     * Two rings for the payable side. The first is how much of what was asked
+     * for has gone out; the second is how much of it went out inside the ten
+     * banking days Finance works to, with the average alongside it because a
+     * rate on its own does not say how late the late ones were.
+     */
+    cards.push(vizRing(m.payablePct==null?0:m.payablePct,{title:'Payable rate',
+        subtitle:m.payablePct==null?'nothing requested in this period'
+          :money(m.payablePaid)+' of '+money(m.payableRaised)+' requested',
+        caption:'paid',valueLabel:m.payablePct==null?'0%':undefined,
+        tipLabel:'Paid against requested',open:'fa-receivables-payables#approvals',
+        openLabel:'Open the payment requests',
+        tone:m.payablePct==null?null:(m.payablePct>=80?'good':m.payablePct>=50?'warning':'critical')}));
+    cards.push(vizRing(m.slaPct==null?0:m.slaPct,{title:'Payment SLA',
+        subtitle:m.slaPct==null?'nothing paid in this period'
+          :m.slaWithin+' of '+m.slaMeasured+' paid within '+(m.slaTargetDays||10)+' banking days'
+            +(m.slaAvgDays!=null?' \u00b7 '+m.slaAvgDays+' on average':''),
+        caption:'on time',valueLabel:m.slaPct==null?'0%':undefined,
+        tipLabel:'Vendors paid inside the service level',
+        open:'fa-receivables-payables#approvals',openLabel:'Open the payment requests',
+        tone:m.slaPct==null?null:(m.slaPct>=90?'good':m.slaPct>=70?'warning':'critical')}));
     if((m.aging||[]).some(r=>Number(r.value)>0))
       cards.push(vizBars(m.aging.map(r=>({label:r.label,value:Number(r.value)||0})).filter(r=>r.value>0),
         {title:'Receivables ageing',money:true,color:VIZ.status.serious,
@@ -1107,6 +1139,7 @@ async function renderGeneralAccounting(section){
   if(section==='center')return renderFinanceCenter('Accounting Work Summary','Source transactions, journals, period control and reporting');
   if(section==='records')return renderJournalRegister();
   if(section==='approvals')return renderJournalApprovals();
+  if(section==='balances')return renderAccountBalances();
   if(section==='reports')return renderFinanceReports();
   return renderAccountingSetup();
 }
@@ -1137,6 +1170,12 @@ async function openNewJournal(){
   modal('New Journal Entry',`<form id="journalForm" class="operational-form grid finance-entry-form">
     <label><span>Entity</span><select name="entityCode">${master.entities.map(entity=>`<option value="${esc(entity.entity_code)}">${esc(entity.entity_name)}</option>`).join('')}</select></label>
     <label><span>Journal Date</span><input name="journalDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></label>
+    <label><span>Journal Type</span><select name="journalType">
+      <option value="GENERAL">General entry</option>
+      <option value="ADJUSTING">Adjusting entry</option>
+      <option value="ACCRUAL">Accrual</option>
+      <option value="RECLASS">Reclassification</option>
+      <option value="CLOSING">Closing entry</option></select></label>
     <label><span>Department</span><input name="department"></label><label><span>Cost Center</span><input name="costCenter"></label>
     <label><span>Business Line</span><select name="businessLine"><option value="">Select</option><option>MOTORCYCLE_LEASE</option>
       <option>MOTORCYCLE_SALE</option><option>RIDEBOX_BSS</option><option>AFTERSALES</option><option>SHARED_SERVICES</option></select></label>
@@ -1147,13 +1186,68 @@ async function openNewJournal(){
       <span>Difference <b id="journalDifference">0.00</b></span></div>
     <button class="command primary">Save Draft Journal</button>
   </form>`);
+  /*
+   * An account title that does not exist yet is the commonest reason a journal
+   * gets abandoned half-typed. Adding one from inside the entry keeps the work
+   * in one place: the new title registers on the chart of accounts, appears on
+   * every line's droplist, and is selected on the line you were filling in.
+   */
+  let accountOpts=accountOptions;
   const addLine=()=>{
-    $('#journalLines').insertAdjacentHTML('beforeend',`<tr><td><select name="accountCode" required><option value="">Select account…</option>${accountOptions}</select></td>
+    $('#journalLines').insertAdjacentHTML('beforeend',`<tr><td class="jl-acct">
+      <select name="accountCode" required><option value="">Select account…</option>${accountOpts}</select>
+      <button type="button" class="table-action jl-new" title="Register a new account title">+ New</button></td>
       <td><input name="lineDescription"></td><td><input name="debit" type="number" min="0" step="0.01"></td>
       <td><input name="credit" type="number" min="0" step="0.01"></td><td><button type="button" class="line-remove">×</button></td></tr>`);
     $$('.line-remove').forEach(button=>button.onclick=()=>{button.closest('tr').remove();sumJournal();});
     $$('#journalLines input[type="number"]').forEach(input=>input.oninput=sumJournal);
+    $$('.jl-new').forEach(button=>button.onclick=()=>openNewAccountCard(button.closest('tr')));
   };
+
+  function openNewAccountCard(row){
+    const host=$('#journalLines').closest('form');
+    if(host.querySelector('.acct-card'))host.querySelector('.acct-card').remove();
+    row.insertAdjacentHTML('afterend',`<tr class="acct-card-row"><td colspan="5">
+      <div class="acct-card">
+        <b>Register an account title</b>
+        <div class="acct-card-grid">
+          <label><span>Code</span><input id="naCode" placeholder="6-1200"></label>
+          <label><span>Account title</span><input id="naName" placeholder="Repairs and maintenance"></label>
+          <label><span>Type</span><select id="naType">
+            <option>EXPENSE</option><option>ASSET</option><option>LIABILITY</option><option>EQUITY</option>
+            <option>REVENUE</option><option>COGS</option><option>CONTRA_ASSET</option></select></label>
+          <label><span>Control</span><select id="naControl">
+            <option>NONE</option><option>BANK</option><option>AR</option><option>AP</option>
+            <option>INVENTORY</option><option>FIXED_ASSET</option><option>TAX</option></select></label>
+          <label><span>Cash flow</span><select id="naFlow">
+            <option>OPERATING</option><option>INVESTING</option><option>FINANCING</option></select></label>
+        </div>
+        <div class="acct-card-actions">
+          <button type="button" class="command primary" id="naSave">Add to the chart</button>
+          <button type="button" class="command" id="naCancel">Cancel</button></div>
+      </div></td></tr>`);
+    const card=host.querySelector('.acct-card');
+    const close=()=>card.closest('tr').remove();
+    card.querySelector('#naCancel').onclick=close;
+    card.querySelector('#naSave').onclick=async()=>{
+      const code=card.querySelector('#naCode').value.trim();
+      const name=card.querySelector('#naName').value.trim();
+      if(!code||!name)return toast('A code and an account title are both needed.','error');
+      try{
+        await api('/finance/accounts',{method:'POST',body:JSON.stringify({
+          accountCode:code,accountName:name,accountType:card.querySelector('#naType').value,
+          controlType:card.querySelector('#naControl').value,
+          cashFlowGroup:card.querySelector('#naFlow').value,allowManualPosting:true})});
+        const option=`<option value="${esc(code)}">${esc(code)} \u00b7 ${esc(name)}</option>`;
+        accountOpts+=option;
+        $$('#journalLines select[name="accountCode"]').forEach(sel=>sel.insertAdjacentHTML('beforeend',option));
+        const sel=row.querySelector('select[name="accountCode"]');
+        if(sel)sel.value=code;
+        close();
+        toast(`${code} added to the chart of accounts`);
+      }catch(error){toast(error.message,'error');}
+    };
+  }
   const sumJournal=()=>{
     const rows=$$('#journalLines tr');let debit=0,credit=0;
     rows.forEach(row=>{debit+=Number(row.querySelector('[name="debit"]').value||0);credit+=Number(row.querySelector('[name="credit"]').value||0);});
@@ -1293,6 +1387,86 @@ async function renderFinanceReports(){
   }catch(error){showWorkspaceError(error);}
 }
 
+
+/*
+ * The chart of accounts with the money in it.
+ *
+ * A balance nobody can open is a number you have to believe. Every row here
+ * leads to the posted entries behind it, with a running balance down the page,
+ * so a figure can always be traced to the journals that made it.
+ */
+async function renderAccountBalances(from,to){
+  const year=new Date().getFullYear();
+  from=from||`${year}-01-01`; to=to||new Date().toISOString().slice(0,10);
+  content.innerHTML='<div class="workspace-loading">Loading account balances\u2026</div>';
+  try{
+    const d=await api(`/finance/accounts/balances?entity=E88&dateFrom=${from}&dateTo=${to}`);
+    const rows=(d.rows||[]).map(r=>`<tr class="clickable-row" data-acct="${esc(r.account_code)}">
+      <td><b>${esc(r.account_code)}</b></td><td>${esc(r.account_name)}</td>
+      <td>${esc(r.account_type||'-')}</td><td>${esc(r.normal_balance||'-')}</td>
+      <td class="num">${money(r.debit)}</td><td class="num">${money(r.credit)}</td>
+      <td class="num"><b>${money(r.balance)}</b></td><td class="num">${esc(r.entries||0)}</td></tr>`);
+    const withMoney=(d.rows||[]).filter(r=>Number(r.entries)>0).length;
+    const tiles=vizTiles([
+      {label:'Accounts',value:(d.rows||[]).length,sub:withMoney+' with entries',section:'setup'},
+      {label:'Total debits',value:Number(d.totals?.debit||0),sub:'posted'},
+      {label:'Total credits',value:Number(d.totals?.credit||0),sub:'posted'},
+      {label:'Balanced',value:d.balanced?1:0,suffix:'',tone:d.balanced?'good':'critical',
+       sub:d.balanced?'debits equal credits':'the ledger does not balance'},
+    ]);
+    const charts='<div class="viz-grid">'
+      +vizDonut((d.byType||[]).map(t=>({label:String(t.label).replace(/_/g,' '),value:Math.abs(Number(t.value)||0)})),
+        {title:'Balance by account type',totalLabel:'Balance',keyLabel:'Type',valueLabel:'Balance'})
+      +vizBars((d.rows||[]).filter(r=>Math.abs(Number(r.balance))>0)
+        .map(r=>({label:r.account_name||r.account_code,value:Math.abs(Number(r.balance)||0)}))
+        .sort((x,y)=>y.value-x.value),
+        {title:'Where the money sits',money:true,color:VIZ.series[3],keyLabel:'Account',
+         valueLabel:'Balance',limit:8,labelWidth:170})
+      +'</div>';
+    const body=`<div class="workspace-commandbar">
+        <label class="inline-control"><span>From</span><input type="date" id="balFrom" value="${esc(from)}"></label>
+        <label class="inline-control"><span>To</span><input type="date" id="balTo" value="${esc(to)}"></label>
+        <button class="command" id="balApply">Apply</button>
+        <span class="command-spacer"></span>
+        <span class="workspace-mode">${d.balanced?'BALANCED':'OUT OF BALANCE'}</span></div>
+      ${tiles}${charts}
+      <section class="workspace-card"><header><div><h2>Chart of Accounts</h2>
+        <span>${money(d.totals?.debit)} debits \u00b7 ${money(d.totals?.credit)} credits</span></div></header>
+        ${operationalTable(['Code','Account','Type','Normal','Debits','Credits','Balance','Entries'],rows,
+          {emptyMessage:'No accounts are set up.'})}</section>`;
+    content.innerHTML=workbenchShell(body,'balances');
+    bindOperationalShell();bindViz(content);
+    $('#balApply').onclick=()=>renderAccountBalances($('#balFrom').value,$('#balTo').value);
+    $$('[data-acct]').forEach(row=>row.onclick=()=>openAccountLedger(row.dataset.acct,from,to));
+  }catch(error){showWorkspaceError(error);}
+}
+
+async function openAccountLedger(code,from,to){
+  try{
+    const d=await api(`/finance/accounts/${encodeURIComponent(code)}/ledger?entity=E88&dateFrom=${from}&dateTo=${to}`);
+    const a=d.account||{};
+    const rows=(d.rows||[]).map(r=>`<tr><td>${date(r.journal_date)}</td>
+      <td><b>${esc(r.journal_no)}</b></td><td>${esc(String(r.journal_type||'').replace(/_/g,' '))}</td>
+      <td>${esc(r.description||r.source_no||'-')}</td>
+      <td class="num">${Number(r.base_debit)?money(r.base_debit):''}</td>
+      <td class="num">${Number(r.base_credit)?money(r.base_credit):''}</td>
+      <td class="num">${money(r.running_balance)}</td></tr>`);
+    modal(`${esc(a.account_code||'')} \u00b7 ${esc(a.account_name||'')}`,
+      `<div class="operational-form">
+        <div class="ar-collect-head">
+          <div><span>Type</span><b>${esc(a.account_type||'-')}</b></div>
+          <div><span>Normal balance</span><b>${esc(a.normal_balance||'-')}</b></div>
+          <div><span>Entries</span><b>${(d.rows||[]).length}</b></div>
+          <div><span>Closing</span><b class="${Number(d.closingBalance)?'is-open':'is-good'}">${money(d.closingBalance)}</b></div>
+        </div>
+        ${operationalTable(['Date','Journal','Type','Description','Debit','Credit','Running'],rows,
+          {emptyMessage:'Nothing posted to this account in the period.'})}
+        <div class="modal-actions"><button type="button" class="command" id="ledgerClose">Close</button></div>
+      </div>`);
+    $('#modalBody').querySelector('#ledgerClose').onclick=()=>closeModal();
+  }catch(error){toast(error.message,'error');}
+}
+
 async function renderAccountingSetup(){
   content.innerHTML='<div class="workspace-loading">Loading accounting setup…</div>';
   try{
@@ -1331,7 +1505,7 @@ async function renderReceivablesPayables(section){
   if(section==='records')return renderSubledger();
   if(section==='approvals')return renderPaymentRequests();
   if(section==='reports')return renderAgingTax();
-  return renderFinanceControlNotes('AP Controls',[
+  return renderFinanceControlNotes('AP Controls','fa-receivables-payables',[
     ['Three-way match','Supplier bills should reference the approved PO and actual goods receipt.'],
     ['Payments','RFP follows requester, department approval, finance validation, final approval and payment.'],
   ]);
@@ -2531,7 +2705,7 @@ async function renderFixedAssetsFinance(section){
           },{})).map(x=>`<tr><td><b>${esc(x.key)}</b></td><td>${x.count}</td><td class="num">${money(x.cost)}</td>
             <td class="num">${money(x.dep)}</td><td class="num">${money(x.cost-x.dep)}</td></tr>`))}</section>`;
       content.innerHTML=workbenchShell(body,'reports');bindWorkbench();
-    }else return renderFinanceControlNotes('Fixed Asset Setup',[
+    }else return renderFinanceControlNotes('Fixed Asset Setup','fa-fixed-assets',[
       ['Capitalization','Inventory serial is reused; no duplicate asset master is created.'],
       ['Depreciation','Straight-line monthly depreciation is limited to residual value.'],
       ['Disposal or reversal','Requires an approved finance change request and permanent audit trail.'],
@@ -2591,7 +2765,7 @@ async function renderManagementAccounting(section){
     }catch(error){showWorkspaceError(error);}
   }else if(section==='approvals')return renderInventoryFinanceReconciliation();
   else if(section==='reports')return renderBudgetActual();
-  else return renderFinanceControlNotes('Management Dimensions',[
+  else return renderFinanceControlNotes('Management Dimensions','fa-management-accounting',[
     ['Entity','E88 Ventures, NRD Motorcycle, RideBox and Shared Services.'],
     ['Required dimensions','Department, cost center, business line, project/site, partner and source document.'],
     ['Source of truth','Posted operational transactions create journals; Finance validates and posts.'],
@@ -2632,7 +2806,7 @@ async function renderConsolidation(section){
   content.innerHTML='<div class="workspace-loading">Preparing entity and consolidated statements…</div>';
   try{
     if(section==='approvals')return renderJournalApprovals();
-    if(section==='setup')return renderFinanceControlNotes('Consolidation Setup',[
+    if(section==='setup')return renderFinanceControlNotes('Consolidation Setup','fa-consolidation-reporting',[
       ['Entities','E88 Ventures, NRD Motorcycle, RideBox and Shared Services use one chart of accounts.'],
       ['Eliminations','Intercompany and shared-service eliminations use approved consolidation journals.'],
       ['Period close','Each entity closes independently before the consolidated close.'],
@@ -2664,7 +2838,7 @@ async function renderTreasury(section){
     const [banks,transactions,reconciliations]=await Promise.all([
       api('/finance/bank-accounts'),api('/finance/bank-transactions'),api('/finance/bank-reconciliations'),
     ]);
-    if(section==='setup')return renderFinanceControlNotes('Treasury Setup',[
+    if(section==='setup')return renderFinanceControlNotes('Treasury Setup','fa-financial-services',[
       ['Bank master','Each legal entity retains its own bank account and mapped GL control account.'],
       ['Statement import','Transactions are deduplicated by bank, date, reference, amount and direction.'],
       ['Reconciliation','Matching requires equal bank and journal amounts; differences remain visible.'],
@@ -2746,7 +2920,7 @@ function openBankReconciliationForm(banks){
 async function renderFinancePlanning(section){
   if(section==='center')return renderFinanceCenter('Planning and Budgeting Work Summary','Department budgets, forecasts, actuals and cash planning');
   if(section==='reports')return renderBudgetActual();
-  if(section==='setup')return renderFinanceControlNotes('Planning Setup',[
+  if(section==='setup')return renderFinanceControlNotes('Planning Setup','fa-planning-budgeting',[
     ['Budget dimensions','Year, month, department, cost center, account and OPEX/CAPEX.'],
     ['Actual source','Only approved and posted finance journals feed actual results.'],
     ['Scenarios','Budget, base, upside, downside and rolling forecast remain version controlled.'],
@@ -2766,10 +2940,47 @@ async function renderFinancePlanning(section){
   }catch(error){showWorkspaceError(error);}
 }
 
-function renderFinanceControlNotes(title,items){
-  const body=`<section class="workspace-card"><header><h2>${esc(title)}</h2></header>
-    <div class="definition-list finance-control-list">${items.map(([label])=>`<div><b>${esc(label)}</b></div>`).join('')}</div></section>`;
-  content.innerHTML=workbenchShell(body,state.section);bindWorkbench();
+/*
+ * What actually governs this module, taken from the database rather than
+ * described in a sentence. A setup screen that only says how something is meant
+ * to work cannot tell you whether it is set up; these panels count real rows,
+ * so an empty one is a finding rather than a gap in the wording.
+ */
+/*
+ * A setup screen built from panels the server counted. Same shell for finance
+ * and for inventory, because the question is the same on both sides: what is
+ * actually configured here, and does anything sit against it.
+ */
+async function renderModuleSetupPanels(title,endpoint,section){
+  content.innerHTML='<div class="workspace-loading">Loading '+esc(String(title).toLowerCase())+'\u2026</div>';
+  try{
+    const d=await api(endpoint);
+    const panels=(d.panels||[]).filter(p=>p&&p.columns);
+    const blocks=panels.map(p=>{
+      const rows=(p.rows||[]).map(r=>'<tr>'+r.map((cell,i)=>
+        '<td'+(i&&typeof cell==='number'?' class="num"':'')+'>'
+        +(typeof cell==='number'&&Math.abs(cell)>=1000?money(cell):esc(cell==null?'-':cell))
+        +'</td>').join('')+'</tr>');
+      return `<section class="workspace-card"><header><div><h2>${esc(p.title)}</h2>
+        <span>${(p.rows||[]).length} row${(p.rows||[]).length===1?'':'s'}${p.note?' \u00b7 '+esc(p.note):''}</span></div></header>
+        ${operationalTable(p.columns,rows,{emptyMessage:'Nothing is set up here yet.'})}</section>`;});
+    const counted=panels.reduce((n,p)=>n+((p.rows||[]).length),0);
+    const tiles=vizTiles(panels.slice(0,5).map(p=>(
+      {label:p.title,value:(p.rows||[]).length,tone:(p.rows||[]).length?'good':'warning',
+       sub:(p.rows||[]).length?'configured':'nothing set up'})));
+    const body=(counted?tiles:'')
+      +(blocks.length?blocks.join(''):
+        `<section class="workspace-card"><header><h2>${esc(title)}</h2></header>
+         ${operationalEmpty('Nothing is configured for this module yet.')}</section>`);
+    content.innerHTML=workbenchShell(body,section||state.section);
+    bindOperationalShell();bindViz(content);
+  }catch(error){showWorkspaceError(error);}
+}
+
+async function renderFinanceControlNotes(title,moduleCode,_legacyItems){
+  void _legacyItems;
+  const code=moduleCode||state.module?.code||'';
+  return renderModuleSetupPanels(title,'/finance/module-setup/'+encodeURIComponent(code),state.section);
 }
 
 async function renderInboundWorkspace(section){
@@ -4154,6 +4365,7 @@ state.ar={stream:'',status:'',from:'',to:'',q:'',page:1,selected:new Set()};
 async function renderReceivablesWorkspace(section){
   if(section==='records')return renderArCollections();
   if(section==='approvals')return renderArCollections('DRAFT');
+  if(section==='collections')return renderArCollectionBook();
   if(section==='statements')return renderArStatements();
   if(section==='reports')return renderArReports();
   if(section==='setup')return renderArLists();
@@ -4498,6 +4710,140 @@ function openArForm(row,lists){
  * is issued - because a real statement sometimes carries a line the ledger does
  * not, and because a document the customer has seen must not change afterwards.
  */
+
+/*
+ * The collection book. Money that came in, in one queue, because Finance works
+ * it as a queue rather than one entry at a time.
+ *
+ * Recording and posting are two different acts. Recording says the money
+ * arrived. Posting says it is in the bank: it writes the deposit to the bank
+ * register and moves that account's balance. Only the second one is
+ * irreversible in the sense that matters, which is why they are separate.
+ */
+async function renderArCollectionBook(state2){
+  const f=(window.__arBook=window.__arBook||{state:'',from:'',to:'',q:''});
+  if(state2!==undefined)f.state=state2;
+  content.innerHTML='<div class="workspace-loading">Loading collections\u2026</div>';
+  try{
+    const qs=new URLSearchParams({size:'300'});
+    if(f.state)qs.set('state',f.state);
+    if(f.from)qs.set('from',f.from);
+    if(f.to)qs.set('to',f.to);
+    if(f.q)qs.set('q',f.q);
+    const [d,reg]=await Promise.all([api('/receivables/receipts?'+qs),api('/receivables/bank-registry')]);
+    const t=d.totals||{};
+    const rows=(d.rows||[]).map(r=>{
+      const recorded=r.posting_status!=='POSTED';
+      return `<tr class="${r.posting_status==='REVERSED'?'is-void':''}">
+        <td>${recorded&&r.posting_status!=='REVERSED'?`<input type="checkbox" class="rc-pick" value="${r.id}">`:''}</td>
+        <td><b>${esc(r.receipt_no)}</b></td><td>${date(r.receipt_date)}</td>
+        <td>${esc(r.customer_name||'-')}</td><td>${esc(r.entry_no||'-')}</td>
+        <td class="num">${money(r.amount)}</td>
+        <td>${esc(r.payment_method||'-')}</td><td>${esc(r.bank_wallet||'-')}</td>
+        <td>${esc(r.bank_ref||r.or_no||'-')}</td>
+        <td>${statusBadge(r.posting_status==='POSTED'?'POSTED':r.posting_status==='REVERSED'?'REVERSED':'RECORDED')}</td>
+        <td>${r.posting_status==='POSTED'?esc(r.bank_account_code||'-'):'-'}</td>
+        <td>${r.posting_status==='POSTED'
+          ?`<button class="table-action danger" data-rc-unpost="${r.id}">Reverse</button>`
+          :(r.posting_status==='REVERSED'?'-':`<button class="table-action primary" data-rc-post="${r.id}">Post</button>`)}</td>
+      </tr>`;});
+
+    const tiles=vizTiles([
+      {label:'Collected',value:Number(t.total||0),sub:Number(t.n||0)+' collections'},
+      {label:'Awaiting posting',value:Number(t.recorded||0),
+       tone:Number(t.recordedCount)?'warning':'good',sub:Number(t.recordedCount||0)+' recorded',section:'collections'},
+      {label:'In the bank',value:Number(t.posted||0),tone:'good',sub:'posted to the registry'},
+    ].concat((reg.accounts||[]).slice(0,4).map(a=>(
+      {label:a.bank_name||a.bank_account_code,value:Number(a.balance||0),
+       sub:Number(a.movements||0)+' movements'}))));
+
+    const charts='<div class="viz-grid">'
+      +vizDonut((d.byMethod||[]).map(r=>({label:r.label,value:Number(r.value)||0})),
+        {title:'How the money came in',totalLabel:'Collected',keyLabel:'Method',valueLabel:'Collected'})
+      +vizDonut((d.byBank||[]).map(r=>({label:r.label,value:Number(r.value)||0})),
+        {title:'Which bank it landed in',totalLabel:'Collected',keyLabel:'Bank',valueLabel:'Collected'})
+      +'</div>';
+
+    const bankRows=(reg.accounts||[]).map(a=>`<tr><td><b>${esc(a.bank_account_code)}</b></td>
+      <td>${esc(a.bank_name)}</td><td>${esc(a.account_name||'-')}</td><td>${esc(a.currency||'PHP')}</td>
+      <td class="num">${money(a.collected)}</td><td class="num">${esc(a.movements||0)}</td>
+      <td class="num"><b>${money(a.balance)}</b></td></tr>`);
+
+    const stateOpts=[['','All'],['RECORDED','Awaiting posting'],['POSTED','Posted']]
+      .map(([v,l])=>`<option value="${v}" ${f.state===v?'selected':''}>${l}</option>`).join('');
+    const body=`<div class="workspace-commandbar">
+        <label class="inline-control"><span>State</span><select id="rcState">${stateOpts}</select></label>
+        <label class="inline-control"><span>From</span><input type="date" id="rcFrom" value="${esc(f.from)}"></label>
+        <label class="inline-control"><span>To</span><input type="date" id="rcTo" value="${esc(f.to)}"></label>
+        <input id="rcQ" placeholder="Customer, receipt, entry or bank reference" value="${esc(f.q)}">
+        <button class="command" id="rcApply">Apply</button>
+        <span class="command-spacer"></span>
+        <button class="command primary" id="rcPostSelected">Post selected</button></div>
+      ${tiles}${charts}
+      <section class="workspace-card"><header><div><h2>Collections</h2>
+        <span>${money(t.total)} collected \u00b7 ${money(t.recorded)} waiting to be posted \u00b7 ${money(t.posted)} in the bank</span></div></header>
+        ${operationalTable(['','Receipt','Date','Customer','Entry','Amount','Method','Bank / Wallet',
+          'Reference','State','Posted to','Action'],rows,{emptyMessage:'No collections match this filter.'})}</section>
+      <section class="workspace-card"><header><div><h2>Bank Registry</h2>
+        <span>${reg.waiting?.count||0} collection${reg.waiting?.count===1?'':'s'} still to post \u00b7 ${money(reg.waiting?.value)}</span></div></header>
+        ${operationalTable(['Account','Bank','Name','Currency','Collected','Movements','Balance'],bankRows,
+          {emptyMessage:'No bank accounts are set up.'})}</section>`;
+    content.innerHTML=workbenchShell(body,'collections');
+    bindOperationalShell();bindViz(content);
+
+    const apply=()=>{f.state=$('#rcState').value;f.from=$('#rcFrom').value;f.to=$('#rcTo').value;
+      f.q=$('#rcQ').value;renderArCollectionBook();};
+    $('#rcApply').onclick=apply;
+    $('#rcQ').onkeydown=e=>{if(e.key==='Enter')apply();};
+    $$('[data-rc-post]').forEach(b=>b.onclick=()=>arPostReceipts([Number(b.dataset.rcPost)]));
+    $$('[data-rc-unpost]').forEach(b=>b.onclick=()=>arUnpostReceipt(Number(b.dataset.rcUnpost)));
+    $('#rcPostSelected').onclick=()=>{
+      const ids=$$('.rc-pick:checked').map(x=>Number(x.value));
+      if(!ids.length)return toast('Tick the collections you want to post.','error');
+      arPostReceipts(ids);};
+  }catch(error){showWorkspaceError(error);}
+}
+
+/* Posting a collection moves a bank balance, so it asks once and says what it will do. */
+function arPostReceipts(ids){
+  modal(ids.length===1?'Post this collection?':`Post ${ids.length} collections?`,
+    `<div class="operational-form">
+      <div class="modal-actions"><button type="button" class="command primary" id="rcYes">
+        ${ids.length===1?'Post it':'Post all '+ids.length}</button>
+      <button type="button" class="command" id="rcNo">Not yet</button></div></div>`);
+  const mb=$('#modalBody');
+  mb.querySelector('#rcNo').onclick=()=>closeModal();
+  mb.querySelector('#rcYes').onclick=async()=>{
+    try{
+      const r=await api('/receivables/receipts/post',{method:'POST',body:JSON.stringify({ids})});
+      closeModal();
+      const skipped=(r.skipped||[]);
+      toast(`${(r.posted||[]).length} posted to the bank registry`
+        +(skipped.length?` \u00b7 ${skipped.length} skipped (${esc(skipped[0].reason)})`:''),
+        (r.posted||[]).length?'success':'error');
+      await renderArCollectionBook();
+    }catch(error){toast(error.message,'error');}
+  };
+}
+
+function arUnpostReceipt(id){
+  modal('Reverse this posted collection?',
+    `<form id="rcRevForm" class="operational-form">
+      <label class="wide"><span>Reason</span><input name="reason" required></label>
+      <div class="modal-actions"><button type="submit" class="command primary">Reverse it</button>
+      <button type="button" class="command" id="rcRevNo">Cancel</button></div></form>`);
+  const mb=$('#modalBody');
+  mb.querySelector('#rcRevNo').onclick=()=>closeModal();
+  mb.querySelector('#rcRevForm').onsubmit=async e=>{
+    e.preventDefault();
+    try{await api(`/receivables/receipts/${id}/unpost`,{method:'POST',
+      body:JSON.stringify(formDataObject(e.currentTarget))});
+      closeModal();toast('Reversed, with a contra on the bank register');
+      await renderArCollectionBook();}
+    catch(error){toast(error.message,'error');}
+  };
+}
+
 async function renderArStatements(){
   content.innerHTML='<div class="workspace-loading">Loading statements\u2026</div>';
   try{
@@ -5095,12 +5441,7 @@ async function renderCycleVariances(countId=state.cycleCount){
 }
 
 function renderCycleSetup(){
-  const body=`<div class="setup-grid">
-    <section class="workspace-card"><header><h2>Variance Types</h2></header><div class="definition-list">
-      <div><b>MISSING</b></div><div><b>LOCATION MISMATCH</b></div>
-      <div><b>UNKNOWN SERIAL</b></div><div><b>DUPLICATE</b></div>
-    </div></section></div>`;
-  content.innerHTML=workbenchShell(body,'setup');bindOperationalShell();
+  return renderModuleSetupPanels('Count controls','/inventory/module-setup/ip-cycle-counting','setup');
 }
 
 let __recCfg=null,__recPass='',__recEntity=null;
@@ -5590,12 +5931,7 @@ async function renderInventoryPlanningReports(){
 
 
 function renderInventoryPlanningSetup(){
-  const body=`<div class="setup-grid"><section class="workspace-card"><header><h2>Planning Sources</h2></header><div class="definition-list">
-    <div><b>On hand</b></div><div><b>Incoming</b></div>
-    <div><b>Open PO</b></div><div><b>Deployed</b></div></div></section>
-    <section class="workspace-card"><header><h2>Plan Types</h2></header><div class="definition-list">
-      <div><b>Ordering</b></div><div><b>Deployment</b></div><div><b>Replenishment</b></div></div></section></div>`;
-  content.innerHTML=workbenchShell(body,'setup');bindOperationalShell();
+  return renderModuleSetupPanels('Planning sources','/inventory/module-setup/ip-inventory-analysis','setup');
 }
 
 async function renderConnectedModuleWorkspace(section){
@@ -7328,6 +7664,15 @@ init();
   .ar-collect .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px}
   .ar-collect .form-grid label.wide{grid-column:1/-1}
   .table-action.primary{border-color:#12305f;background:#12305f;color:#fff}
+
+  /* Registering an account title without leaving the journal you are typing. */
+  .jl-acct{display:flex;gap:5px;align-items:center}
+  .jl-acct select{flex:1;min-width:0}
+  .jl-new{white-space:nowrap}
+  .acct-card{padding:11px 13px;border:1px solid #cfe0ee;border-radius:8px;background:#f5f9fd;margin:6px 0}
+  .acct-card>b{display:block;font-size:12.5px;color:#0a2239;margin-bottom:8px}
+  .acct-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+  .acct-card-actions{display:flex;gap:7px;margin-top:10px}
 
   /* Statement of account: the closing balance is what the eye should land on. */
   .soa-head{display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px}
