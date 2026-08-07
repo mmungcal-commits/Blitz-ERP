@@ -11,6 +11,7 @@
     "test:unit": "node --test test/*.test.mjs",
     "test:integration": "node test/auth.integration.mjs",
     "test:data": "python scripts/self_test.py",
+    "test:mobile": "node test/mobile-render.mjs",
     "test": "npm run test:unit && npm run test:e2e && npm run test:data",
     "build": "npm run check && npm test",
     "generate:data": "python scripts/generate_opening_data.py",
