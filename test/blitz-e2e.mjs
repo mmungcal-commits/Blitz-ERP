@@ -874,6 +874,89 @@ await t('a purchase order without its quotation is refused by the API', async()=
   return {note:bare.json.error.slice(0,58)};
 });
 
+/*
+ * A draft purchase order is a working document; a routed one is something
+ * somebody is being asked to sign for. The line between the two is the whole
+ * point of the rule, so it is tested from both sides.
+ */
+await t('a draft purchase order can be corrected, a routed one cannot', async()=>{
+  const made=await call('POST','/api/procurement/purchase-orders',{
+    vendorName:'Editable Supplies Inc',orderDate:'2026-08-07',currency:'PHP',
+    lines:[{itemCode:'SP-EDIT1',description:'Brake cable',qty:2,unitCost:500}],
+    attachments:[{fileName:'quote.pdf',url:'https://example.invalid/quote.pdf'}]});
+  if(!made.json?.ok) throw new Error(made.json?.error);
+  const id=made.json.id;
+  if(Number(made.json.total)!==1000) throw new Error('created total '+made.json.total);
+
+  // Rows are replaced wholesale and the total follows them.
+  const ed=await call('PATCH','/api/procurement/purchase-orders/'+id,{
+    lines:[{itemCode:'SP-EDIT1',description:'Brake cable',qty:3,unitCost:500},
+           {itemCode:'SP-EDIT2',description:'Cable housing',qty:1,unitCost:250}],taxAmount:150});
+  if(!ed.json?.ok) throw new Error(ed.json?.error);
+  const h=sqlite.prepare('SELECT subtotal,tax_amount,total_amount FROM erp_purchase_orders WHERE id=?').get(id);
+  if(Number(h.subtotal)!==1750||Number(h.total_amount)!==1900)
+    throw new Error('totals did not follow the rows: '+JSON.stringify(h));
+  const lines=sqlite.prepare('SELECT line_no,ordered_qty FROM erp_purchase_order_lines WHERE purchase_order_id=? ORDER BY line_no').all(id);
+  if(lines.length!==2||Number(lines[0].ordered_qty)!==3)
+    throw new Error('lines were not replaced: '+JSON.stringify(lines));
+
+  // Once it is out for signature the figure is frozen.
+  sqlite.prepare("UPDATE erp_purchase_orders SET status='FOR_APPROVAL' WHERE id=?").run(id);
+  const late=await call('PATCH','/api/procurement/purchase-orders/'+id,{taxAmount:0});
+  if(late.json?.ok) throw new Error('a routed purchase order was edited');
+  if(!/no longer be edited/i.test(late.json.error||'')) throw new Error('wrong refusal: '+late.json.error);
+  return {note:'rows replaced, total re-derived to 1,900; frozen once routed'};
+});
+
+await t('an approved purchase order raises its own payment request', async()=>{
+  // Raised by one person and approved by another: the same person cannot do
+  // both, and the rule that stops them is worth not tripping over here.
+  const prev=who;
+  let id;
+  try{
+    who='judy@nrdev.ph';
+    const made=await call('POST','/api/procurement/purchase-orders',{
+      vendorName:'Autoraise Trading',orderDate:'2026-08-07',currency:'PHP',
+      lines:[{itemCode:'SP-AUTO1',description:'Charger unit',qty:4,unitCost:2500}],
+      attachments:[{fileName:'quote.pdf',url:'https://example.invalid/quote.pdf'}]});
+    if(!made.json?.ok) throw new Error(made.json?.error);
+    id=made.json.id;
+  } finally { who=prev; }
+
+  // Walk the chain with whoever each step calls for, until it completes.
+  sqlite.exec("INSERT OR IGNORE INTO erp_users(email,display_name,role_code,department,active) VALUES('scm2@nrdev.ph','Second SCM','SCM_MANAGER','Supply Chain',1)");
+  let approved=null;
+  const signers=['scm2@nrdev.ph','samuel@nrdev.ph','mmungcal@nrdev.ph'];
+  for(const signer of signers){
+    const prev2=who;
+    try{ who=signer; approved=await call('POST','/api/procurement/purchase-orders/'+id+'/approve',{}); }
+    finally { who=prev2; }
+    if(approved.json?.ok&&approved.json.approved) break;
+  }
+  if(!approved?.json?.ok) throw new Error(approved?.json?.error);
+  if(!approved.json.approved) throw new Error('the chain never completed');
+  const rfp=approved.json.paymentRequest;
+  if(!rfp?.created) throw new Error('no payment request was raised: '+JSON.stringify(rfp));
+
+  const row=sqlite.prepare(`SELECT request_no,payee_name,gross_amount,net_payable,status,purchase_order_no
+    FROM erp_payment_requests WHERE purchase_order_id=?`).get(id);
+  if(!row) throw new Error('the RFP is not on the register');
+  if(row.status!=='DRAFT') throw new Error('raised as '+row.status+', Finance must still own it');
+  if(Number(row.gross_amount)!==10000) throw new Error('gross '+row.gross_amount+', expected the PO total');
+  if(row.payee_name!=='Autoraise Trading') throw new Error('payee '+row.payee_name);
+  if(!row.purchase_order_no) throw new Error('the RFP does not point back at its purchase order');
+
+  // Approving again must not raise a second request for the same money.
+  sqlite.prepare("UPDATE erp_purchase_orders SET status='DRAFT' WHERE id=?").run(id);
+  let again; const prev3=who;
+  try{ who='mmungcal@nrdev.ph'; again=await call('POST','/api/procurement/purchase-orders/'+id+'/approve',{}); }
+  finally { who=prev3; }
+  const count=sqlite.prepare('SELECT COUNT(*) n FROM erp_payment_requests WHERE purchase_order_id=?').get(id).n;
+  if(count!==1) throw new Error('the same purchase order raised '+count+' payment requests');
+  if(again.json?.paymentRequest?.created) throw new Error('a duplicate request was reported as created');
+  return {note:`${row.request_no} drafted for ${row.payee_name}, 10,000, and not duplicable`};
+});
+
 await t('only Finance clears a receiving discrepancy, and someone else acknowledges it', async()=>{
   // Seed one rather than hope the fixture has one: a rule proved by the absence
   // of a test case is not proved at all.
@@ -1054,6 +1137,74 @@ await t('collection % is measured against what was actually posted', async()=>{
   if(Math.abs((collectionPct+receivablesPct)-100)>0.02)
     throw new Error(`rates sum to ${collectionPct+receivablesPct}`);
   return {note:`billed ${billed}, collected ${collected}, ${Math.round(collectionPct)}% collected`};
+});
+
+/*
+ * A statement is arithmetic the customer can check: what they owed before the
+ * month, what was charged in it, what they paid, and what is left. If any of
+ * those four can drift from the register the document is worthless, so the test
+ * builds a month with a brought-forward balance and proves the four agree.
+ */
+await t('a statement of account is generated from the register and frozen when issued', async()=>{
+  const CUST='STATEMENT TEST CORP';
+  const raise=async(date,amount)=>{
+    const r=await call('POST','/api/receivables/collections',{
+      stream:'MC_LEASED',txnDate:date,salesType:'Leased',customerName:CUST,
+      grossAmount:amount,vatType:'VATable',vatRate:0.12});
+    if(!r.json?.ok) throw new Error(r.json?.error);
+    const p=await call('POST','/api/receivables/collections/post',{ids:[r.json.id]});
+    if(!p.json?.ok) throw new Error(p.json?.error);
+    return r.json.id;
+  };
+  // February: billed 10,000, paid 4,000. So March opens owing 6,000.
+  const feb=await raise('2026-02-10',10000);
+  const febPay=await call('POST',`/api/receivables/collections/${feb}/collect`,
+    {receiptDate:'2026-02-20',amount:4000,paymentMethod:'Cash'});
+  if(!febPay.json?.ok) throw new Error(febPay.json?.error);
+  // March: billed 5,000, paid 2,000.
+  const mar=await raise('2026-03-05',5000);
+  const marPay=await call('POST',`/api/receivables/collections/${mar}/collect`,
+    {receiptDate:'2026-03-25',amount:2000,paymentMethod:'Bank Transfer'});
+  if(!marPay.json?.ok) throw new Error(marPay.json?.error);
+
+  const gen=await call('POST','/api/receivables/statements/generate',{customerName:CUST,month:'2026-03'});
+  if(!gen.json?.ok) throw new Error(gen.json?.error);
+  const {id,opening,billed,collected,closing}=gen.json;
+  if(Math.abs(opening-6000)>0.01) throw new Error('opening '+opening+', expected 6,000 brought forward');
+  if(Math.abs(billed-5000)>0.01) throw new Error('charges '+billed);
+  if(Math.abs(collected-2000)>0.01) throw new Error('payments '+collected);
+  if(Math.abs(closing-9000)>0.01) throw new Error('closing '+closing+', expected 9,000');
+  if(Math.abs((opening+billed-collected)-closing)>0.01) throw new Error('the statement does not add up');
+  // Only the month's own movements are on it, never February's.
+  const lines=sqlite.prepare('SELECT reference,charge,credit FROM erp_ar_statement_lines WHERE statement_id=? ORDER BY line_no').all(id);
+  if(lines.length!==2) throw new Error('lines '+lines.length+': '+JSON.stringify(lines));
+
+  // A month with nothing in it and nothing owing is not a statement.
+  const empty=await call('POST','/api/receivables/statements/generate',
+    {customerName:'NOBODY AT ALL',month:'2026-03'});
+  if(empty.json?.ok) throw new Error('a statement was generated for a customer with no activity');
+
+  // Editable while draft, and the totals re-derive from the rows.
+  const ed=await call('PATCH','/api/receivables/statements/'+id,{
+    openingBalance:6000,
+    lines:[{lineDate:'2026-03-05',reference:'AR',description:'Lease billing',charge:5000,credit:0},
+           {lineDate:'2026-03-25',reference:'OR',description:'Payment received',charge:0,credit:2000},
+           {lineDate:'2026-03-31',reference:'ADJ',description:'Agreed goodwill adjustment',charge:0,credit:500}]});
+  if(!ed.json?.ok) throw new Error(ed.json?.error);
+  if(Math.abs(Number(ed.json.statement.closing_balance)-8500)>0.01)
+    throw new Error('closing after the adjustment '+ed.json.statement.closing_balance);
+
+  const issued=await call('POST',`/api/receivables/statements/${id}/issue`,{});
+  if(!issued.json?.ok) throw new Error(issued.json?.error);
+  // Issued is a document: it does not change and it does not get deleted.
+  const late=await call('PATCH','/api/receivables/statements/'+id,{notes:'sneaky'});
+  if(late.json?.ok) throw new Error('an issued statement was edited');
+  const del=await call('DELETE','/api/receivables/statements/'+id);
+  if(del.json?.ok) throw new Error('an issued statement was deleted');
+  // And the same month cannot be issued twice with a different closing balance.
+  const twice=await call('POST','/api/receivables/statements/generate',{customerName:CUST,month:'2026-03'});
+  if(twice.json?.ok) throw new Error('a second statement was generated for an issued month');
+  return {note:'opening 6,000 + 5,000 - 2,000 = 9,000; adjustment to 8,500; frozen on issue'};
 });
 
 await t('a sales order becomes a receivable, once', async()=>{

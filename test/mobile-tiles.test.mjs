@@ -22,12 +22,23 @@ function tileModules() {
   };
 }
 
+/*
+ * Tabs are declared two ways: a dedicated `if(code===...)` branch for modules
+ * with bespoke workbenches, and a one-line entry in the shared map for the
+ * rest. A tile pointing at a section is just as broken either way, so the
+ * guard has to read both forms.
+ */
 function tabsFor(code) {
   const marker = `if(code==='${code}')return [`;
   const start = src.indexOf(marker);
-  if (start === -1) return null;
-  const block = src.slice(start, src.indexOf('];', start));
-  return [...block.matchAll(/\['([a-z]+)','/g)].map(m => m[1]);
+  if (start !== -1) {
+    const block = src.slice(start, src.indexOf('];', start));
+    return [...block.matchAll(/\['([a-z]+)','/g)].map(m => m[1]);
+  }
+  const mapStart = src.indexOf(`'${code}':[[`);
+  if (mapStart === -1) return null;
+  const line = src.slice(mapStart, src.indexOf('\n', mapStart));
+  return [...line.matchAll(/\['([a-z]+)','/g)].map(m => m[1]);
 }
 
 test('the physical count module has mobile tiles', () => {

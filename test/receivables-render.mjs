@@ -66,6 +66,26 @@ const SUMMARY = { ok:true, totals:TOTALS,
   billed:121706.59, billedCount:1, collected:40000, outstanding:81706.59,
   collectionPct:32.86, receivablesPct:67.14 };
 
+// One issued statement and one draft, so both the frozen and the editable
+// shapes of the dialog are on the page at least once.
+const STATEMENTS = { ok:true,
+  rows:[
+    { id:1, statement_no:'SOA-2026-00001', period_month:'2026-03', customer_name:'JAMO BUSINESS SOLUTIONS',
+      opening_balance:6000, billed_amount:121706.59, collected_amount:40000, closing_balance:87706.59, status:'DRAFT' },
+    { id:2, statement_no:'SOA-2026-00002', period_month:'2026-02', customer_name:'ANGKAS RIDERS INC',
+      opening_balance:0, billed_amount:250000, collected_amount:250000, closing_balance:0, status:'ISSUED' },
+  ],
+  months:[{ label:'2026-03' }, { label:'2026-02' }],
+  customers:[{ label:'JAMO BUSINESS SOLUTIONS', n:4 }, { label:'ANGKAS RIDERS INC', n:2 }] };
+const STATEMENT_ONE = { ok:true,
+  statement:{ ...STATEMENTS.rows[0], notes:'' },
+  lines:[
+    { id:1, line_no:1, line_date:'2026-03-04', reference:'AR-2026-00001', description:'March lease billing',
+      charge:121706.59, credit:0, source_type:'COLLECTION' },
+    { id:2, line_no:2, line_date:'2026-03-20', reference:'OR-2026-00001', description:'Payment received (Bank Transfer)',
+      charge:0, credit:40000, source_type:'RECEIPT' },
+  ]};
+
 let collectPosted = null;
 const server = createServer(async (req,res)=>{
   const path = req.url.split('?')[0];
@@ -78,6 +98,8 @@ const server = createServer(async (req,res)=>{
       return res.end(JSON.stringify({ ok:true, rows:ROWS, page:1, size:50, total:3, totals:TOTALS,
         byStream:SUMMARY.byStream, byMethod:[], streams:LISTS.streams }));
     if (/\/collections\/\d+\/receipts$/.test(path)) return res.end(JSON.stringify(RECEIPTS));
+    if (path === '/api/receivables/statements') return res.end(JSON.stringify(STATEMENTS));
+    if (/\/statements\/\d+$/.test(path)) return res.end(JSON.stringify(STATEMENT_ONE));
     if (/\/collections\/\d+\/collect$/.test(path)){
       let body=''; for await (const chunk of req) body += chunk;
       collectPosted = JSON.parse(body||'{}');
@@ -196,6 +218,36 @@ const tileLabels = await page.locator('.viz-tile-label').allTextContents();
 check('billed, collected and outstanding are all on the tiles',
   ['Billed','Collected','Outstanding'].every(l=>tileLabels.includes(l)), tileLabels.join(' | '));
 await page.screenshot({ path:SHOTS+'ar-centre.png', fullPage:true });
+
+/* --------------------------------------------------------- statements */
+await page.evaluate(()=>document.querySelector('[data-section="statements"]').click());
+await page.waitForSelector('#soaGenerate', { timeout:8000 });
+const soaHeaders = await page.locator('.workspace-card table thead th').allTextContents();
+check('the statement register shows the balance carried through',
+  ['Opening','Charges','Payments','Closing'].every(h=>soaHeaders.includes(h)), soaHeaders.join(' | '));
+check('a month and a customer are picked, not typed',
+  (await page.locator('#soaMonth option').count()) >= 2
+  && (await page.locator('#soaCustomer option').count()) >= 2);
+
+await page.locator('[data-soa-open="1"]').click();
+await page.waitForSelector('#soaLines', { timeout:5000 });
+check('a draft statement opens with its generated lines',
+  (await page.locator('.soa-line:not(.soa-line-head)').count()) === 2,
+  `${await page.locator('.soa-line:not(.soa-line-head)').count()} lines`);
+check('the closing balance is arithmetic, not a stored number',
+  (await page.locator('#soaClosing').innerText()).includes('87,706.59'),
+  await page.locator('#soaClosing').innerText());
+
+// Adding a credit line must move the closing balance on the spot.
+await page.locator('#soaAdd').click();
+const last = page.locator('.soa-line:not(.soa-line-head)').last();
+await last.locator('[data-s="credit"]').fill('706.59');
+check('an adjustment moves the closing balance as it is typed',
+  (await page.locator('#soaClosing').innerText()).includes('87,000'),
+  await page.locator('#soaClosing').innerText());
+check('a draft statement can be issued', await page.locator('#soaIssue').count() === 1);
+await page.screenshot({ path:SHOTS+'ar-statement.png', fullPage:true });
+await page.locator('#soaClose').click();
 
 check('no script errors', errors.length === 0, errors.slice(0,3).join(' | ') || 'clean');
 
