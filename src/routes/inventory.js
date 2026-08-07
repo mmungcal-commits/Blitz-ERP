@@ -424,7 +424,13 @@ inventoryRoutes.get('/cycle-counts/:id', requirePermission('INVENTORY','VIEW'), 
     LEFT JOIN erp_assets a ON a.id=COALESCE(ccl.actual_asset_id,ccl.expected_asset_id)
     LEFT JOIN erp_items i ON i.id=COALESCE(ccl.expected_item_id,a.item_id)
     LEFT JOIN erp_cycle_count_new_units nu ON nu.line_id=ccl.id
-    LEFT JOIN erp_items ni ON UPPER(ni.item_code)=UPPER(nu.item_code)
+    -- erp_items.item_code is UNIQUE, but that constraint is case-sensitive, so
+    -- matching on UPPER() could in principle hit two rows and duplicate every
+    -- line on the sheet. Collapse to one id first: a count sheet must never
+    -- grow rows just because the master has odd casing.
+    LEFT JOIN (SELECT UPPER(item_code) k,MIN(id) id FROM erp_items GROUP BY UPPER(item_code)) nik
+      ON nik.k=UPPER(nu.item_code)
+    LEFT JOIN erp_items ni ON ni.id=nik.id
     LEFT JOIN erp_locations al ON al.id=ccl.actual_location_id
     WHERE ccl.cycle_count_id=?
     ORDER BY CASE ccl.count_status WHEN 'VARIANCE' THEN 0 WHEN 'NOT_COUNTED' THEN 1 ELSE 2 END,
@@ -466,7 +472,10 @@ async function fillFromItemMaster(db,supplied){
     category:normalizeText(supplied.category),unitCost:Number(supplied.unitCost)||0,itemId:null};
   if(!code)return out;
   const row=await first(db,
-    `SELECT id,item_code,item_name,category,standard_cost FROM erp_items WHERE UPPER(item_code)=UPPER(?)`,[code]);
+    // An exact match wins over a case-insensitive one, so a code typed exactly
+    // as the master holds it always resolves to that row.
+    `SELECT id,item_code,item_name,category,standard_cost FROM erp_items
+     WHERE UPPER(item_code)=UPPER(?) ORDER BY CASE WHEN item_code=? THEN 0 ELSE 1 END,id LIMIT 1`,[code,code]);
   if(!row)return out;
   out.itemId=row.id;
   out.itemCode=row.item_code;
