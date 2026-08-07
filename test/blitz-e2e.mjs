@@ -244,11 +244,144 @@ await t('liquidation opens once approved', async()=>{
   if(!rev.json?.ok) throw new Error(rev.json?.error);
   return {note:r.json.liquidationNo+' spent 2000 / variance 3000 -> '+rev.json.status};
 });
-await t('RFP return notifies and rejects', async()=>{
-  const r=await call('POST',`/api/finance/payment-requests/${globalThis.__rfp}/action`,{action:'RETURN',reason:'Missing OR'});
+await t('RFP return needs a reason', async()=>{
+  const r=await call('POST',`/api/finance/payment-requests/${globalThis.__rfp}/action`,{action:'RETURN'});
+  if(r.json?.ok) throw new Error('an empty return reason was accepted');
+  return {note:r.json.error.slice(0,60)};
+});
+await t('RFP return sends it back to the requestor', async()=>{
+  const r=await call('POST',`/api/finance/payment-requests/${globalThis.__rfp}/action`,
+    {action:'RETURN',reason:'Incomplete supporting documents - missing OR'});
   if(!r.json?.ok) throw new Error(r.json?.error);
-  if(r.json.request.status!=='REJECTED') throw new Error('status '+r.json.request.status);
+  if(r.json.request.status!=='RETURNED') throw new Error('status '+r.json.request.status);
   return {note:'status '+r.json.request.status+', mail skipped='+(r.json.notified?.skipped??'n/a')};
+});
+
+// ---- RFP workflow, against the spec ("E88 RFP & Payments" sections 3-6, 9)
+// One user per approval stage, so separation of duties can actually be exercised.
+sqlite.exec(`
+  INSERT OR IGNORE INTO erp_users(email,display_name,role_code,active) VALUES
+    ('head@nrdev.ph','Dept Head','DEPT_HEAD',1),
+    ('fin2@nrdev.ph','Second Finance','FINANCE',1),
+    ('mancom@nrdev.ph','MANCOM Member','MANCOM',1),
+    ('ceo@nrdev.ph','Chief Executive','CEO',1);
+`);
+const rfpOf=id=>sqlite.prepare('SELECT * FROM erp_payment_requests WHERE id=?').get(id);
+async function newRfp(amount,dept='Operations & Product'){
+  const ent=sqlite.prepare('SELECT id,entity_code FROM erp_legal_entities LIMIT 1').get();
+  const r=await call('POST','/api/finance/payment-requests',{entityCode:ent.entity_code,payeeName:'Vendor B',
+    department:dept,purpose:'Spec test',grossAmount:amount,supplierInvoiceNo:'INV-'+amount+'-'+Math.floor(amount*7%9973)});
+  if(!r.json?.ok) throw new Error(r.json?.error);
+  return r.json;
+}
+await t('RFP numbering is RFP-<DEPT><YEAR>-NNNN', async()=>{
+  const a=await newRfp(1000);
+  if(!/^RFP-OPS\d{4}-\d{4}$/.test(a.requestNo)) throw new Error('got '+a.requestNo);
+  globalThis.__small=a.id;
+  return {note:a.requestNo};
+});
+await t('approval without a signature is refused', async()=>{
+  const r=await call('POST',`/api/finance/payment-requests/${globalThis.__small}/action`,{action:'SUBMIT'});
+  if(!r.json?.ok) throw new Error(r.json?.error);
+  const d=await call('POST',`/api/finance/payment-requests/${globalThis.__small}/action`,
+    {action:'DEPARTMENT_APPROVE',signature:''});
+  if(d.json?.ok) throw new Error('approved with no signature');
+  return {note:d.json.error.slice(0,60)};
+});
+await t('the submitter cannot approve their own request', async()=>{
+  const d=await call('POST',`/api/finance/payment-requests/${globalThis.__small}/action`,
+    {action:'DEPARTMENT_APPROVE',signature:'Mark Alexis Mungcal'});
+  if(d.json?.ok) throw new Error('the requestor approved their own RFP');
+  return {note:d.json.error.slice(0,60)};
+});
+await t('one person cannot sign two stages', async()=>{
+  // judy raises it, mmungcal signs DEPARTMENT, then tries FINANCE as well.
+  let created; try{ who='judy@nrdev.ph'; created=await newRfp(2500); } finally { who='mmungcal@nrdev.ph'; }
+  const id=created.id;
+  try{ who='judy@nrdev.ph'; await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'SUBMIT'}); }
+  finally { who='mmungcal@nrdev.ph'; }
+  const dep=await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'DEPARTMENT_APPROVE',signature:'Mark Alexis Mungcal'});
+  if(!dep.json?.ok) throw new Error(dep.json?.error);
+  const again=await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'FINANCE_VALIDATE',signature:'Mark Alexis Mungcal'});
+  if(again.json?.ok) throw new Error('the same signer cleared two stages');
+  globalThis.__twoStage=id;
+  return {note:again.json.error.slice(0,60)};
+});
+await t('a stage cannot be approved twice', async()=>{
+  const r=await call('POST',`/api/finance/payment-requests/${globalThis.__twoStage}/action`,
+    {action:'DEPARTMENT_APPROVE',signature:'Mark Alexis Mungcal'});
+  if(r.json?.ok) throw new Error('DEPARTMENT was signed twice');
+  return {note:r.json.error.slice(0,60)};
+});
+await t('MANCOM is skipped below the threshold', async()=>{
+  const r=await call('GET',`/api/finance/payment-requests/${globalThis.__small}`);
+  if(!r.json?.ok) throw new Error(r.json?.error);
+  const w=r.json.workflow;
+  if(w.mancomRequired) throw new Error('MANCOM demanded on '+r.json.request.net_payable);
+  if(w.stages.includes('MANCOM')) throw new Error('MANCOM in the stage list');
+  return {note:'PHP 1,000 -> stages '+w.stages.join(' > ')+' (min '+w.mancomMin+')'};
+});
+await t('MANCOM applies at or above the threshold', async()=>{
+  let created; try{ who='judy@nrdev.ph'; created=await newRfp(250000); } finally { who='mmungcal@nrdev.ph'; }
+  const id=created.id; globalThis.__big=id;
+  try{ who='judy@nrdev.ph'; await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'SUBMIT'}); }
+  finally { who='mmungcal@nrdev.ph'; }
+  const w=(await call('GET',`/api/finance/payment-requests/${id}`)).json.workflow;
+  if(!w.mancomRequired||!w.stages.includes('MANCOM')) throw new Error('MANCOM missing at 250,000');
+  // Department and Finance are cleared by two different people.
+  const dep=await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'DEPARTMENT_APPROVE',signature:'Mark Alexis Mungcal'});
+  if(!dep.json?.ok) throw new Error(dep.json?.error);
+  let fin; try{ who='fin2@nrdev.ph'; fin=await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'FINANCE_VALIDATE',signature:'Second Finance'}); }
+  finally { who='mmungcal@nrdev.ph'; }
+  if(!fin.json?.ok) throw new Error(fin.json?.error);
+  // The CEO cannot jump the queue while MANCOM is outstanding.
+  let skip; try{ who='ceo@nrdev.ph'; skip=await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'FINAL_APPROVE',signature:'Chief Executive'}); }
+  finally { who='mmungcal@nrdev.ph'; }
+  if(skip.json?.ok) throw new Error('final approval skipped MANCOM');
+  return {note:'stages '+w.stages.join(' > ')+' · '+skip.json.error.slice(0,50)};
+});
+await t('MANCOM approval unblocks final approval', async()=>{
+  const id=globalThis.__big;
+  let man; try{ who='mancom@nrdev.ph'; man=await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'MANCOM_APPROVE',signature:'MANCOM Member'}); }
+  finally { who='mmungcal@nrdev.ph'; }
+  if(!man.json?.ok) throw new Error(man.json?.error);
+  if(rfpOf(id).status!=='MANCOM_APPROVED') throw new Error('status '+rfpOf(id).status);
+  const w=(await call('GET',`/api/finance/payment-requests/${id}`)).json.workflow;
+  if(w.nextStage!=='FINAL') throw new Error('next stage '+w.nextStage);
+  return {note:'MANCOM_APPROVED · next stage '+w.nextStage};
+});
+await t('MANCOM is refused below the threshold', async()=>{
+  const r=await call('POST',`/api/finance/payment-requests/${globalThis.__twoStage}/action`,
+    {action:'MANCOM_APPROVE',signature:'Mark Alexis Mungcal'});
+  if(r.json?.ok) throw new Error('MANCOM accepted on a 2,500 request');
+  return {note:r.json.error.slice(0,60)};
+});
+await t('attachments are editable only while draft', async()=>{
+  const file=[{fileName:'quote2.pdf',contentType:'application/pdf',size:100,data:'AAAA'}];
+  const blocked=await call('POST',`/api/finance/payment-requests/${globalThis.__big}/attachments`,{attachments:file});
+  if(blocked.json?.ok) throw new Error('a document was attached to an approved request');
+  const draft=await newRfp(700);
+  const okAdd=await call('POST',`/api/finance/payment-requests/${draft.id}/attachments`,{attachments:file});
+  if(!okAdd.json?.ok) throw new Error(okAdd.json?.error);
+  const attId=sqlite.prepare("SELECT id FROM erp_attachments WHERE record_id=? AND record_type='PAYMENT_REQUEST' ORDER BY id DESC LIMIT 1").get(draft.id).id;
+  const del=await call('DELETE',`/api/finance/payment-requests/${draft.id}/attachments/${attId}`);
+  if(!del.json?.ok) throw new Error(del.json?.error);
+  return {note:blocked.json.error.slice(0,44)+' · draft add+remove ok'};
+});
+await t('a returned request restarts the chain', async()=>{
+  const id=globalThis.__twoStage;
+  const ret=await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'RETURN',reason:'Wrong payee - fix bank details'});
+  if(!ret.json?.ok) throw new Error(ret.json?.error);
+  if(rfpOf(id).status!=='RETURNED') throw new Error('status '+rfpOf(id).status);
+  // Resubmitted, the DEPARTMENT stage is open again even though it was signed before.
+  let re; try{ who='judy@nrdev.ph'; re=await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'SUBMIT'}); }
+  finally { who='mmungcal@nrdev.ph'; }
+  if(!re.json?.ok) throw new Error(re.json?.error);
+  const w=(await call('GET',`/api/finance/payment-requests/${id}`)).json.workflow;
+  if(w.nextStage!=='DEPARTMENT') throw new Error('next stage '+w.nextStage);
+  const dep=await call('POST',`/api/finance/payment-requests/${id}/action`,{action:'DEPARTMENT_APPROVE',signature:'Mark Alexis Mungcal'});
+  if(!dep.json?.ok) throw new Error(dep.json?.error);
+  return {note:'returned -> resubmitted -> DEPARTMENT signed again'};
 });
 
 // ---- cycle count finance override
