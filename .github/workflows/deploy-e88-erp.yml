@@ -127,7 +127,11 @@ jobs:
           npx wrangler d1 execute DB --remote --file=migrations/0048_preferred_names.sql
           npx wrangler d1 execute DB --remote --file=migrations/0049_ar_statements.sql
           npx wrangler d1 execute DB --remote --file=migrations/0050_payment_request_lines.sql
-          npx wrangler d1 execute DB --remote --file=migrations/0051_procurement_register_2026.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0051_procurement_register_2026_01.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0051_procurement_register_2026_02.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0051_procurement_register_2026_03.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0051_procurement_register_2026_04.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0051_procurement_register_2026_05.sql
           npx wrangler d1 execute DB --remote --file=migrations/0052_collection_posting.sql
 
       # ---------- Empty-database bootstrap (unchanged) ----------
