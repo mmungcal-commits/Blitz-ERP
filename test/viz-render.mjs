@@ -292,6 +292,7 @@ FIN.department = 'Finance';
 FIN.period = { from:'2026-08-01', to:'2026-08-08' };
 FIN.focus = ['management','finance','inventory'];
 FIN.sections.management = { period:{from:'2026-08-01',to:'2026-08-08'},
+  pendingApprovals:7, pendingApprovalValue:842000, pendingMine:3,
   availableUnits:412, leasedUnits:96, soldUnits:31, deployedUnits:12,
   billed:1250000, collected:975000, outstanding:275000, invoices:18,
   collectionPct:78, receivablesPct:22, overdue:64000, overdueCount:3,
@@ -305,6 +306,11 @@ const finLabels = (await fin.locator('.viz-tile-label').allTextContents()).map(t
 check('Finance leads with the six numbers it asked for',
   ['PENDING APPROVALS','AVAILABLE UNITS','LEASED UNITS','SOLD UNITS','COLLECTION','RECEIVABLES']
     .every(l => finLabels.includes(l)), finLabels.join(', '));
+// Pending approval is the RFP queue, not a mix of every module's backlog.
+check('pending approvals counts RFPs in the chain, and says how many are yours',
+  (await fin.locator('.viz-tile:has-text("Pending approvals") .viz-tile-value').first().innerText()).trim() === '7'
+  && (await fin.locator('.viz-tile:has-text("Pending approvals") small').first().innerText()).includes('3 waiting on you'),
+  (await fin.locator('.viz-tile:has-text("Pending approvals") small').first().innerText()).trim());
 check('the period is stated and changeable',
   (await fin.locator('#homeFrom').inputValue()) === '2026-08-01'
   && (await fin.locator('#homeTo').inputValue()) === '2026-08-08'
@@ -347,6 +353,19 @@ check('a chart card stays a sensible width even when it is the only one',
   chartBox.width <= 700, `${Math.round(chartBox.width)}px wide`);
 const svgBox = await sparse.locator('.home-shell .viz-svg').first().boundingBox();
 check('the plot itself is bounded', svgBox.height <= 320, `${Math.round(svgBox.height)}px tall`);
+
+// A daily tally is discrete: six quiet days then one busy one is a row of
+// empty columns and one tall one, not a flat line that suddenly climbs.
+check('daily activity is drawn as columns, not a line',
+  (await sparse.locator('.home-shell figure.viz .viz-bar path').count()) >= 1
+  && (await sparse.locator('.home-shell figure.viz path[stroke-width="2"]').count()) === 0,
+  `${await sparse.locator('.home-shell .viz-bar').count()} columns`);
+
+// An empty system must say it is empty, not just show zeros.
+check('a dashboard of zeros explains itself',
+  (await sparse.locator('.home-empty').count()) === 1
+  && (await sparse.locator('.home-empty').innerText()).includes('count sheet'),
+  (await sparse.locator('.home-empty b').textContent()));
 await sparse.screenshot({ path:SHOTS+'home-sparse.png' });
 await sparse.close();
 zeroHome = null;
