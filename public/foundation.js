@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R41.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R42.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -45,7 +45,12 @@ function money(value){
 }
 function statusBadge(value='DRAFT'){
   const status=String(value).toUpperCase();
-  const tone=/APPROVED|POSTED|CLOSED|PAID|LIQUIDATED/.test(status)?'good':/CANCELLED|REJECTED/.test(status)?'bad':/FOR_APPROVAL|PENDING|RETURNED|FOR_LIQUIDATION/.test(status)?'warn':'info';
+  // Part paid is not paid. It has to read as an open balance or the register
+  // shows a settled green badge against money the company still owes.
+  const tone=/PARTIAL/.test(status)?'warn'
+    :/APPROVED|POSTED|CLOSED|PAID|LIQUIDATED/.test(status)?'good'
+    :/CANCELLED|REJECTED/.test(status)?'bad'
+    :/FOR_APPROVAL|PENDING|RETURNED|FOR_LIQUIDATION/.test(status)?'warn':'info';
   return `<span class="status ${tone}">${esc(status.replaceAll('_',' '))}</span>`;
 }
 async function api(path,options={}){
@@ -1664,6 +1669,158 @@ async function openRfpEdit(id,master){
   }catch(error){toast(error.message,'error');}
 }
 
+/*
+ * What has actually been paid against a request, and the proof of it.
+ *
+ * A request for payment is not a switch. A supply order settled 30% down and
+ * the balance on terms is two payments, on two dates, each with its own bank
+ * advice, and the screen has to be able to say which of them has a document
+ * behind it and which is still only a claim.
+ *
+ * So this card lists the payments rather than a status, shows the balance still
+ * owed, and puts the proof-of-payment uploader next to each payment - including
+ * the 318 that came out of the 2026 procurement register carrying a cheque
+ * number and no document.
+ */
+/* Who did it, said the way a person would say it. personName() takes a user
+ * object; a settlement only carries the address it was recorded under. */
+function actorName(email){
+  const e=String(email||'').trim();
+  if(!e)return '';
+  if(e==='procurement-register@nrdev.ph')return 'Procurement register';
+  const local=e.split('@')[0].replace(/[._-]+/g,' ');
+  return local.replace(/\b[a-z]/g,ch=>ch.toUpperCase());
+}
+
+async function pickFiles(input,limit=5){
+  const files=input&&input.files?[...input.files]:[];
+  const out=await Promise.all(files.slice(0,limit).map(file=>new Promise(resolve=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,
+      data:String(reader.result||'').split(',')[1]||''});
+    reader.onerror=()=>resolve(null);
+    reader.readAsDataURL(file);
+  })));
+  return out.filter(Boolean);
+}
+
+async function openRfpPayments(id){
+  try{
+    const d=await api('/finance/payment-requests/'+id,{noCache:true});
+    const r=d.request||{};
+    const st=d.settlement||{settlements:[],settled:0,balance:0};
+    const banks=st.banks||[];
+    const live=(st.settlements||[]).filter(x=>String(x.status||'SETTLED').toUpperCase()!=='VOID');
+    const proofCell=x=>{
+      if(x.proof_file_url)return `<a href="${esc(x.proof_file_url)}" target="_blank" rel="noopener">${esc(x.proof_file_name||'Document')}</a>`
+        +`<span class="pay-proof-by">${esc(actorName(x.proof_uploaded_by))}</span>`;
+      if(x.proof_reference)return `<span>${esc(x.proof_reference)}</span>`
+        +`<span class="pay-proof-by">reference only, no document</span>`;
+      return '<span class="pay-noproof">Not uploaded</span>';
+    };
+    const rows=(st.settlements||[]).map(x=>{
+      const void_=String(x.status||'').toUpperCase()==='VOID';
+      return `<tr class="${void_?'pay-void':''}">
+        <td>${date(x.paid_date)||'<span class="pay-noproof">no date</span>'}</td>
+        <td class="num">${money(x.amount)}</td>
+        <td>${esc(x.payment_reference||x.payment_method||'-')}</td>
+        <td>${esc(x.bank_name||x.account_name||'-')}</td>
+        <td>${proofCell(x)}</td>
+        <td>${esc(actorName(x.recorded_by))}</td>
+        <td>${void_?`<span class="status bad">VOID</span>`
+          :(st.canSettle?`<button class="table-action" data-pay-proof="${x.id}">Upload proof</button>`
+            +`<button class="table-action danger" data-pay-void="${x.id}">Void</button>`:'')}</td></tr>`;
+    });
+    const owed=Number(st.balance||0);
+    const note=st.proofRequired
+      ? `<p class="pay-note">Raised on or after ${esc(st.evidenceFrom||'')}, so this request stays open until the proof of payment is on the record, whatever the payments add up to.</p>`
+      : (st.withoutProof>0
+        ? `<p class="pay-note">${st.withoutProof} payment${st.withoutProof===1?'':'s'} here came from the 2026 procurement register with a reference but no document. Upload the bank advice to close that gap.</p>`
+        : '');
+    modal(`Payments · ${esc(r.request_no||'')}`,
+      `<div class="pay-card">
+        <div class="pay-figures">
+          <div><span>Net payable</span><b>${money(r.net_payable)}</b></div>
+          <div><span>Paid</span><b>${money(st.settled)}</b></div>
+          <div class="${owed>0.01?'pay-owed':''}"><span>Balance</span><b>${money(owed)}</b></div>
+          <div><span>Status</span><b>${financeStatus(r.status)}</b></div>
+        </div>
+        ${note}
+        ${operationalTable(['Paid on','Amount','Reference','Bank','Proof of payment','Recorded by',''],
+          rows.length?rows:[`<tr><td colspan="7"><div class="workspace-empty"><b>No payment recorded yet</b></div></td></tr>`])}
+        ${st.canSettle&&owed>0.01?`<form id="paySettleForm" class="operational-form pay-form">
+          <h3>Record a payment</h3>
+          <div class="form-grid">
+            <label><span>Amount</span><input name="amount" type="number" step="0.01" max="${owed}" value="${owed.toFixed(2)}" required></label>
+            <label><span>Paid on</span><input name="paidDate" type="date" value="${new Date().toISOString().slice(0,10)}" required></label>
+            <label><span>Bank account</span><select name="bankAccountId"><option value="">Not stated</option>
+              ${banks.map(b=>`<option value="${b.id}">${esc(b.bank_name||b.account_name||b.bank_account_code)}</option>`).join('')}</select></label>
+            <label><span>Method</span><select name="paymentMethod">
+              ${['Bank transfer','Cheque','Cash','Online wallet'].map(v=>`<option>${v}</option>`).join('')}</select></label>
+            <label><span>Payment reference</span><input name="paymentReference" placeholder="e.g. BT-2026-0417"></label>
+            <label><span>Proof of payment</span><input id="paySettleFile" type="file" multiple accept=".pdf,.png,.jpg,.jpeg"></label>
+            <label class="wide"><span>Notes</span><input name="notes" placeholder="e.g. 30% down payment"></label>
+          </div>
+          <div class="modal-actions"><button type="submit" class="command primary">Record payment</button>
+            <button type="button" class="command" id="payClose">Close</button></div></form>`
+        :`<div class="modal-actions"><button type="button" class="command" id="payClose">Close</button></div>`}
+      </div>`);
+
+    const mb=$('#modalBody');
+    if(mb.querySelector('#payClose'))mb.querySelector('#payClose').onclick=()=>closeModal();
+
+    mb.querySelectorAll('[data-pay-proof]').forEach(b=>b.onclick=()=>openProofUpload(id,Number(b.dataset.payProof)));
+    mb.querySelectorAll('[data-pay-void]').forEach(b=>b.onclick=async()=>{
+      const reason=prompt('Why is this payment being voided?');
+      if(!reason||!reason.trim())return;
+      try{
+        await api(`/finance/payment-requests/${id}/settlements/${b.dataset.payVoid}/void`,
+          {method:'POST',body:JSON.stringify({reason:reason.trim()})});
+        toast('Payment voided');closeModal();await renderPaymentRequests();
+      }catch(error){toast(error.message,'error');}
+    });
+
+    const form=mb.querySelector('#paySettleForm');
+    if(form)form.onsubmit=async e=>{
+      e.preventDefault();
+      const f=formDataObject(e.currentTarget);
+      const attachments=await pickFiles(mb.querySelector('#paySettleFile'));
+      try{
+        await api(`/finance/payment-requests/${id}/settlements`,{method:'POST',
+          body:JSON.stringify({...f,amount:Number(f.amount)||0,attachments})});
+        toast('Payment recorded');closeModal();await renderPaymentRequests();
+      }catch(error){toast(error.message,'error');}
+    };
+  }catch(error){toast(error.message,'error');}
+}
+
+/* The uploader itself. Small on purpose: a document, or the reference it can be
+ * found under, against one payment. */
+function openProofUpload(id,settlementId){
+  modal('Proof of payment',
+    `<form id="proofForm" class="operational-form grid">
+      <label class="wide"><span>Attach the bank advice, cheque image or receipt</span>
+        <input id="proofFile" type="file" multiple accept=".pdf,.png,.jpg,.jpeg"></label>
+      <label class="wide"><span>Or the reference it can be found under</span>
+        <input name="proofReference" placeholder="e.g. BDO advice 2026-0417"></label>
+      <div class="modal-actions"><button type="submit" class="command primary">Upload</button>
+        <button type="button" class="command" id="proofNo">Cancel</button></div></form>`);
+  const mb=$('#modalBody');
+  mb.querySelector('#proofNo').onclick=()=>closeModal();
+  mb.querySelector('#proofForm').onsubmit=async e=>{
+    e.preventDefault();
+    const f=formDataObject(e.currentTarget);
+    const attachments=await pickFiles(mb.querySelector('#proofFile'));
+    if(!attachments.length&&!String(f.proofReference||'').trim())
+      return toast('Attach the document, or give the reference it can be found under.','error');
+    try{
+      await api(`/finance/payment-requests/${id}/settlements/${settlementId}/proof`,
+        {method:'POST',body:JSON.stringify({proofReference:f.proofReference,attachments})});
+      toast('Proof of payment recorded');closeModal();await openRfpPayments(id);
+    }catch(error){toast(error.message,'error');}
+  };
+}
+
 async function renderPaymentRequests(){
   content.innerHTML='<div class="workspace-loading">Loading payment requests…</div>';
   try{
@@ -1685,19 +1842,42 @@ async function renderPaymentRequests(){
       const titles=Number(row.account_count||0);
       const title=titles>1?`${esc(row.account_title||'')} +${titles-1}`:esc(row.account_title||'-');
       const editable=['DRAFT','RETURNED'].includes(row.status);
+      /*
+       * Paid and balance, not a paid flag. A request settled 30% down owes the
+       * other 70%, and the register is the one screen where that has to be
+       * visible without opening anything.
+       */
+      const settled=Number(row.settled_amount||0);
+      const balance=Math.max(0,Math.round((Number(row.net_payable||0)-settled)*100)/100);
+      const gap=Number(row.settlements_without_proof||0);
+      const paidCell=settled>0
+        ?`<span class="pay-settled">${money(settled)}</span>`
+          +(balance>0.01?`<span class="pay-balance">${money(balance)} owed</span>`:'')
+          +(gap>0?`<span class="pay-noproof">no proof</span>`:'')
+        :'<span class="muted">-</span>';
       return `<tr><td><b>${esc(row.request_no)}</b></td><td>${date(row.request_date)}</td><td>${esc(row.payee_name)}</td>
         <td>${esc(row.department)}</td><td>${title}</td><td>${esc(row.purchase_order_no||'-')}</td><td class="num">${money(row.net_payable)}</td>
-        <td>${financeStatus(row.status)}</td><td>${editable?`<button class="table-action" data-rfp-edit="${row.id}">Edit</button>`:''}<button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(rfpActionLabel(action))}</button>`:''}${!['PAID','REJECTED','CANCELLED','RETURNED','DRAFT'].includes(row.status)?`<button class="table-action" data-rfp-action="RETURN" data-rfp-id="${row.id}">Return</button>`:''}</td></tr>`;
+        <td class="num pay-cell">${paidCell}</td>
+        <td>${financeStatus(row.status)}</td><td>${editable?`<button class="table-action" data-rfp-edit="${row.id}">Edit</button>`:''}<button class="table-action" data-rfp-pay="${row.id}">Payments</button><button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(rfpActionLabel(action))}</button>`:''}${!['PAID','REJECTED','CANCELLED','RETURNED','DRAFT'].includes(row.status)?`<button class="table-action" data-rfp-action="RETURN" data-rfp-id="${row.id}">Return</button>`:''}</td></tr>`;
     });
+    // What the register as a whole has paid and still owes, so the totals do not
+    // have to be added up row by row.
+    const open=data.rows.filter(x=>!['REJECTED','CANCELLED'].includes(x.status));
+    const totalSettled=Math.round(open.reduce((t,x)=>t+Number(x.settled_amount||0),0)*100)/100;
+    const totalOwed=Math.round(open.reduce((t,x)=>
+      t+Math.max(0,Number(x.net_payable||0)-Number(x.settled_amount||0)),0)*100)/100;
+    const proofGap=open.reduce((t,x)=>t+Number(x.settlements_without_proof||0),0);
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newRfp">New Request for Payment</button>
       <button class="command" id="openLiquidations">Cash Advance Liquidation</button>
       <span class="command-spacer"></span><span class="workspace-mode">CONTROLLED PAYMENT WORKFLOW</span></div>
       ${workflowStrip(['Requestor','Dept Head'].concat(rfpFinanceReviewOn()?['Finance Check']:[]).concat(['Head of Finance']).concat(rfpMancomOn()?['MANCOM (≥ '+money(rfpMancomMin())+')']:[]).concat(['CEO Approval','Instruct Bank (MNC)','Proof & Close']),2)}
-      <section class="workspace-card"><header><h2>Request for Payment Worklist</h2><span>${data.rows.length} requests</span></header>
-        ${financeTable(['RFP','Date','Payee','Department','Account Title','PO','Net Payable','Status','Action'],rows)}</section>`;
+      <section class="workspace-card"><header><h2>Request for Payment Worklist</h2>
+        <span>${data.rows.length} requests \u00b7 ${money(totalSettled)} paid \u00b7 ${money(totalOwed)} owed${proofGap?' \u00b7 '+proofGap+' without proof':''}</span></header>
+        ${financeTable(['RFP','Date','Payee','Department','Account Title','PO','Net Payable','Paid','Status','Action'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'approvals');bindWorkbench();
     window.__rfpRows={};data.rows.forEach(function(x){window.__rfpRows[x.id]=x;});
     $$('[data-rfp-edit]').forEach(b2=>b2.onclick=e=>{e.stopPropagation();openRfpEdit(Number(b2.dataset.rfpEdit),master);});
+    $$('[data-rfp-pay]').forEach(b2=>b2.onclick=e=>{e.stopPropagation();openRfpPayments(Number(b2.dataset.rfpPay));});
     $$('[data-print-rfp]').forEach(function(b){b.onclick=function(){if(window.czPrintRfp)window.czPrintRfp(window.__rfpRows[b.dataset.printRfp]);};});
     $('#newRfp').onclick=()=>openRfpForm(data.purchaseOrders,master);
     if($('#openLiquidations'))$('#openLiquidations').onclick=renderLiquidations;
@@ -7780,6 +7960,28 @@ init();
     padding-top:9px;border-top:1px solid #e2e9f0;color:#657586;font-size:12px}
   .rfp-total b{font-size:15px;color:#0a2239;font-variant-numeric:tabular-nums}
   @media (max-width:900px){.rfp-line{grid-template-columns:1fr 1fr;grid-auto-rows:auto}}
+
+  /* What has actually been paid, and whether there is a document behind it. */
+  .pay-figures{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-bottom:11px}
+  .pay-figures>div{padding:9px 11px;border:1px solid #e2e9f0;border-radius:8px;background:#f8fbfd}
+  .pay-figures span{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#8194a6}
+  .pay-figures b{font-size:15px;color:#0a2239;font-variant-numeric:tabular-nums}
+  .pay-figures .pay-owed{border-color:#e5b96a;background:#fdf7ec}
+  .pay-figures .pay-owed b{color:#8a5a00}
+  .pay-note{margin:0 0 11px;padding:8px 11px;border-left:3px solid #e5b96a;background:#fdf7ec;
+    color:#6b4d13;font-size:12px;border-radius:0 6px 6px 0}
+  .pay-noproof{color:#b0442c;font-size:11px}
+  .pay-proof-by{display:block;font-size:10.5px;color:#8194a6}
+  .pay-void td{opacity:.55;text-decoration:line-through}
+  .pay-void td:last-child{text-decoration:none}
+  .pay-form{margin-top:13px;padding-top:11px;border-top:1px solid #e2e9f0}
+  .pay-form h3{margin:0 0 8px;font-size:12.5px;color:#0a2239}
+  .pay-form .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:9px}
+  .pay-form .form-grid label.wide{grid-column:1/-1}
+  .pay-cell{line-height:1.35}
+  .pay-settled{display:block;font-variant-numeric:tabular-nums;color:#0a2239}
+  .pay-balance{display:block;font-size:11px;color:#8a5a00}
+  @media (max-width:820px){.pay-figures{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
   /* Registering an account title without leaving the journal you are typing. */
   .jl-acct{display:flex;gap:5px;align-items:center}
