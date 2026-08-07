@@ -155,33 +155,48 @@ dashboardRoutes.get('/home', async (c) => {
    * Collection % is cash against what was billed in the period. Receivables %
    * is what is still outstanding on it. They are two halves of the same number,
    * from the same rows, so they cannot disagree.
+   *
+   * Both read the Receivables Management register, because that is where E88
+   * records customer invoices. Billed is the posted register; collected is the
+   * receipts sitting against it. Drafts are excluded - an unposted row has not
+   * billed anybody yet, and counting it would understate collection.
    */
   if (can.FINANCE) await attempt('management', async () => {
-    const AR = `('CUSTOMER_INVOICE','LEASE_BILLING')`;
-    const [units, billed, outstanding, overdue, aging] = await Promise.all([
+    const [units, billed, collected, overdue, aging] = await Promise.all([
       first(db, `SELECT
           COUNT(CASE WHEN current_status IN ('AVAILABLE','IN_STOCK','AVAILABLE_FOR_SALE','AVAILABLE_FOR_LEASE') THEN 1 END) available,
           COUNT(CASE WHEN current_status IN ('LEASED','ON_LEASE') THEN 1 END) leased,
           COUNT(CASE WHEN current_status='SOLD' THEN 1 END) sold,
           COUNT(CASE WHEN current_status IN ('DEMO','PILOT_TEST','ASSIGNED','EMPLOYEE_ASSIGNED','INTERNAL_ASSIGNED') THEN 1 END) deployed
         FROM erp_assets WHERE active=1`),
-      first(db, `SELECT COALESCE(SUM(gross_amount),0) v, COUNT(*) n FROM erp_subledger_documents
-        WHERE document_type IN ${AR} AND status<>'CANCELLED' AND document_date BETWEEN ? AND ?`, [from, to]),
-      first(db, `SELECT COALESCE(SUM(open_balance),0) v FROM erp_subledger_documents
-        WHERE document_type IN ${AR} AND status<>'CANCELLED' AND document_date BETWEEN ? AND ?`, [from, to]),
-      first(db, `SELECT COALESCE(SUM(open_balance),0) v, COUNT(*) n FROM erp_subledger_documents
-        WHERE document_type IN ${AR} AND status<>'CANCELLED' AND open_balance>0
-          AND due_date IS NOT NULL AND due_date<>'' AND due_date < date('now')`),
+      first(db, `SELECT COALESCE(SUM(gross_amount),0) v, COUNT(*) n FROM erp_ar_collections
+        WHERE status='POSTED' AND txn_date BETWEEN ? AND ?`, [from, to]),
+      first(db, `SELECT COALESCE(SUM(r.amount),0) v FROM erp_ar_receipts r
+        JOIN erp_ar_collections c ON c.id=r.collection_id
+        WHERE r.status='ACTIVE' AND c.status='POSTED' AND c.txn_date BETWEEN ? AND ?`, [from, to]),
+      /*
+       * The register carries no due date, so a receivable ages from the day it
+       * was transacted. Anything still unpaid past thirty days is overdue.
+       * Overdue and ageing look at the whole book, not the selected period - a
+       * balance does not stop being overdue because the report window moved.
+       */
+      first(db, `SELECT COALESCE(SUM(bal),0) v, COUNT(*) n FROM (
+          SELECT c.gross_amount - COALESCE((SELECT SUM(r.amount) FROM erp_ar_receipts r
+            WHERE r.collection_id=c.id AND r.status='ACTIVE'),0) bal
+          FROM erp_ar_collections c
+          WHERE c.status='POSTED' AND c.txn_date < date('now','-30 days')
+        ) WHERE bal > 0`),
       all(db, `SELECT
-          CASE WHEN due_date IS NULL OR due_date='' OR due_date>=date('now') THEN 'Current'
-               WHEN due_date>=date('now','-30 days') THEN '1-30 days'
-               WHEN due_date>=date('now','-60 days') THEN '31-60 days'
-               WHEN due_date>=date('now','-90 days') THEN '61-90 days'
+          CASE WHEN txn_date>=date('now','-30 days') THEN 'Current'
+               WHEN txn_date>=date('now','-60 days') THEN '31-60 days'
+               WHEN txn_date>=date('now','-90 days') THEN '61-90 days'
                ELSE 'Over 90 days' END label,
-          COALESCE(SUM(open_balance),0) value
-        FROM erp_subledger_documents
-        WHERE document_type IN ${AR} AND status<>'CANCELLED' AND open_balance>0
-        GROUP BY label`),
+          COALESCE(SUM(bal),0) value
+        FROM (
+          SELECT c.txn_date, c.gross_amount - COALESCE((SELECT SUM(r.amount) FROM erp_ar_receipts r
+            WHERE r.collection_id=c.id AND r.status='ACTIVE'),0) bal
+          FROM erp_ar_collections c WHERE c.status='POSTED'
+        ) WHERE bal > 0 GROUP BY label`),
     ]);
     /*
      * "Pending approval" means an RFP sitting in the chain - submitted, not yet
@@ -196,8 +211,8 @@ dashboardRoutes.get('/home', async (c) => {
     ]);
 
     const billedV = Number(billed?.v || 0);
-    const openV = Number(outstanding?.v || 0);
-    const collected = Math.max(0, billedV - openV);
+    const collectedValue = Math.min(billedV, Number(collected?.v || 0));
+    const openV = Math.max(0, Math.round((billedV - collectedValue) * 100) / 100);
     sections.management = {
       period: { from, to },
       pendingApprovals: Number(rfpPending?.n || 0),
@@ -207,10 +222,10 @@ dashboardRoutes.get('/home', async (c) => {
       leasedUnits: Number(units?.leased || 0),
       soldUnits: Number(units?.sold || 0),
       deployedUnits: Number(units?.deployed || 0),
-      billed: billedV, collected, outstanding: openV, invoices: Number(billed?.n || 0),
+      billed: billedV, collected: collectedValue, outstanding: openV, invoices: Number(billed?.n || 0),
       // Undefined, not zero, when nothing was billed - 0% collection on no
       // invoices would read as a failure rather than as no activity.
-      collectionPct: billedV > 0 ? (collected / billedV) * 100 : null,
+      collectionPct: billedV > 0 ? (collectedValue / billedV) * 100 : null,
       receivablesPct: billedV > 0 ? (openV / billedV) * 100 : null,
       overdue: Number(overdue?.v || 0), overdueCount: Number(overdue?.n || 0),
       aging: aging || [],
