@@ -1403,6 +1403,101 @@ await t('a sales order becomes a receivable, once', async()=>{
 });
 
 
+await t('a request can be part paid, and the balance stays owed', async()=>{
+  // A supply order paid 30% down: the classic case a paid flag cannot express.
+  const mk=await call('POST','/api/finance/payment-requests',{
+    payeeName:'Ampace Test Supply',department:'Operations',purpose:'Cells, 30% down',
+    requestType:'Payment to Vendor',grossAmount:1000000,supplierInvoiceNo:'INV-AMPACE-1'});
+  if(!mk.json?.ok) throw new Error(mk.json?.error);
+  const id=mk.json.id, rfp=mk.json.requestNo;
+  // Raised in March, so it is settled on the register's own terms rather than
+  // held back by the evidence cutoff - that rule has its own test below.
+  sqlite.prepare("UPDATE erp_payment_requests SET net_payable=1000000,gross_amount=1000000,request_date='2026-03-02' WHERE id=?").run(id);
+
+  const down=await call('POST','/api/finance/payment-requests/'+id+'/settlements',
+    {amount:300000,paidDate:'2026-03-05',paymentReference:'BT-DOWN-1',notes:'30% down payment'});
+  if(!down.json?.ok) throw new Error(down.json?.error);
+  if(Math.abs(down.json.settled-300000)>0.01) throw new Error('settled '+down.json.settled);
+  if(Math.abs(down.json.balance-700000)>0.01) throw new Error('balance '+down.json.balance);
+  if(down.json.coverage!=='PART') throw new Error('coverage '+down.json.coverage);
+  const mid=sqlite.prepare('SELECT status FROM erp_payment_requests WHERE id=?').get(id).status;
+  if(mid!=='PARTIALLY_PAID') throw new Error('status after a part payment: '+mid);
+
+  // Overpaying is refused, by the balance and not by the total.
+  const over=await call('POST','/api/finance/payment-requests/'+id+'/settlements',{amount:700001});
+  if(over.json?.ok) throw new Error('the request was overpaid');
+  if(!/still owed|overpay/i.test(over.json.error||'')) throw new Error('wrong refusal: '+over.json.error);
+
+  // The balance closes it.
+  const rest=await call('POST','/api/finance/payment-requests/'+id+'/settlements',
+    {amount:700000,paidDate:'2026-05-04',paymentReference:'BT-BAL-1'});
+  if(!rest.json?.ok) throw new Error(rest.json?.error);
+  if(rest.json.balance>0.01) throw new Error('balance left: '+rest.json.balance);
+  const end=sqlite.prepare('SELECT status,paid_at FROM erp_payment_requests WHERE id=?').get(id);
+  if(end.status!=='PAID') throw new Error('status after settling in full: '+end.status);
+
+  // Voiding the balance reopens it rather than deleting the history.
+  const sid=sqlite.prepare("SELECT id FROM erp_payment_settlements WHERE request_no=? AND amount=700000").get(rfp).id;
+  const v=await call('POST',`/api/finance/payment-requests/${id}/settlements/${sid}/void`,{reason:'Wrong request'});
+  if(!v.json?.ok) throw new Error(v.json?.error);
+  if(Math.abs(v.json.balance-700000)>0.01) throw new Error('void did not reopen the balance: '+v.json.balance);
+  const back=sqlite.prepare('SELECT status FROM erp_payment_requests WHERE id=?').get(id).status;
+  if(back!=='PARTIALLY_PAID') throw new Error('status after voiding the balance: '+back);
+  return {note:rfp+': 30% down leaves 700,000 owed, overpayment refused, void reopens the balance'};
+});
+
+await t('nothing raised from the cutoff is called paid without proof', async()=>{
+  const cutoff=sqlite.prepare("SELECT value FROM erp_rfp_settings WHERE key='rfp_paid_evidence_from'").get();
+  if(!cutoff||cutoff.value!=='2026-07-31') throw new Error('the evidence cutoff is not set');
+  const mk=await call('POST','/api/finance/payment-requests',{
+    payeeName:'Late Vendor',department:'Operations',purpose:'Raised after the cutoff',
+    requestType:'Payment to Vendor',grossAmount:5000,supplierInvoiceNo:'INV-LATE-1'});
+  if(!mk.json?.ok) throw new Error(mk.json?.error);
+  const id=mk.json.id;
+  sqlite.prepare("UPDATE erp_payment_requests SET net_payable=5000,gross_amount=5000,request_date='2026-08-03' WHERE id=?").run(id);
+
+  // Settled in full, but nobody has shown the bank advice.
+  const s1=await call('POST','/api/finance/payment-requests/'+id+'/settlements',
+    {amount:5000,paidDate:'2026-08-04',paymentReference:'BT-LATE-1'});
+  if(!s1.json?.ok) throw new Error(s1.json?.error);
+  if(s1.json.balance>0.01) throw new Error('balance '+s1.json.balance);
+  const held=sqlite.prepare('SELECT status FROM erp_payment_requests WHERE id=?').get(id).status;
+  if(held==='PAID') throw new Error('a request from the cutoff was called paid with no proof');
+  if(held!=='PARTIALLY_PAID') throw new Error('unexpected status: '+held);
+
+  // The proof closes it. A reference counts as proof once somebody puts their
+  // name to it, which is what the uploader records.
+  const sid=sqlite.prepare('SELECT id FROM erp_payment_settlements WHERE payment_request_id=?').get(id).id;
+  const up=await call('POST',`/api/finance/payment-requests/${id}/settlements/${sid}/proof`,
+    {proofReference:'BDO advice 2026-0803'});
+  if(!up.json?.ok) throw new Error(up.json?.error);
+  const now=sqlite.prepare('SELECT status FROM erp_payment_requests WHERE id=?').get(id).status;
+  if(now!=='PAID') throw new Error('proof did not close the request: '+now);
+  const proof=sqlite.prepare('SELECT proof_uploaded_by,proof_reference FROM erp_payment_settlements WHERE id=?').get(sid);
+  if(!proof.proof_uploaded_by) throw new Error('the uploader was not recorded');
+  // And an empty upload is refused rather than silently accepted.
+  const bare=await call('POST',`/api/finance/payment-requests/${id}/settlements/${sid}/proof`,{});
+  if(bare.json?.ok) throw new Error('an empty proof upload was accepted');
+  return {note:'held at PARTIALLY PAID until proof, then closed by '+proof.proof_uploaded_by};
+});
+
+await t('every request standing as paid carries a settlement', async()=>{
+  // Migration 0055 turns the register’s flat PAID flags into payments that can
+  // be listed and questioned one at a time.
+  const orphans=sqlite.prepare(`SELECT COUNT(*) n FROM erp_payment_requests r
+    WHERE r.status='PAID' AND NOT EXISTS(
+      SELECT 1 FROM erp_payment_settlements s WHERE s.request_no=r.request_no AND s.status<>'VOID')`).get().n;
+  if(orphans) throw new Error(orphans+' paid requests have no payment behind them');
+  // And nothing settled adds up to more than what was asked for.
+  const over=sqlite.prepare(`SELECT COUNT(*) n FROM (
+      SELECT r.request_no, r.net_payable, SUM(s.amount) paid
+        FROM erp_payment_requests r JOIN erp_payment_settlements s
+          ON s.request_no=r.request_no AND s.status<>'VOID'
+       GROUP BY r.request_no HAVING paid > r.net_payable + 0.01)`).get().n;
+  if(over) throw new Error(over+' requests are settled beyond their net payable');
+  return {note:'no paid request without a payment, no payment beyond the net payable'};
+});
+
 console.log('\n=== Blitz - ERP end-to-end ===');
 for (const [s, n, note] of results) console.log(`${s}  ${n}${note ? '  ·  ' + note : ''}`);
 const failed = results.filter(r => r[0] === 'FAIL').length;
