@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, bindViz, compact }
-  from './viz.js?v=20260807-r26';
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R26.0';
+  from './viz.js?v=20260807-r27';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R27.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -11,6 +11,7 @@ const state={
   section:'center',
   mobileFull:false,
   mobileGroup:null,
+  showModuleMap:false,
   inbound:{preview:null,receiptLines:[],shipment:null,locationId:null},
   cycleCount:null,
   scannerStream:null,
@@ -342,7 +343,101 @@ function enterpriseButton(item,className='enterprise-module-button'){
   const allowed=canWorkspace(item.code);
   return `<button class="${className}" data-workspace="${esc(item.code)}" ${allowed?'':'disabled aria-disabled="true"'}>${esc(item.label)}</button>`;
 }
+
+/* ===================================================================
+ * The landing cockpit.
+ *
+ * Signing in used to drop you straight onto a map of ninety modules. This
+ * answers the two questions somebody actually has first - what is waiting on
+ * me, and is anything on fire - and keeps the map one button away.
+ * =================================================================== */
+async function renderHomeDashboard(){
+  state.module=null;state.definition=null;state.section='center';
+  document.body.classList.remove('workbench-view');
+  document.body.classList.add('launchpad-view');
+  content.innerHTML='<div class="workspace-loading">Loading your dashboard\u2026</div>';
+  let d;
+  try{ d=await api('/dashboard/home'); }
+  catch(err){ return renderLaunchpad(); }   // never trap someone on a broken home
+  const sec=d.sections||{};
+  const who=(d.user&&d.user.name)||'';
+  const hour=new Date().getHours();
+  const greet=hour<12?'Good morning':hour<18?'Good afternoon':'Good evening';
+
+  // What has this person's name on it, biggest queue first.
+  const waiting=(d.waiting||[]).slice().sort((a,b)=>b.count-a.count);
+  const waitingHtml=waiting.length
+    ? '<div class="home-waiting">'+waiting.map(w=>
+        '<button type="button" class="home-wait" data-home-go="'+esc(w.module)+'">'
+        +'<b>'+esc(String(w.count))+'</b><span>'+esc(w.label)+'</span><i>&rsaquo;</i></button>').join('')+'</div>'
+    : '<div class="home-clear">Nothing is waiting on you right now.</div>';
+
+  // Tiles run the full width above the charts; they are a status row, not a card.
+  let tiles='';
+  const cards=[];
+  if(sec.inventory){
+    const i=sec.inventory;
+    tiles=vizTiles([
+      {label:'Available',value:i.available,tone:'good',sub:'ready to move',module:'ip-warehouse-management'},
+      {label:'Quarantine',value:i.quarantine,tone:i.quarantine?'serious':'good',sub:'held back'},
+      {label:'Missing cost',value:i.unvalued,tone:i.unvalued?'critical':'good',sub:'unvalued units'},
+      {label:'Open counts',value:i.openCounts,tone:i.openCounts?'warning':'good',sub:'being counted'},
+      {label:'Variances',value:i.variances,tone:i.variances?'critical':'good',sub:'units in question'}
+    ]);
+    if((i.byClass||[]).length)
+      cards.push(vizDonut(i.byClass.map(r=>({label:r.label||'Unclassified',value:Number(r.value)||0})),
+        {title:'Inventory by class',totalLabel:'Units',keyLabel:'Class',valueLabel:'Units'}));
+  }
+  if(sec.procurement&&(sec.procurement.topVendors||[]).length)
+    cards.push(vizBars(sec.procurement.topVendors.map(r=>({label:r.label||'-',value:Number(r.value)||0})),
+      {title:'Committed spend by vendor',money:true,color:VIZ.series[1],
+       keyLabel:'Vendor',valueLabel:'Amount',limit:6,labelWidth:120}));
+  if(sec.finance&&(sec.finance.byStage||[]).length)
+    cards.push(vizDonut(sec.finance.byStage.map(r=>({label:String(r.label||'').replace(/_/g,' '),value:Number(r.value)||0})),
+      {title:'Payment requests by stage',totalLabel:'Requests',keyLabel:'Stage',valueLabel:'Requests'}));
+  if(sec.service&&(sec.service.byStatus||[]).length)
+    cards.push(vizDonut(sec.service.byStatus.map(r=>({label:String(r.label||'').replace(/_/g,' '),value:Number(r.value)||0})),
+      {title:'Service jobs by stage',totalLabel:'Jobs',keyLabel:'Stage',valueLabel:'Jobs'}));
+
+  const feed=(d.activity||[]).map(a=>
+    '<li><b>'+esc(String(a.action||'').replace(/_/g,' ').toLowerCase())+'</b>'
+    +'<span>'+esc(a.record_no||a.module||'')+'</span>'
+    +'<small>'+esc(String(a.user_email||'').split('@')[0])+'</small></li>').join('');
+
+  content.innerHTML='<section class="home-shell">'
+    +'<header class="home-top">'
+      +'<div class="home-brand"><img src="/logo-navy.png" alt=""><div>'
+        +'<b>Blitz <i>-</i> ERP</b><small>E88 Ventures Inc.</small></div></div>'
+      +'<div class="home-actions">'
+        +'<span class="home-scope">'+esc(state.scope==='ADMIN'?'Admin scope':'Operations scope')+'</span>'
+        +'<button type="button" class="command primary home-open" id="homeModules">Open modules</button>'
+        +'<button type="button" class="command" id="homeSignOut">Sign out</button></div>'
+    +'</header>'
+    +'<div class="home-hello"><h1>'+esc(greet)+', '+esc(String(who).split(' ')[0]||who)+'</h1>'
+      +'<p>'+esc(new Date().toLocaleDateString('en-US',{weekday:'long',day:'numeric',month:'long',year:'numeric'}))+'</p></div>'
+    +waitingHtml
+    +tiles
+    +'<div class="viz-grid home-grid">'+cards.join('')+'</div>'
+    +(feed?'<section class="home-feed"><h2>Latest activity</h2><ul>'+feed+'</ul></section>':'')
+    +'<footer class="home-foot"><span>Blitz - ERP</span><span>&copy; 2026 E88 Ventures Inc.</span></footer>'
+    +'</section>';
+
+  bindViz(content);
+  $$('[data-home-go]').forEach(b=>b.onclick=()=>openWorkspace(b.dataset.homeGo));
+  $$('[data-viz-go]').forEach(b=>{ const m=b.getAttribute('data-viz-go');
+    if(m&&m.indexOf('-')>0)b.onclick=()=>openWorkspace(m); });
+  $('#homeModules').onclick=()=>{state.showModuleMap=true;renderLaunchpad();};
+  $('#homeSignOut').onclick=logout;
+  // Let the cards arrive rather than snap in.
+  requestAnimationFrame(()=>content.querySelectorAll('.viz,.home-wait').forEach((el,i)=>{
+    el.style.animation='homeRise .38s cubic-bezier(.2,.8,.25,1) both';
+    el.style.animationDelay=(i*40)+'ms';
+  }));
+}
+
 function renderLaunchpad(){
+  // Home first; the module map is one button away.
+  if(!state.showModuleMap)return renderHomeDashboard();
   if(isPhone()&&!state.mobileFull)return renderMobileLaunchpad();
   state.module=null;
   state.definition=null;
@@ -405,7 +500,7 @@ function renderSidebar(){
     <div class="nav-group">${esc(module.groupTitle)}</div>
     ${items.map(([section,label,icon])=>`<button class="nav-item ${state.section===section?'active':''}" data-section="${section}"><span class="nav-icon">${icon}</span>${label}</button>`).join('')}
     ${state.session.user.role==='ADMIN'?'<div class="nav-group">System</div><button class="nav-item" id="sidebarAccess"><span class="nav-icon">♙</span>User Access</button>':''}`;
-  $('#moduleHome').onclick=renderLaunchpad;
+  $('#moduleHome').onclick=()=>{state.showModuleMap=false;renderLaunchpad();};
   $$('[data-section]').forEach(button=>button.onclick=()=>openSection(button.dataset.section));
   if($('#sidebarAccess'))$('#sidebarAccess').onclick=renderAccessAdmin;
 }
@@ -6072,6 +6167,52 @@ init();
   .mtile.green{background:linear-gradient(140deg,#4aa564,#358a4d)}
   .mtile.blue{background:linear-gradient(140deg,#2a86dd,#1a68b5)}
   .mtile-full{width:100%;margin-top:14px}
+  /* ---------- Landing cockpit ---------- */
+  .home-shell{max-width:1320px;margin:0 auto;padding:18px 20px 30px}
+  .home-top{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+  .home-brand{display:flex;align-items:center;gap:11px}
+  .home-brand img{height:40px;width:auto}
+  .home-brand b{display:block;font-size:19px;letter-spacing:1.4px;color:#0a2239;text-transform:uppercase}
+  .home-brand b i{font-style:normal;color:#1e88e5}
+  .home-brand small{display:block;font-size:10.5px;letter-spacing:1.6px;color:#7c8b9c;text-transform:uppercase}
+  .home-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .home-scope{padding:5px 11px;border:1px solid #cfdbe6;border-radius:999px;background:#fff;color:#42506a;font-size:11px}
+  .home-open{font-weight:700}
+  .home-hello{margin:0 0 16px}
+  .home-hello h1{margin:0;font-size:27px;color:#0a2239;letter-spacing:-.3px}
+  .home-hello p{margin:3px 0 0;color:#7c8b9c;font-size:12.5px}
+
+  .home-waiting{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:9px;margin-bottom:14px}
+  .home-wait{display:flex;align-items:center;gap:12px;padding:13px 15px;border:1px solid #d8e2ea;
+    border-left:4px solid #eb6834;border-radius:8px;background:#fff;text-align:left;cursor:pointer;
+    transition:transform .16s ease,box-shadow .16s ease}
+  .home-wait:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(10,34,57,.10)}
+  .home-wait b{font-size:26px;font-weight:700;color:#0a2239;line-height:1}
+  .home-wait span{flex:1;font-size:12.5px;color:#42506a;line-height:1.3}
+  .home-wait i{font-style:normal;font-size:20px;color:#9fb0c0}
+  .home-clear{margin-bottom:14px;padding:13px 15px;border:1px solid #cfe8d8;border-radius:8px;
+    background:#f2fbf6;color:#1d6b39;font-size:12.5px}
+
+  .home-grid{margin-bottom:14px}
+  .home-feed{padding:13px 15px;border:1px solid #d8e2ea;border-radius:8px;background:#fff}
+  .home-feed h2{margin:0 0 9px;font-size:12.5px;color:#0a2239}
+  .home-feed ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+  .home-feed li{display:flex;align-items:baseline;gap:9px;font-size:12px;color:#42506a;
+    padding-bottom:6px;border-bottom:1px solid #f0f4f8}
+  .home-feed li:last-child{border-bottom:0;padding-bottom:0}
+  .home-feed b{text-transform:capitalize;color:#0a2239;font-weight:700}
+  .home-feed span{flex:1;color:#657586}
+  .home-feed small{color:#9fb0c0}
+  .home-foot{display:flex;justify-content:space-between;margin-top:18px;padding-top:12px;
+    border-top:1px solid #e2e9f0;color:#9fb0c0;font-size:11px}
+  @keyframes homeRise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  @media (max-width:720px){
+    .home-shell{padding:14px}
+    .home-hello h1{font-size:21px}
+    .home-waiting{grid-template-columns:1fr}
+    .home-top{align-items:flex-start}
+  }
+
   /* Activation / reset: say whether the email actually left. */
   .cred-sent{margin:0 0 10px;padding:9px 11px;border-radius:6px;background:#e9f8ee;color:#1d6b39;font-size:12.5px}
   .cred-failed{margin:0 0 10px;padding:9px 11px;border-radius:6px;background:#fdecec;color:#8f2226;font-size:12.5px}
