@@ -408,18 +408,23 @@ inventoryRoutes.get('/cycle-counts/:id', requirePermission('INVENTORY','VIEW'), 
     WHERE cc.id=?`,[id]);
   if(!header)return fail(c,'Cycle count not found',404);
   const lines=await all(c.env.DB,`
-    SELECT ccl.*,COALESCE(i.item_code,nu.item_code) item_code,
-      COALESCE(i.item_name,nu.item_name) item_name,
+    SELECT ccl.*,COALESCE(NULLIF(i.item_code,''),NULLIF(nu.item_code,'')) item_code,
+      -- A counted unit identified only by its code still shows the master's
+      -- description: ni resolves nu.item_code against the item master.
+      COALESCE(NULLIF(i.item_name,''),NULLIF(nu.item_name,''),NULLIF(ni.item_name,'')) item_name,
       a.current_status,COALESCE(a.condition_code,nu.condition_code) condition_code,
       al.code actual_location_code,al.name actual_location_name,
-      nu.category new_category,nu.serial_type new_serial_type,nu.motor_no new_motor_no,
-      nu.secondary_serial new_secondary_serial,nu.unit_cost new_unit_cost,
+      COALESCE(NULLIF(nu.category,''),ni.category) new_category,
+      nu.serial_type new_serial_type,nu.motor_no new_motor_no,
+      nu.secondary_serial new_secondary_serial,
+      COALESCE(NULLIF(nu.unit_cost,0),ni.standard_cost) new_unit_cost,
       nu.status new_status,
       CASE WHEN nu.line_id IS NOT NULL THEN 1 ELSE 0 END is_new_unit
     FROM erp_cycle_count_lines ccl
     LEFT JOIN erp_assets a ON a.id=COALESCE(ccl.actual_asset_id,ccl.expected_asset_id)
     LEFT JOIN erp_items i ON i.id=COALESCE(ccl.expected_item_id,a.item_id)
     LEFT JOIN erp_cycle_count_new_units nu ON nu.line_id=ccl.id
+    LEFT JOIN erp_items ni ON UPPER(ni.item_code)=UPPER(nu.item_code)
     LEFT JOIN erp_locations al ON al.id=ccl.actual_location_id
     WHERE ccl.cycle_count_id=?
     ORDER BY CASE ccl.count_status WHEN 'VARIANCE' THEN 0 WHEN 'NOT_COUNTED' THEN 1 ELSE 2 END,
@@ -447,6 +452,28 @@ async function openCountLine(c,id,lineId){
   const line=await first(c.env.DB,`SELECT * FROM erp_cycle_count_lines WHERE id=? AND cycle_count_id=?`,[lineId,id]);
   if(!line)return {error:'Count line not found on this sheet.',code:404};
   return {count,line};
+}
+
+/*
+ * An item code that already exists in the master carries its own name, class and
+ * standard cost. Somebody counting on the floor should only ever have to type
+ * the code - anything the master already knows is filled in for them, and only
+ * what they type themselves overrides it.
+ */
+async function fillFromItemMaster(db,supplied){
+  const code=normalizeText(supplied.itemCode);
+  const out={itemCode:code,itemName:normalizeText(supplied.itemName),
+    category:normalizeText(supplied.category),unitCost:Number(supplied.unitCost)||0,itemId:null};
+  if(!code)return out;
+  const row=await first(db,
+    `SELECT id,item_code,item_name,category,standard_cost FROM erp_items WHERE UPPER(item_code)=UPPER(?)`,[code]);
+  if(!row)return out;
+  out.itemId=row.id;
+  out.itemCode=row.item_code;
+  if(!out.itemName)out.itemName=row.item_name||'';
+  if(!out.category)out.category=row.category||'';
+  if(!(out.unitCost>0))out.unitCost=Number(row.standard_cost||0);
+  return out;
 }
 
 async function refreshCountTotals(db,id){
@@ -574,13 +601,15 @@ inventoryRoutes.post('/cycle-counts/:id/import', requirePermission('INVENTORY','
         [id,asset?.id||null,serial,asset?.current_location_id||null,
          asset?'LOCATION_MISMATCH':'UNKNOWN_SERIAL',user,at(r,'remarks')]);
       if(!asset){
+        const m=await fillFromItemMaster(c.env.DB,{itemCode,itemName:at(r,'item_name'),
+          category:at(r,'category'),unitCost:at(r,'unit_cost')});
         await run(c.env.DB,`INSERT OR REPLACE INTO erp_cycle_count_new_units(
           line_id,item_code,item_name,category,serial_type,secondary_serial,motor_no,
           unit_cost,condition_code,status,captured_by)
           VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-          [ins.meta.last_row_id,itemCode,at(r,'item_name'),
-           at(r,'category')||count.category||'OTH',at(r,'serial_type')||'SERIAL',
-           at(r,'secondary_serial'),at(r,'motor_no'),Number(at(r,'unit_cost'))||0,
+          [ins.meta.last_row_id,m.itemCode,m.itemName,
+           m.category||count.category||'OTH',at(r,'serial_type')||'SERIAL',
+           at(r,'secondary_serial'),at(r,'motor_no'),m.unitCost,
            at(r,'condition')||'GOOD','AVAILABLE',user]);
       }
     }
@@ -623,14 +652,19 @@ inventoryRoutes.patch('/cycle-counts/:id/lines/:lineId', requirePermission('INVE
     // Identify what the unit actually is, so posting can register it properly.
     const prev=await first(c.env.DB,`SELECT * FROM erp_cycle_count_new_units WHERE line_id=?`,[lineId])||{};
     const pick=(k,fallback)=>b[k]===undefined?fallback:normalizeText(b[k]);
+    const m=await fillFromItemMaster(c.env.DB,{
+      itemCode:pick('itemCode',prev.item_code),
+      itemName:pick('itemName',prev.item_name),
+      category:pick('category',prev.category),
+      unitCost:b.unitCost===undefined?Number(prev.unit_cost||0):Number(b.unitCost)||0});
     await run(c.env.DB,`INSERT OR REPLACE INTO erp_cycle_count_new_units(
       line_id,item_code,item_name,category,serial_type,secondary_serial,motor_no,
       unit_cost,condition_code,status,captured_by)
       VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-      [lineId,pick('itemCode',prev.item_code),pick('itemName',prev.item_name),
-       pick('category',prev.category)||'OTH',pick('serialType',prev.serial_type)||'SERIAL',
+      [lineId,m.itemCode,m.itemName,
+       m.category||'OTH',pick('serialType',prev.serial_type)||'SERIAL',
        pick('secondarySerial',prev.secondary_serial),pick('motorNo',prev.motor_no),
-       b.unitCost===undefined?Number(prev.unit_cost||0):Number(b.unitCost)||0,
+       m.unitCost,
        pick('conditionCode',prev.condition_code)||'GOOD',
        pick('status',prev.status)||'AVAILABLE',c.get('erpUser').email]);
   }
@@ -713,14 +747,16 @@ inventoryRoutes.post('/cycle-counts/:id/scan', requirePermission('INVENTORY','CR
     // mostly made of. Keep whatever the counter can tell us about it so that
     // posting the count registers it rather than discarding it.
     if(!asset){
+      const m=await fillFromItemMaster(c.env.DB,
+        {itemCode:b.itemCode,itemName:b.itemName,category:b.category,unitCost:b.unitCost});
       await run(c.env.DB,`INSERT OR REPLACE INTO erp_cycle_count_new_units(
         line_id,item_code,item_name,category,serial_type,secondary_serial,motor_no,
         unit_cost,condition_code,status,captured_by)
         VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-        [lineId,normalizeText(b.itemCode),normalizeText(b.itemName),
-         normalizeText(b.category||count.category)||'OTH',
+        [lineId,m.itemCode,m.itemName,
+         m.category||normalizeText(count.category)||'OTH',
          normalizeText(b.serialType)||'SERIAL',normalizeText(b.secondarySerial),normalizeText(b.motorNo),
-         Number(b.unitCost)||0,normalizeText(b.conditionCode)||'GOOD',
+         m.unitCost,normalizeText(b.conditionCode)||'GOOD',
          normalizeText(b.status)||'AVAILABLE',user]);
     }
     result={lineId,serial,countStatus:'VARIANCE',varianceType,
