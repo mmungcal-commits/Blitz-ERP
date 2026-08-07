@@ -21,6 +21,7 @@ import { checklistRoutes } from './routes/checklists.js';
 import { planningRoutes } from './routes/planning.js';
 import { workspaceRoutes } from './routes/workspace.js';
 import { financeRoutes } from './routes/finance.js';
+import { receivableRoutes } from './routes/receivables.js';
 import { rfpAlignmentRoutes } from './routes/rfp-alignment.js';
 import { enterpriseRoutes } from './routes/enterprise.js';
 import { analyticsRoutes } from './routes/analytics.js';
@@ -42,7 +43,7 @@ let d1Ready=false;let r2Ready=false;let r2Error='';
 try{await c.env.DB.prepare('SELECT 1 ready').first();d1Ready=true;}catch{}
 if(c.env.DOCS){try{await c.env.DOCS.list({limit:1});r2Ready=true;}catch(error){r2Error=error?.message||'R2 access failed';}}
 return ok(c,{service:'Blitz - ERP',version:'15.0.0-blitz-live',
-build:'BLITZ-ERP-20260808-R35.0',d1Bound:!!c.env.DB,d1Ready,
+build:'BLITZ-ERP-20260808-R37.0',d1Bound:!!c.env.DB,d1Ready,
 r2Bound:!!c.env.DOCS,r2Ready,r2Error,
 mailConfigured:!!(c.env.RESEND_API_KEY||(c.env.MAIL_WEBHOOK_URL&&c.env.MAIL_WEBHOOK_SECRET)),
 mailTransport:c.env.RESEND_API_KEY?'resend':((c.env.MAIL_WEBHOOK_URL&&c.env.MAIL_WEBHOOK_SECRET)?'apps-script':'none'),
@@ -71,6 +72,7 @@ app.route('/api/admin',adminRoutes);
 app.route('/api/checklists',checklistRoutes);
 app.route('/api/planning',planningRoutes);
 app.route('/api/finance',financeRoutes);
+app.route('/api/receivables',receivableRoutes);
 app.route('/api/finance',rfpAlignmentRoutes);
 app.route('/api/enterprise',enterpriseRoutes);
 app.route('/api/workspace',workspaceRoutes);
@@ -93,7 +95,7 @@ const asset=response.status!==404?response:await env.ASSETS.fetch(new Request(ne
 const headers=new Headers(asset.headers);
 headers.set('Cache-Control','no-store, no-cache, must-revalidate');
 headers.set('Pragma','no-cache');
-headers.set('X-E88-Build','BLITZ-ERP-20260808-R35.0');
+headers.set('X-E88-Build','BLITZ-ERP-20260808-R37.0');
 return new Response(asset.body,{status:asset.status,statusText:asset.statusText,headers});
 }
 };
