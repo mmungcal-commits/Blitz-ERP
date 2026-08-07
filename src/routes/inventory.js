@@ -406,11 +406,18 @@ inventoryRoutes.get('/cycle-counts/:id', requirePermission('INVENTORY','VIEW'), 
     WHERE cc.id=?`,[id]);
   if(!header)return fail(c,'Cycle count not found',404);
   const lines=await all(c.env.DB,`
-    SELECT ccl.*,i.item_code,i.item_name,a.current_status,a.condition_code,
-      al.code actual_location_code,al.name actual_location_name
+    SELECT ccl.*,COALESCE(i.item_code,nu.item_code) item_code,
+      COALESCE(i.item_name,nu.item_name) item_name,
+      a.current_status,COALESCE(a.condition_code,nu.condition_code) condition_code,
+      al.code actual_location_code,al.name actual_location_name,
+      nu.category new_category,nu.serial_type new_serial_type,nu.motor_no new_motor_no,
+      nu.secondary_serial new_secondary_serial,nu.unit_cost new_unit_cost,
+      nu.status new_status,
+      CASE WHEN nu.line_id IS NOT NULL THEN 1 ELSE 0 END is_new_unit
     FROM erp_cycle_count_lines ccl
     LEFT JOIN erp_assets a ON a.id=COALESCE(ccl.actual_asset_id,ccl.expected_asset_id)
     LEFT JOIN erp_items i ON i.id=COALESCE(ccl.expected_item_id,a.item_id)
+    LEFT JOIN erp_cycle_count_new_units nu ON nu.line_id=ccl.id
     LEFT JOIN erp_locations al ON al.id=ccl.actual_location_id
     WHERE ccl.cycle_count_id=?
     ORDER BY CASE ccl.count_status WHEN 'VARIANCE' THEN 0 WHEN 'NOT_COUNTED' THEN 1 ELSE 2 END,
@@ -425,6 +432,98 @@ inventoryRoutes.get('/cycle-counts/:id', requirePermission('INVENTORY','VIEW'), 
     return out;
   },{expected:0,counted:0,variances:0,missing:0,unexpected:0,locationMismatch:0});
   return ok(c,{header,lines,summary});
+});
+
+// A counted line is editable and removable until the count is submitted: the
+// counter scans first and identifies the unit afterwards, and a mis-scan has to
+// be removable rather than left to pollute the opening balance.
+async function openCountLine(c,id,lineId){
+  const count=await first(c.env.DB,`SELECT * FROM erp_cycle_counts WHERE id=?`,[id]);
+  if(!count)return {error:'Cycle count not found',code:404};
+  if(count.status!=='OPEN')
+    return {error:`This count is ${String(count.status).toLowerCase()} and can no longer be edited.`,code:409};
+  const line=await first(c.env.DB,`SELECT * FROM erp_cycle_count_lines WHERE id=? AND cycle_count_id=?`,[lineId,id]);
+  if(!line)return {error:'Count line not found on this sheet.',code:404};
+  return {count,line};
+}
+
+async function refreshCountTotals(db,id){
+  const t=await first(db,`
+    SELECT COUNT(CASE WHEN actual_serial_no IS NOT NULL THEN 1 END) counted,
+      COUNT(CASE WHEN variance_type IS NOT NULL AND variance_type!='' THEN 1 END) variances
+    FROM erp_cycle_count_lines WHERE cycle_count_id=?`,[id]);
+  await run(db,`UPDATE erp_cycle_counts SET counted_units=?,variance_units=? WHERE id=?`,
+    [t?.counted||0,t?.variances||0,id]);
+  return t;
+}
+
+inventoryRoutes.patch('/cycle-counts/:id/lines/:lineId', requirePermission('INVENTORY','EDIT'), async(c)=>{
+  const id=Number(c.req.param('id'));const lineId=Number(c.req.param('lineId'));
+  const {line,error,code}=await openCountLine(c,id,lineId);
+  if(error)return fail(c,error,code);
+  const b=await jsonBody(c);
+
+  // Correcting a mis-typed serial re-tests it against the sheet.
+  let serial=line.actual_serial_no;
+  if(normalizeSerial(b.serialNo)&&normalizeSerial(b.serialNo)!==serial){
+    serial=normalizeSerial(b.serialNo);
+    const clash=await first(c.env.DB,
+      `SELECT id FROM erp_cycle_count_lines WHERE cycle_count_id=? AND actual_serial_no=? AND id<>?`,[id,serial,lineId]);
+    if(clash)return fail(c,`Serial ${serial} is already on this count sheet.`,409);
+    const asset=await first(c.env.DB,`SELECT * FROM erp_assets WHERE serial_no=?`,[serial]);
+    await run(c.env.DB,`UPDATE erp_cycle_count_lines SET actual_serial_no=?,actual_asset_id=?,
+      actual_location_id=?,variance_type=CASE WHEN ?='' THEN variance_type ELSE ? END WHERE id=?`,
+      [serial,asset?.id||null,asset?.current_location_id||null,
+       asset?'':'UNKNOWN_SERIAL',asset?'LOCATION_MISMATCH':'UNKNOWN_SERIAL',lineId]);
+  }
+
+  const known=await first(c.env.DB,`SELECT actual_asset_id FROM erp_cycle_count_lines WHERE id=?`,[lineId]);
+  if(!known?.actual_asset_id){
+    // Identify what the unit actually is, so posting can register it properly.
+    const prev=await first(c.env.DB,`SELECT * FROM erp_cycle_count_new_units WHERE line_id=?`,[lineId])||{};
+    const pick=(k,fallback)=>b[k]===undefined?fallback:normalizeText(b[k]);
+    await run(c.env.DB,`INSERT OR REPLACE INTO erp_cycle_count_new_units(
+      line_id,item_code,item_name,category,serial_type,secondary_serial,motor_no,
+      unit_cost,condition_code,status,captured_by)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+      [lineId,pick('itemCode',prev.item_code),pick('itemName',prev.item_name),
+       pick('category',prev.category)||'OTH',pick('serialType',prev.serial_type)||'SERIAL',
+       pick('secondarySerial',prev.secondary_serial),pick('motorNo',prev.motor_no),
+       b.unitCost===undefined?Number(prev.unit_cost||0):Number(b.unitCost)||0,
+       pick('conditionCode',prev.condition_code)||'GOOD',
+       pick('status',prev.status)||'AVAILABLE',c.get('erpUser').email]);
+  }
+  if(b.notes!==undefined)await run(c.env.DB,`UPDATE erp_cycle_count_lines SET notes=? WHERE id=?`,[normalizeText(b.notes),lineId]);
+
+  const after=await first(c.env.DB,`SELECT * FROM erp_cycle_count_lines WHERE id=?`,[lineId]);
+  const detail=await first(c.env.DB,`SELECT * FROM erp_cycle_count_new_units WHERE line_id=?`,[lineId]);
+  await audit(c,{action:'EDIT_COUNT_LINE',module:'INVENTORY',recordType:'CYCLE_COUNT',
+    recordId:id,recordNo:String(lineId),after:{serial:after?.actual_serial_no,item:detail?.item_code}});
+  return ok(c,{line:after,detail:detail||null});
+});
+
+inventoryRoutes.delete('/cycle-counts/:id/lines/:lineId', requirePermission('INVENTORY','EDIT'), async(c)=>{
+  const id=Number(c.req.param('id'));const lineId=Number(c.req.param('lineId'));
+  const {line,error,code}=await openCountLine(c,id,lineId);
+  if(error)return fail(c,error,code);
+  if(line.expected_serial_no){
+    // The sheet expected this unit. Removing the row would hide the fact that it
+    // was not found, so the scan is undone and the line goes back to NOT_COUNTED.
+    await run(c.env.DB,`UPDATE erp_cycle_count_lines SET actual_asset_id=NULL,actual_serial_no=NULL,
+      actual_location_id=NULL,count_status='NOT_COUNTED',variance_type=NULL,scan_method=NULL,
+      scanned_by=NULL,scanned_at=NULL,notes='' WHERE id=?`,[lineId]);
+    await run(c.env.DB,`DELETE FROM erp_cycle_count_new_units WHERE line_id=?`,[lineId]);
+    const totals=await refreshCountTotals(c.env.DB,id);
+    await audit(c,{action:'UNDO_COUNT_SCAN',module:'INVENTORY',recordType:'CYCLE_COUNT',
+      recordId:id,recordNo:String(lineId),before:{serial:line.actual_serial_no}});
+    return ok(c,{removed:false,reset:true,serial:line.actual_serial_no,totals});
+  }
+  await run(c.env.DB,`DELETE FROM erp_cycle_count_new_units WHERE line_id=?`,[lineId]);
+  await run(c.env.DB,`DELETE FROM erp_cycle_count_lines WHERE id=?`,[lineId]);
+  const totals=await refreshCountTotals(c.env.DB,id);
+  await audit(c,{action:'DELETE_COUNT_LINE',module:'INVENTORY',recordType:'CYCLE_COUNT',
+    recordId:id,recordNo:String(lineId),before:{serial:line.actual_serial_no}});
+  return ok(c,{removed:true,serial:line.actual_serial_no,totals});
 });
 
 inventoryRoutes.post('/cycle-counts/:id/scan', requirePermission('INVENTORY','CREATE'), async(c)=>{
