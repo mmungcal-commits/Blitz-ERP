@@ -6,6 +6,7 @@ export const WORKSPACE_GROUPS = [
   { code:'fa', title:'Finance & Accounting', items:[
     item('fa-general-accounting','General Accounting','FINANCE'),
     item('fa-receivables-payables','Receivables & Payables Mgmt.','FINANCE'),
+    item('fa-receivables-management','Receivables Management','RECEIVABLES'),
     item('fa-fixed-assets','Fixed Assets Management','FINANCE'),
     item('fa-management-accounting','Management Accounting','FINANCE'),
     item('fa-consolidation-reporting','Consolidation & Reporting','FINANCE'),
