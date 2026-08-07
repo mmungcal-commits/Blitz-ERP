@@ -590,7 +590,8 @@ financeRoutes.get('/payment-requests', requirePermission('FINANCE', 'VIEW'), asy
     ORDER BY p.order_date DESC,p.id DESC LIMIT 1000`);
   // The screen needs the MANCOM threshold to know which requests get the extra tier.
   const min=await mancomMin(c.env.DB);
-  return ok(c,{rows,purchaseOrders,visibility:vis.level,mancomMin:min,
+  return ok(c,{rows,purchaseOrders,visibility:vis.level,
+    mancomEnabled:Number.isFinite(min),mancomMin:Number.isFinite(min)?min:null,
     roleGate:await rfpFlag(c.env.DB,'rfp_role_gate','0')});
 });
 
@@ -610,7 +611,8 @@ financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), 
     FROM erp_rfp_approvals WHERE rfp_ref=? ORDER BY id`,[row.request_no]);
   // Workflow position, so the screen knows whether MANCOM applies to this amount.
   const min=await mancomMin(c.env.DB);
-  const workflow={mancomMin:min,mancomRequired:Number(row.net_payable||0)>=min,
+  const workflow={mancomEnabled:Number.isFinite(min),mancomMin:Number.isFinite(min)?min:null,
+    mancomRequired:Number(row.net_payable||0)>=min,
     stages:requiredStages(row.net_payable,min),nextStage:nextStage(row.net_payable,min,signatures),
     attachmentsEditable:['DRAFT','RETURNED'].includes(String(row.status||'').toUpperCase())};
   return ok(c,{request:row,attachments,liquidation:liquidation||null,signatures,workflow});
@@ -837,6 +839,7 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
         finance_validated_by=?,finance_validated_at=datetime('now'),updated_at=datetime('now') WHERE id=?`,[user,id]);
     }else if(action==='MANCOM_APPROVE'){
       // Spec section 4: this tier exists only at or above the threshold.
+      if(!Number.isFinite(min))throw new Error('The MANCOM stage is switched off. High-value spend is agreed in the MANCOM meeting before it is recorded here.');
       if(!mancomRequired)throw new Error(`MANCOM approval only applies to requests of PHP ${min.toLocaleString('en-US')} or more.`);
       if(request.status!=='FINANCE_VALIDATED')throw new Error('Finance validation is required first.');
       await run(c.env.DB,`UPDATE erp_payment_requests SET status='MANCOM_APPROVED',updated_at=datetime('now') WHERE id=?`,[id]);
@@ -992,7 +995,9 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
           :await notifyRfp(c,after,{to:ceo,cc:[...finance,...requestor],
             title:'Finance validated - CEO approval required',
             subject:`CEO approval: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
-            intro:`Finance validated this request. It is below the MANCOM threshold of ${rfpMoney(min)}, so it now needs final CEO approval.`});
+            intro:Number.isFinite(min)
+              ?`Finance validated this request. It is below the MANCOM threshold of ${rfpMoney(min)}, so it now needs final CEO approval.`
+              :`Finance validated this request. It now needs final CEO approval.`});
       }else if(action==='MANCOM_APPROVE'){
         notified=await notifyRfp(c,after,{to:ceo,cc:[...finance,...requestor],
           title:'MANCOM approved - CEO approval required',
