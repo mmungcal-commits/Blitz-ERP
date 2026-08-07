@@ -66,6 +66,40 @@ const R = results;
 const t = async (name, fn) => { try { const r = await fn(); results.push([r === false ? 'FAIL' : 'PASS', name, (r && r.note) || '']); } catch (e) { results.push(['FAIL', name, e.message]); } };
 
 
+
+/*
+ * A submitted count now needs three signatures. Everything downstream of
+ * approval goes through this, so the chain is proved by every test that
+ * needs an approved count rather than by one test in isolation.
+ */
+sqlite.exec("INSERT OR IGNORE INTO erp_users(email,display_name,role_code,department,active) VALUES('deptmgr@nrdev.ph','Dept Manager','DEPT_MANAGER','Supply Chain',1)");
+async function submitCount(ccId){
+  const prev = who;
+  try { who = 'judy@nrdev.ph';
+    const r = await call('POST', `/api/inventory/cycle-counts/${ccId}/submit`, {});
+    if (!r.json?.ok) throw new Error('submit: '+(r.json?.error||r.status));
+    return r.json;
+  } finally { who = prev; }
+}
+async function approveCountChain(ccId, opts){
+  opts = opts || {};
+  const prev = who;
+  const signed = [];
+  try{
+    for (const [email, stage] of [['deptmgr@nrdev.ph','DEPT_MANAGER'],
+                                  ['samuel@nrdev.ph','DEPT_HEAD'],
+                                  ['mmungcal@nrdev.ph','FINANCE']]){
+      who = email;
+      const r = await call('POST', `/api/inventory/cycle-counts/${ccId}/approve`, {remarks:'ok'});
+      if (!r.json?.ok) throw new Error(stage+' step: '+(r.json?.error||r.status));
+      signed.push(stage);
+      if (r.json.status === 'APPROVED') break;
+    }
+  } finally { who = prev; }
+  return signed;
+}
+
+
 await t('health', async () => { const r = await call('GET','/api/health'); if(!r.json?.ok) return false; return {note:r.json.build}; });
 await t('session', async () => { const r = await call('GET','/api/session'); if(!r.json?.ok) throw new Error(JSON.stringify(r.json)); return {note:r.json.user.role}; });
 await t('movement statuses', async () => { const r = await call('GET','/api/inventory/movement-statuses'); if(!r.json?.ok) throw new Error(r.json?.error); return {note:r.json.rows.length+' statuses'}; });
@@ -519,9 +553,12 @@ await t('a counted unit that is not in the system gets registered', async()=>{
   const bare=await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,{serialNo:'LC6PAGA13R0099002'});
   if(!bare.json?.ok) throw new Error(bare.json?.error);
 
-  await call('POST',`/api/inventory/cycle-counts/${ccId}/submit`,{});
-  const app2=await call('POST',`/api/inventory/cycle-counts/${ccId}/approve`,{});
-  if(!app2.json?.ok) throw new Error(app2.json?.error);
+  await submitCount(ccId);
+  const signed=await approveCountChain(ccId);
+  if(signed.join('>')!=='DEPT_MANAGER>DEPT_HEAD>FINANCE')
+    throw new Error('chain signed '+signed.join('>'));
+  const st=sqlite.prepare('SELECT status FROM erp_cycle_counts WHERE id=?').get(ccId).status;
+  if(st!=='APPROVED') throw new Error('count is '+st+' after the full chain');
   const posted=await call('POST',`/api/inventory/cycle-counts/${ccId}/post-adjustments`,{});
   if(!posted.json?.ok) throw new Error(posted.json?.error);
   if(posted.json.registered!==2) throw new Error('registered '+posted.json.registered+', expected 2');
@@ -563,7 +600,7 @@ await t('a counted row can be identified and removed before submitting', async()
   if(after.json.summary.counted!==1) throw new Error('counted total not corrected: '+after.json.summary.counted);
 
   // Once submitted the sheet is frozen.
-  await call('POST',`/api/inventory/cycle-counts/${ccId}/submit`,{});
+  await submitCount(ccId);
   const late=await call('DELETE',`/api/inventory/cycle-counts/${ccId}/lines/${a.json.result.lineId}`);
   if(late.json?.ok) throw new Error('a submitted sheet was edited');
   return {note:'identified BAT-0001 · removed the mis-scan · frozen after submit'};
@@ -626,8 +663,8 @@ await t('a typed count sheet can be uploaded', async()=>{
   if(bad.json?.ok) throw new Error('a headerless file was accepted');
 
   // Posting registers what was uploaded.
-  await call('POST',`/api/inventory/cycle-counts/${ccId}/submit`,{});
-  await call('POST',`/api/inventory/cycle-counts/${ccId}/approve`,{});
+  await submitCount(ccId);
+  await approveCountChain(ccId);
   const posted=await call('POST',`/api/inventory/cycle-counts/${ccId}/post-adjustments`,{});
   if(posted.json.registered!==2) throw new Error('registered '+posted.json.registered+' / '+JSON.stringify(posted.json).slice(0,120));
   const a=sqlite.prepare("SELECT item_code,motor_no,reconciliation_status FROM erp_assets WHERE serial_no='LC6UPLOAD0000001'").get();
@@ -771,6 +808,94 @@ await t('odd casing in the item master never duplicates a count line', async()=>
   if(stored.item_code!=='ZZCASE001') throw new Error('resolved to '+stored.item_code);
   if(stored.item_name!=='Rear shock absorber') throw new Error('picked the wrong row: '+stored.item_name);
   return {note:'two casings in the master -> 1 row, exact match wins'};
+});
+
+await t('the cycle count chain refuses to skip a step', async()=>{
+  const loc=sqlite.prepare('SELECT id FROM erp_locations LIMIT 1').get();
+  const cc=await call('POST','/api/inventory/cycle-counts',{locationId:loc.id,countDate:'2026-08-07',category:'SP'});
+  const ccId=cc.json.id;
+  await submitCount(ccId);
+
+  // Finance cannot sign first - the chain is an order, not a set.
+  const prev=who; let early, wrongPerson, done;
+  try{
+    who='mmungcal@nrdev.ph';
+    early=await call('POST',`/api/inventory/cycle-counts/${ccId}/approve`,{});
+    if(early.json?.ok) throw new Error('Finance signed before the department did');
+    if(!/dept manager/i.test(early.json.error||'')) throw new Error('wrong refusal: '+early.json.error);
+
+    // The counter who submitted it cannot sign it either.
+    who='judy@nrdev.ph';
+    wrongPerson=await call('POST',`/api/inventory/cycle-counts/${ccId}/approve`,{});
+    if(wrongPerson.json?.ok) throw new Error('the submitter approved their own count');
+  } finally { who=prev; }
+
+  const signed=await approveCountChain(ccId);
+  if(signed.length!==3) throw new Error('chain took '+signed.length+' steps');
+  const st=sqlite.prepare('SELECT status FROM erp_cycle_counts WHERE id=?').get(ccId).status;
+  if(st!=='APPROVED') throw new Error('count is '+st);
+  const steps=sqlite.prepare('SELECT stage,status,decided_by FROM erp_cycle_count_approvals WHERE cycle_count_id=? ORDER BY step_no').all(ccId);
+  if(steps.length!==3||steps.some(x=>x.status!=='APPROVED')) throw new Error('steps '+JSON.stringify(steps));
+  const signers=new Set(steps.map(x=>x.decided_by));
+  if(signers.size!==3) throw new Error('the same person signed twice');
+  return {note:'blocked out-of-order and self-approval; three distinct signers'};
+});
+
+await t('a purchase order without its quotation is refused by the API', async()=>{
+  const body={vendorName:'Test Vendor Co',orderDate:'2026-08-07',
+    lines:[{description:'Spare part',qty:2,unitCost:500}]};
+  const bare=await call('POST','/api/procurement/purchase-orders',body);
+  if(bare.json?.ok) throw new Error('a PO saved with no attachment');
+  if(!/quotation|invoice/i.test(bare.json.error||'')) throw new Error('wrong refusal: '+bare.json.error);
+  // An empty array is not an attachment either.
+  const empty=await call('POST','/api/procurement/purchase-orders',{...body,attachments:[]});
+  if(empty.json?.ok) throw new Error('an empty attachment list was accepted');
+  return {note:bare.json.error.slice(0,58)};
+});
+
+await t('only Finance clears a receiving discrepancy, and someone else acknowledges it', async()=>{
+  // Seed one rather than hope the fixture has one: a rule proved by the absence
+  // of a test case is not proved at all.
+  // The row has real foreign keys, so give it real parents.
+  const loc0=sqlite.prepare(`SELECT id FROM erp_locations LIMIT 1`).get();
+  const sh=sqlite.prepare(`SELECT id FROM erp_shipments LIMIT 1`).get()
+    || {id:Number(sqlite.prepare(`INSERT INTO erp_shipments(shipment_no) VALUES('SHP-TEST-01')`).run().lastInsertRowid)};
+  const rc=sqlite.prepare(`SELECT id FROM erp_receipts LIMIT 1`).get()
+    || {id:Number(sqlite.prepare(`INSERT INTO erp_receipts(receipt_no,shipment_id,location_id,received_at)
+         VALUES('RCP-TEST-01',?,?,datetime('now'))`).run(sh.id,loc0.id).lastInsertRowid)};
+  const rl=sqlite.prepare(`SELECT id FROM erp_receipt_lines LIMIT 1`).get()
+    || {id:Number(sqlite.prepare(`INSERT INTO erp_receipt_lines(receipt_id,serial_no,qty) VALUES(?,'ACT-0001',1)`).run(rc.id).lastInsertRowid)};
+  sqlite.prepare(`INSERT OR IGNORE INTO erp_receiving_variances
+    (variance_no,shipment_id,receipt_id,receipt_line_id,variance_type,expected_serial_no,actual_serial_no,reason,status)
+    VALUES('VAR-TEST-01',?,?,?,'SERIAL_MISMATCH','EXP-0001','ACT-0001','seeded for the control test','OPEN')`)
+    .run(sh.id,rc.id,rl.id);
+  const v=sqlite.prepare(`SELECT id FROM erp_receiving_variances WHERE variance_no='VAR-TEST-01'`).get();
+  if(!v) throw new Error('could not seed a discrepancy to test against');
+  const prev=who;
+  try{
+    who='judy@nrdev.ph';
+    const nope=await call('POST',`/api/receiving/variances/${v.id}/resolve`,{resolution:'write off'});
+    if(nope.json?.ok) throw new Error('a non-Finance user cleared a discrepancy');
+
+    who='mmungcal@nrdev.ph';
+    const cleared=await call('POST',`/api/receiving/variances/${v.id}/resolve`,{resolution:'write off'});
+    if(!cleared.json?.ok) throw new Error('Finance could not clear it: '+cleared.json?.error);
+    const mid=sqlite.prepare('SELECT status FROM erp_receiving_variances WHERE id=?').get(v.id).status;
+    if(mid!=='RESOLVED') throw new Error('status after Finance is '+mid);
+
+    // Finance cannot also acknowledge their own decision.
+    const selfAck=await call('POST',`/api/receiving/variances/${v.id}/acknowledge`,{});
+    if(selfAck.json?.ok) throw new Error('Finance acknowledged its own resolution');
+
+    who='samuel@nrdev.ph';
+    const ack=await call('POST',`/api/receiving/variances/${v.id}/acknowledge`,{note:'seen'});
+    if(!ack.json?.ok) throw new Error('the department head could not acknowledge: '+ack.json?.error);
+  } finally { who=prev; }
+  const end=sqlite.prepare('SELECT status FROM erp_receiving_variances WHERE id=?').get(v.id).status;
+  if(end!=='CLOSED') throw new Error('final status '+end);
+  const rec=sqlite.prepare('SELECT acknowledged_by FROM erp_receiving_variance_acks WHERE variance_id=?').get(v.id);
+  if(!rec?.acknowledged_by) throw new Error('the acknowledgement was not recorded');
+  return {note:'Finance cleared, department head acknowledged, both recorded'};
 });
 
 
