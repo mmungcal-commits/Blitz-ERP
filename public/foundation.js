@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R43.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R44.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -47,7 +47,9 @@ function statusBadge(value='DRAFT'){
   const status=String(value).toUpperCase();
   // Part paid is not paid. It has to read as an open balance or the register
   // shows a settled green badge against money the company still owes.
-  const tone=/PARTIAL/.test(status)?'warn'
+  // Paid but unproved is not settled: the money is claimed to have moved and
+  // nobody has shown the advice. It reads as outstanding until they do.
+  const tone=/PARTIAL|UNPROVEN/.test(status)?'warn'
     :/APPROVED|POSTED|CLOSED|PAID|LIQUIDATED/.test(status)?'good'
     :/CANCELLED|REJECTED/.test(status)?'bad'
     :/FOR_APPROVAL|PENDING|RETURNED|FOR_LIQUIDATION/.test(status)?'warn':'info';
@@ -380,6 +382,98 @@ function enterpriseButton(item,className='enterprise-module-button'){
  * answers the two questions somebody actually has first - what is waiting on
  * me, and is anything on fire - and keeps the map one button away.
  * =================================================================== */
+/* =====================================================================
+ * A dashboard the person arranges
+ *
+ * Which number matters most is not the same question for Finance as it is
+ * for the warehouse, and it changes with the week. So the cards can be
+ * dragged into whatever order the person wants, and the order is theirs:
+ * kept on their machine alongside the theme and the open groups, applied
+ * before the page paints so it never flickers into place.
+ *
+ * Keyed on the card's name rather than its position, so a card that is
+ * added or drops out later does not shuffle everything else.
+ * ===================================================================== */
+const HOME_LAYOUT='blitz-home-layout';
+function homeLayout(){
+  try{const v=JSON.parse(localStorage.getItem(HOME_LAYOUT)||'[]');return Array.isArray(v)?v:[];}
+  catch(e){return [];}
+}
+function saveHomeLayout(keys){
+  try{localStorage.setItem(HOME_LAYOUT,JSON.stringify(keys));}catch(e){}
+}
+function clearHomeLayout(){try{localStorage.removeItem(HOME_LAYOUT);}catch(e){}}
+
+/** Put the cards back in the order the person left them. */
+function applyHomeLayout(grid){
+  const order=homeLayout();
+  if(!order.length)return;
+  const cards=[...grid.querySelectorAll(':scope > .viz')];
+  const byKey=new Map(cards.map(c=>[c.dataset.vizKey,c]));
+  // Known cards first, in the saved order; anything new keeps its place at the
+  // end rather than being dropped because nobody has arranged it yet.
+  order.forEach(k=>{const el=byKey.get(k);if(el){grid.appendChild(el);byKey.delete(k);}});
+}
+function currentHomeOrder(grid){
+  return [...grid.querySelectorAll(':scope > .viz')].map(c=>c.dataset.vizKey).filter(Boolean);
+}
+
+/**
+ * Drag to rearrange, and arrow keys for anyone not using a mouse.
+ * A drag must not also count as a click, or letting go of a card opens the
+ * module underneath it.
+ */
+function enableCardDrag(grid){
+  let dragged=null;
+  const cards=[...grid.querySelectorAll(':scope > .viz')];
+  cards.forEach(card=>{
+    card.draggable=true;
+    card.classList.add('viz-movable');
+    if(!card.hasAttribute('tabindex'))card.tabIndex=0;
+    card.title=(card.title?card.title+' · ':'')+'Drag to rearrange, or hold Alt and press the arrow keys';
+
+    card.addEventListener('dragstart',e=>{
+      dragged=card;grid.classList.add('is-arranging');card.classList.add('is-dragging');
+      try{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',card.dataset.vizKey||'');}catch(err){}
+    });
+    card.addEventListener('dragend',()=>{
+      grid.classList.remove('is-arranging');
+      cards.forEach(c=>c.classList.remove('is-dragging','is-over'));
+      if(dragged){saveHomeLayout(currentHomeOrder(grid));toast('Dashboard layout saved');}
+      dragged=null;
+      // Let go, then allow clicks again on the next tick.
+      setTimeout(()=>{grid.dataset.justDragged='';},0);
+    });
+    card.addEventListener('dragover',e=>{
+      if(!dragged||dragged===card)return;
+      e.preventDefault();
+      try{e.dataTransfer.dropEffect='move';}catch(err){}
+      card.classList.add('is-over');
+      grid.dataset.justDragged='1';
+      // Insert before or after depending on which half the pointer is over, so
+      // a card can be dropped at either end of a row.
+      const box=card.getBoundingClientRect();
+      const after=(e.clientX-box.left)>box.width/2;
+      grid.insertBefore(dragged,after?card.nextSibling:card);
+    });
+    card.addEventListener('dragleave',()=>card.classList.remove('is-over'));
+    card.addEventListener('drop',e=>{e.preventDefault();card.classList.remove('is-over');});
+
+    // Keyboard: Alt with an arrow moves the focused card one place.
+    card.addEventListener('keydown',e=>{
+      if(!e.altKey)return;
+      const back=e.key==='ArrowLeft'||e.key==='ArrowUp';
+      const fwd=e.key==='ArrowRight'||e.key==='ArrowDown';
+      if(!back&&!fwd)return;
+      e.preventDefault();
+      if(back&&card.previousElementSibling)grid.insertBefore(card,card.previousElementSibling);
+      else if(fwd&&card.nextElementSibling)grid.insertBefore(card.nextElementSibling,card);
+      else return;
+      card.focus();saveHomeLayout(currentHomeOrder(grid));toast('Dashboard layout saved');
+    });
+  });
+}
+
 async function renderHomeDashboard(){
   state.module=null;state.definition=null;state.section='center';
   document.body.classList.remove('workbench-view');
@@ -512,6 +606,47 @@ async function renderHomeDashboard(){
         {label:'Sold',value:m.soldUnits},{label:'Deployed',value:m.deployedUnits}],
         {title:'Where the fleet is',totalLabel:'Units',keyLabel:'State',valueLabel:'Units',
          open:'ip-warehouse-management#records',openLabel:'Open unit visibility'}));
+
+    /*
+     * The swapping network on its own.
+     *
+     * RideBox builds and runs the stations, and its spend used to sit in the
+     * same pile as everything else, so neither what the network costs nor what
+     * the rest of the company costs could be read off this page. These cards
+     * are the split: how much of the payables belongs to the network, what it
+     * cost to build against what it costs to keep standing, and which host
+     * shops the running cost is paid to.
+     */
+    const bl=(sec.businessLines||[]).filter(l=>Number(l.raised)>0||Number(l.requests)>0);
+    if(bl.length>1){
+      cards.push(vizDonut(bl.map(l=>({label:l.name,value:Number(l.raised)||0})),
+        {title:'Payables by business line',money:true,totalLabel:'Requested',
+         keyLabel:'Business line',valueLabel:'Requested',
+         open:'fa-receivables-payables#approvals',openLabel:'Open the payment requests'}));
+      const bss=bl.find(l=>l.code==='BSS');
+      if(bss)cards.push(vizRing(bss.paidPct==null?0:bss.paidPct,{title:'Swapping network paid',
+        subtitle:bss.paidPct==null?'nothing requested for the network in this period'
+          :money(bss.settled)+' of '+money(bss.raised)+' requested'
+            +(bss.owed>0.01?' \u00b7 '+money(bss.owed)+' owed':''),
+        caption:'paid',valueLabel:bss.paidPct==null?'0%':undefined,
+        tipLabel:'RideBox stations: paid against requested',
+        open:'fa-receivables-payables#approvals',openLabel:'Open the payment requests',
+        tone:bss.paidPct==null?null:(bss.paidPct>=80?'good':bss.paidPct>=50?'warning':'critical')}));
+    }
+    const sn=sec.swappingNetwork;
+    if(sn&&(sn.build.amount>0||sn.sites.amount>0)){
+      cards.push(vizDonut([
+          {label:'Building stations',value:sn.build.amount},
+          {label:'Site rent and power',value:sn.sites.amount}],
+          {title:'Swapping network cost',money:true,totalLabel:'Spend',
+           keyLabel:'Cost',valueLabel:'Amount',
+           open:'fa-receivables-payables#approvals',openLabel:'Open the payment requests'}));
+      if((sn.hosts||[]).length)
+        cards.push(vizBars((sn.hosts||[]).map(h=>({label:h.label,value:Number(h.value)||0})),
+          {title:'Station site costs by host',money:true,color:VIZ.status.warning,
+           keyLabel:'Host',valueLabel:'Rent and power',labelWidth:150,
+           open:'fa-receivables-payables#approvals',openLabel:'Open the payment requests'}));
+    }
   }
 
   if(sec.inventory){
@@ -585,6 +720,8 @@ async function renderHomeDashboard(){
     +waitingHtml
     +emptyHtml
     +tiles
+    +'<div class="home-grid-head"><span>Drag a card to rearrange it</span>'
+      +'<button type="button" class="home-reset" id="homeResetLayout">Reset order</button></div>'
     +'<div class="viz-grid home-grid">'+cards.join('')+'</div>'
     +'<footer class="home-foot"><span>Blitz - ERP</span><span>&copy; 2026 E88 Ventures Inc.</span></footer>'
     +'</section>';
@@ -601,7 +738,18 @@ async function renderHomeDashboard(){
     await openWorkspace(code);
     if(section&&state.module&&state.module.code===code)await openSection(section);
   };
-  bindViz(content,null,go);
+  /*
+   * The cards are arrangeable, so a card that was just dragged must not also
+   * open its module: letting go over a destination would otherwise navigate
+   * away from the layout the person was in the middle of setting.
+   */
+  const homeGrid=content.querySelector('.home-grid');
+  const goUnlessDragging=async dest=>{
+    if(homeGrid&&homeGrid.dataset.justDragged==='1'){homeGrid.dataset.justDragged='';return;}
+    return go(dest);
+  };
+  bindViz(content,null,goUnlessDragging);
+  if(homeGrid){applyHomeLayout(homeGrid);enableCardDrag(homeGrid);}
   $$('[data-home-go]').forEach(b=>b.onclick=()=>go(b.dataset.homeGo));
   // canWorkspace only knows module codes, so strip any section before the check.
   const setRange=(from,to,preset)=>{state.homeRange={from,to,preset};renderHomeDashboard();};
@@ -621,6 +769,8 @@ async function renderHomeDashboard(){
   };
   $('#homeModules').onclick=()=>{state.showModuleMap=true;renderLaunchpad();};
   $('#homeSignOut').onclick=logout;
+  if($('#homeResetLayout'))$('#homeResetLayout').onclick=()=>{
+    clearHomeLayout();toast('Card order reset');renderHomeDashboard();};
   // Let the cards arrive rather than snap in.
   requestAnimationFrame(()=>content.querySelectorAll('.viz,.home-wait').forEach((el,i)=>{
     el.style.animation='homeRise .38s cubic-bezier(.2,.8,.25,1) both';
@@ -1837,6 +1987,9 @@ async function renderPaymentRequests(){
             row.status==='FINANCE_VALIDATED'?(needsMancom?'MANCOM_APPROVE':'FINAL_APPROVE'):
               row.status==='MANCOM_APPROVED'?'FINAL_APPROVE':
                 row.status==='APPROVED'?'MARK_PAID':row.status==='PAYMENT_PREPARED'?'CONFIRM_PAID':'';
+      // PAID_UNPROVEN has one thing outstanding and it is not an approval: the
+      // bank advice. The payments card is where that happens.
+      const proofWanted=row.status==='PAID_UNPROVEN';
       // The posting title is the first thing Finance checks, so it belongs on the
       // list rather than one request at a time. Several titles say so plainly.
       const titles=Number(row.account_count||0);
@@ -1853,12 +2006,12 @@ async function renderPaymentRequests(){
       const paidCell=settled>0
         ?`<span class="pay-settled">${money(settled)}</span>`
           +(balance>0.01?`<span class="pay-balance">${money(balance)} owed</span>`:'')
-          +(gap>0?`<span class="pay-noproof">no proof</span>`:'')
+          +(gap>0?`<span class="pay-noproof">${proofWanted?'awaiting proof':'no proof'}</span>`:'')
         :'<span class="muted">-</span>';
       return `<tr><td><b>${esc(row.request_no)}</b></td><td>${date(row.request_date)}</td><td>${esc(row.payee_name)}</td>
         <td>${esc(row.department)}</td><td>${title}</td><td>${esc(row.purchase_order_no||'-')}</td><td class="num">${money(row.net_payable)}</td>
         <td class="num pay-cell">${paidCell}</td>
-        <td>${financeStatus(row.status)}</td><td>${editable?`<button class="table-action" data-rfp-edit="${row.id}">Edit</button>`:''}<button class="table-action" data-rfp-pay="${row.id}">Payments</button><button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(rfpActionLabel(action))}</button>`:''}${!['PAID','REJECTED','CANCELLED','RETURNED','DRAFT'].includes(row.status)?`<button class="table-action" data-rfp-action="RETURN" data-rfp-id="${row.id}">Return</button>`:''}</td></tr>`;
+        <td>${financeStatus(row.status)}</td><td>${editable?`<button class="table-action" data-rfp-edit="${row.id}">Edit</button>`:''}<button class="table-action" data-rfp-pay="${row.id}">Payments</button><button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(rfpActionLabel(action))}</button>`:''}${!['PAID','PAID_UNPROVEN','PARTIALLY_PAID','REJECTED','CANCELLED','RETURNED','DRAFT'].includes(row.status)?`<button class="table-action" data-rfp-action="RETURN" data-rfp-id="${row.id}">Return</button>`:''}</td></tr>`;
     });
     // What the register as a whole has paid and still owes, so the totals do not
     // have to be added up row by row.
@@ -6280,6 +6433,9 @@ async function renderModuleReports(){
 
 async function renderModuleSetup(){
   const definition=state.definition;
+  if(!definition||!definition.workflow)
+    return showWorkspaceError(new Error(
+      'Open this module first: its setup is read from the definition the centre loads.'));
   const actionRows=definition.workflow.actions.map(action=>`<tr><td><b>${esc(action.label)}</b></td><td>${action.from.map(status=>statusBadge(status)).join(' ')}</td>
     <td>${statusBadge(action.to)}</td><td>${esc(action.permission)}</td></tr>`);
   const fieldRows=definition.fields.map(field=>`<tr><td><b>${esc(field.label)}</b></td><td>${esc(field.type)}</td>
@@ -6729,6 +6885,14 @@ async function renderRoleCenter(){
     const data=await api(`/workspace/modules/${state.module.code}/summary`);
     state.definition=data.definition;
     const definition=data.definition;
+    /*
+     * A module without a definition has nothing to draw, and reading through
+     * the missing one threw a raw TypeError at the person instead of saying
+     * so. Say so.
+     */
+    if(!definition||!definition.workflow)
+      return showWorkspaceError(new Error(
+        `${state.module.label||state.module.code} has no workspace definition yet, so there is nothing to show here.`));
     const countMap=Object.fromEntries(data.statusCounts.map(row=>[row.status,Number(row.count)]));
     const stages=definition.workflow.stages;
     const statusValues=stages.slice(0,5).map((status,index)=>[definition.statusLabels[status],countMap[status]||0,['blue','orange','green','blue','green'][index]]);
@@ -6815,6 +6979,8 @@ async function openRecord(id){
   try{
     const data=await api(`/workspace/modules/${state.module.code}/records/${id}`);
     state.definition=data.definition;
+    if(!data.definition||!data.definition.workflow)
+      throw new Error('This record came back without its module definition, so the form cannot be drawn.');
     renderRecordForm(data.record,data.documents,data.connected);
   }catch(error){showWorkspaceError(error);}
 }
@@ -7960,6 +8126,19 @@ init();
     padding-top:9px;border-top:1px solid #e2e9f0;color:#657586;font-size:12px}
   .rfp-total b{font-size:15px;color:#0a2239;font-variant-numeric:tabular-nums}
   @media (max-width:900px){.rfp-line{grid-template-columns:1fr 1fr;grid-auto-rows:auto}}
+
+  /* A dashboard the person arranges. */
+  .home-grid-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    margin:2px 0 7px;font-size:11px;color:#8194a6}
+  .home-reset{border:1px solid #d7e2ec;background:#fff;color:#42576b;border-radius:6px;
+    padding:3px 9px;font-size:11px;cursor:pointer}
+  .home-reset:hover{border-color:#b6cadb;color:#12305f}
+  .viz.viz-movable{cursor:grab}
+  .viz.viz-movable:active{cursor:grabbing}
+  .viz.is-dragging{opacity:.4}
+  .viz.is-over{outline:2px dashed #7ba7d4;outline-offset:2px}
+  .home-grid.is-arranging .viz{transition:transform .12s ease}
+  @media (prefers-reduced-motion:reduce){.home-grid.is-arranging .viz{transition:none}}
 
   /* What has actually been paid, and whether there is a document behind it. */
   .pay-figures{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-bottom:11px}

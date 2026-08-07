@@ -63,7 +63,14 @@ function niceTicks(max, count){
 function figure({ title, subtitle, body, legend, table, id, open, openLabel }){
   // A chart on a dashboard is a question. Giving the whole card a destination
   // means the answer is one click away instead of a hunt through the rail.
+  /*
+   * A key that survives a re-render. The element id is minted fresh every time
+   * the page is drawn, so anything that wants to remember where a card sits -
+   * a layout the person arranged themselves - needs the card's own name.
+   */
+  const key = String(title||id).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
   return '<figure class="viz'+(open?' viz-clickable':'')+'" id="'+id+'"'
+    + ' data-viz-key="'+esc(key)+'"'
     + (open?' data-viz-open="'+esc(open)+'" tabindex="0" role="link"':'')
     + '>'
     + (title ? '<figcaption><span class="viz-title">'+esc(title)+'</span>'
