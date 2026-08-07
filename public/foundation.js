@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R40.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R41.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -164,7 +164,9 @@ function workspaceTabs(code=state.module?.code){
     ['balances','Account Balances'],['reports','Financial Reports'],['setup','Accounts & Periods'],
   ];
   if(code==='fa-receivables-payables')return [
-    ['center','AP Center'],['records','Subledgers'],['approvals','RFP & Payments'],
+    // Subledgers came out: everything on it was already visible on the RFP queue
+    // or the ageing report, and a tab nobody opens is a tab in the way.
+    ['center','AP Center'],['approvals','RFP & Payments'],
     ['reports','Aging & Tax'],['setup','Controls'],
   ];
   if(code==='fa-fixed-assets')return [
@@ -255,7 +257,7 @@ function showAuth(mode='login'){
     const startScope=state.scope==='ADMIN'?'ADMIN':'OPERATIONS';
     host.innerHTML=`<div class="blitz-auth">
       <div class="blitz-auth-brand">
-        <img class="blitz-mark" src="/logo-white.png?v=20260808-r40" alt="E88 Ventures Inc.">
+        <img class="blitz-mark" src="/logo-white.png?v=20260808-r41" alt="E88 Ventures Inc.">
         <div class="blitz-charge" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
       </div>
       <div class="auth-heading"><h1>Welcome back</h1><p>Sign in to continue.</p></div>
@@ -1502,7 +1504,9 @@ async function renderAccountingSetup(){
 
 async function renderReceivablesPayables(section){
   if(section==='center')return renderFinanceCenter('Payables Work Summary','Supplier bills and controlled payments',true);
-  if(section==='records')return renderSubledger();
+  // An old link to the removed Subledgers tab lands on the payment requests
+  // rather than on nothing.
+  if(section==='records')return renderPaymentRequests();
   if(section==='approvals')return renderPaymentRequests();
   if(section==='reports')return renderAgingTax();
   return renderFinanceControlNotes('AP Controls','fa-receivables-payables',[
@@ -1566,6 +1570,100 @@ function openLeaseBillingForm(contracts){
     catch(error){toast(error.message,'error');}};
 }
 
+
+/*
+ * A draft request is a working document. It can be corrected here - the header,
+ * and the lines it is made of, each with its own account title, because one
+ * request routinely spans several and the ledger posts each separately. Once it
+ * is submitted the figure is one somebody is being asked to sign for, so the
+ * button is not offered and the API refuses it too.
+ */
+async function openRfpEdit(id,master){
+  try{
+    const d=await api('/finance/payment-requests/'+id);
+    const r=d.request||{};
+    const titles=[...new Set(((master&&master.accounts)||[]).map(a=>a.account_name).filter(Boolean)
+      .concat((d.lines||[]).map(l=>l.account_title).filter(Boolean)))].sort();
+    const titleOpts=v=>['<option value=""></option>'].concat(titles.map(t=>
+      `<option value="${esc(t)}" ${String(v||'')===t?'selected':''}>${esc(t)}</option>`)).join('');
+    const lineRow=(l={})=>`<div class="rfp-line">
+      <select data-r="accountTitle">${titleOpts(l.account_title)}</select>
+      <input data-r="description" placeholder="Description" value="${esc(l.description||'')}">
+      <select data-r="procurementCategory">
+        ${['OPEX','CAPEX','Inventory Purchase','Service','Software','Utilities','Logistics','Project Cost','Others']
+          .map(v=>`<option ${String(l.procurement_category||'')===v?'selected':''}>${v}</option>`).join('')}</select>
+      <input data-r="grossAmount" type="number" step="0.01" value="${esc(l.gross_amount!=null?l.gross_amount:'')}">
+      <select data-r="vatRate">
+        <option value="0.12" ${Number(l.vat_rate)===0.12?'selected':''}>VAT 12%</option>
+        <option value="0" ${Number(l.vat_rate)!==0.12?'selected':''}>Non-VAT</option></select>
+      <input data-r="ewtAmount" type="number" step="0.01" value="${esc(l.ewt_amount||0)}">
+      <button type="button" class="table-action danger" data-r-del>&times;</button></div>`;
+
+    modal(`Edit ${esc(r.request_no||'')}`,
+      `<form id="rfpEditForm" class="operational-form rfp-edit">
+        <div class="form-grid">
+          <label><span>Payee</span><input name="payeeName" value="${esc(r.payee_name||'')}" required></label>
+          <label><span>Department</span><input name="department" value="${esc(r.department||'')}" required></label>
+          <label><span>Cost centre</span><input name="costCenter" value="${esc(r.cost_center||'')}"></label>
+          <label><span>Request type</span><select name="requestType">
+            ${['Payment to Vendor','Reimbursement','Cash Advance','Liquidation']
+              .map(v=>`<option ${String(r.request_type||'')===v?'selected':''}>${v}</option>`).join('')}</select></label>
+          <label><span>Supplier invoice</span><input name="supplierInvoiceNo" value="${esc(r.supplier_invoice_no||'')}"></label>
+          <label><span>Invoice date</span><input name="invoiceDate" type="date" value="${esc(r.invoice_date||'')}"></label>
+          <label><span>Due date</span><input name="dueDate" type="date" value="${esc(r.due_date||'')}"></label>
+          <label class="wide"><span>Purpose</span><input name="purpose" value="${esc(r.purpose||'')}" required></label>
+        </div>
+        <div class="rfp-line-head"><b>Lines</b><button type="button" class="command" id="rfpAddLine">Add line</button></div>
+        <div class="rfp-line rfp-line-head-row"><span>Account title</span><span>Description</span><span>Class</span>
+          <span>Gross</span><span>VAT</span><span>EWT</span><span></span></div>
+        <div id="rfpLines">${(d.lines||[]).map(lineRow).join('')||lineRow()}</div>
+        <div class="rfp-total">Gross <b id="rfpGross">0.00</b> \u00b7 Net payable <b id="rfpNet">0.00</b></div>
+        <div class="modal-actions"><button type="submit" class="command primary">Save</button>
+        <button type="button" class="command" id="rfpEditNo">Cancel</button></div></form>`);
+
+    const mb=$('#modalBody');
+    const recalc=()=>{
+      let g=0,n=0;
+      mb.querySelectorAll('#rfpLines .rfp-line').forEach(row=>{
+        const lg=Number(row.querySelector('[data-r="grossAmount"]').value)||0;
+        const ew=Number(row.querySelector('[data-r="ewtAmount"]').value)||0;
+        g+=lg; n+=lg-ew;});
+      mb.querySelector('#rfpGross').textContent=money(g);
+      mb.querySelector('#rfpNet').textContent=money(n);
+    };
+    const wire=()=>{
+      mb.querySelectorAll('#rfpLines input,#rfpLines select').forEach(i=>{i.oninput=recalc;i.onchange=recalc;});
+      mb.querySelectorAll('[data-r-del]').forEach(b2=>b2.onclick=()=>{
+        if(mb.querySelectorAll('#rfpLines .rfp-line').length<=1)
+          return toast('A request needs at least one line.','error');
+        b2.closest('.rfp-line').remove();recalc();});
+    };
+    mb.querySelector('#rfpAddLine').onclick=()=>{
+      mb.querySelector('#rfpLines').insertAdjacentHTML('beforeend',lineRow());wire();recalc();};
+    mb.querySelector('#rfpEditNo').onclick=()=>closeModal();
+    wire();recalc();
+
+    mb.querySelector('#rfpEditForm').onsubmit=async e=>{
+      e.preventDefault();
+      const lines=[...mb.querySelectorAll('#rfpLines .rfp-line')].map(row=>({
+        accountTitle:row.querySelector('[data-r="accountTitle"]').value,
+        description:row.querySelector('[data-r="description"]').value.trim(),
+        procurementCategory:row.querySelector('[data-r="procurementCategory"]').value,
+        grossAmount:Number(row.querySelector('[data-r="grossAmount"]').value)||0,
+        vatRate:Number(row.querySelector('[data-r="vatRate"]').value)||0,
+        vatType:Number(row.querySelector('[data-r="vatRate"]').value)?'VATable':'Non-VAT',
+        ewtAmount:Number(row.querySelector('[data-r="ewtAmount"]').value)||0,
+      })).filter(l=>l.accountTitle||l.grossAmount);
+      if(!lines.length)return toast('Give at least one line an account title and an amount.','error');
+      try{
+        await api('/finance/payment-requests/'+id,{method:'PATCH',
+          body:JSON.stringify({...formDataObject(e.currentTarget),lines})});
+        closeModal();toast('Saved');await renderPaymentRequests();
+      }catch(error){toast(error.message,'error');}
+    };
+  }catch(error){toast(error.message,'error');}
+}
+
 async function renderPaymentRequests(){
   content.innerHTML='<div class="workspace-loading">Loading payment requests…</div>';
   try{
@@ -1582,18 +1680,24 @@ async function renderPaymentRequests(){
             row.status==='FINANCE_VALIDATED'?(needsMancom?'MANCOM_APPROVE':'FINAL_APPROVE'):
               row.status==='MANCOM_APPROVED'?'FINAL_APPROVE':
                 row.status==='APPROVED'?'MARK_PAID':row.status==='PAYMENT_PREPARED'?'CONFIRM_PAID':'';
+      // The posting title is the first thing Finance checks, so it belongs on the
+      // list rather than one request at a time. Several titles say so plainly.
+      const titles=Number(row.account_count||0);
+      const title=titles>1?`${esc(row.account_title||'')} +${titles-1}`:esc(row.account_title||'-');
+      const editable=['DRAFT','RETURNED'].includes(row.status);
       return `<tr><td><b>${esc(row.request_no)}</b></td><td>${date(row.request_date)}</td><td>${esc(row.payee_name)}</td>
-        <td>${esc(row.department)}</td><td>${esc(row.purchase_order_no||'-')}</td><td class="num">${money(row.net_payable)}</td>
-        <td>${financeStatus(row.status)}</td><td><button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(rfpActionLabel(action))}</button>`:''}${!['PAID','REJECTED','CANCELLED','RETURNED','DRAFT'].includes(row.status)?`<button class="table-action" data-rfp-action="RETURN" data-rfp-id="${row.id}">Return</button>`:''}</td></tr>`;
+        <td>${esc(row.department)}</td><td>${title}</td><td>${esc(row.purchase_order_no||'-')}</td><td class="num">${money(row.net_payable)}</td>
+        <td>${financeStatus(row.status)}</td><td>${editable?`<button class="table-action" data-rfp-edit="${row.id}">Edit</button>`:''}<button class="table-action" data-print-rfp="${row.id}">Print RFP</button>${action?`<button class="table-action" data-rfp-action="${action}" data-rfp-id="${row.id}">${esc(rfpActionLabel(action))}</button>`:''}${!['PAID','REJECTED','CANCELLED','RETURNED','DRAFT'].includes(row.status)?`<button class="table-action" data-rfp-action="RETURN" data-rfp-id="${row.id}">Return</button>`:''}</td></tr>`;
     });
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newRfp">New Request for Payment</button>
       <button class="command" id="openLiquidations">Cash Advance Liquidation</button>
       <span class="command-spacer"></span><span class="workspace-mode">CONTROLLED PAYMENT WORKFLOW</span></div>
       ${workflowStrip(['Requestor','Dept Head'].concat(rfpFinanceReviewOn()?['Finance Check']:[]).concat(['Head of Finance']).concat(rfpMancomOn()?['MANCOM (≥ '+money(rfpMancomMin())+')']:[]).concat(['CEO Approval','Instruct Bank (MNC)','Proof & Close']),2)}
       <section class="workspace-card"><header><h2>Request for Payment Worklist</h2><span>${data.rows.length} requests</span></header>
-        ${financeTable(['RFP','Date','Payee','Department','PO','Net Payable','Status','Action'],rows)}</section>`;
+        ${financeTable(['RFP','Date','Payee','Department','Account Title','PO','Net Payable','Status','Action'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'approvals');bindWorkbench();
     window.__rfpRows={};data.rows.forEach(function(x){window.__rfpRows[x.id]=x;});
+    $$('[data-rfp-edit]').forEach(b2=>b2.onclick=e=>{e.stopPropagation();openRfpEdit(Number(b2.dataset.rfpEdit),master);});
     $$('[data-print-rfp]').forEach(function(b){b.onclick=function(){if(window.czPrintRfp)window.czPrintRfp(window.__rfpRows[b.dataset.printRfp]);};});
     $('#newRfp').onclick=()=>openRfpForm(data.purchaseOrders,master);
     if($('#openLiquidations'))$('#openLiquidations').onclick=renderLiquidations;
@@ -7664,6 +7768,18 @@ init();
   .ar-collect .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px}
   .ar-collect .form-grid label.wide{grid-column:1/-1}
   .table-action.primary{border-color:#12305f;background:#12305f;color:#fff}
+
+  /* Editing a draft request: the lines carry the account titles the ledger posts to. */
+  .rfp-edit .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:9px}
+  .rfp-line-head{display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px}
+  .rfp-line{display:grid;grid-template-columns:1.5fr 1.6fr .9fr .8fr .8fr .7fr 30px;gap:6px;
+    align-items:center;margin-bottom:5px}
+  .rfp-line input,.rfp-line select{width:100%;min-width:0}
+  .rfp-line-head-row span{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#8194a6}
+  .rfp-total{display:flex;justify-content:flex-end;gap:8px;align-items:baseline;margin-top:10px;
+    padding-top:9px;border-top:1px solid #e2e9f0;color:#657586;font-size:12px}
+  .rfp-total b{font-size:15px;color:#0a2239;font-variant-numeric:tabular-nums}
+  @media (max-width:900px){.rfp-line{grid-template-columns:1fr 1fr;grid-auto-rows:auto}}
 
   /* Registering an account title without leaving the journal you are typing. */
   .jl-acct{display:flex;gap:5px;align-items:center}

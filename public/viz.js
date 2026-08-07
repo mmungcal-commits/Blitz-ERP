@@ -543,7 +543,9 @@ export const VIZ_CSS = `
 .viz-table th{color:${VIZ.muted};font-weight:700;font-size:10px;text-transform:uppercase;letter-spacing:.5px}
 .viz-table td.num{text-align:right;font-variant-numeric:tabular-nums}
 
-.viz-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:8px;margin-bottom:10px}
+/* Four to a row, so eight KPIs read as two tidy rows rather than one cramped
+   strip where every label wraps. */
+.viz-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:10px}
 /* Depth, not a coloured rule: the tiles are one calm surface and the number
    carries the weight. State still reads - it is on the dot beside the label,
    so the tile never leans on colour alone. */
@@ -587,15 +589,21 @@ export const VIZ_CSS = `
 .viz-meter-track{display:block;height:8px;border-radius:999px;background:#e8eef4;overflow:hidden}
 .viz-meter-track i{display:block;height:100%;border-radius:999px}
 
-/* Cards have an upper width as well as a lower one: one chart on its own must
-   not stretch across a 1700px screen just because there is room. */
-.viz-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,460px));
+/* Three cards to a row. A chart is read by comparing it with its neighbours, so
+   the row is fixed rather than left to fit itself: at two per row the circles
+   grew large enough that you had to scroll to see the third. The max-width still
+   applies, so a lone chart does not stretch across a 1700px screen. */
+.viz-grid{display:grid;grid-template-columns:repeat(3,minmax(0,460px));
   justify-content:start;gap:9px;margin-bottom:10px}
-.viz-grid.two{grid-template-columns:repeat(auto-fit,minmax(320px,560px))}
+.viz-grid.two{grid-template-columns:repeat(2,minmax(0,560px))}
 
 .viz-tip{position:fixed;z-index:9999;padding:5px 9px;border-radius:5px;background:rgba(11,11,11,.92);
   color:#fff;font-size:11px;pointer-events:none;white-space:nowrap;box-shadow:0 4px 14px rgba(0,0,0,.28)}
 
+@media (max-width:1180px){
+  .viz-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .viz-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
 @media (max-width:720px){
   .viz-grid,.viz-grid.two{grid-template-columns:1fr}
   .viz-svg{max-height:200px}
