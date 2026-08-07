@@ -204,19 +204,34 @@ dashboardRoutes.get('/home', async (c) => {
      * written. Counting drafts would inflate the number Finance manages to.
      */
     const RFP_PENDING = `('SUBMITTED','DEPARTMENT_APPROVED','FINANCE_REVIEWED','FINANCE_VALIDATED','MANCOM_APPROVED','APPROVED','FOR_APPROVAL')`;
-    const [rfpPending, rfpMine, rfpRaised, rfpPaid, slaRows, slaTarget] = await Promise.all([
+    const [rfpPending, rfpMine, rfpRaised, rfpPaid, slaRows, slaTarget, partPaid] = await Promise.all([
       first(db, `SELECT COUNT(*) n, COALESCE(SUM(gross_amount),0) v FROM erp_payment_requests
         WHERE status IN ${RFP_PENDING}`),
       first(db, `SELECT COUNT(*) n FROM erp_payment_requests WHERE status='FINANCE_REVIEWED'`),
       // What the company was asked to pay in the period, and what it paid.
       first(db, `SELECT COUNT(*) n, COALESCE(SUM(net_payable),0) v FROM erp_payment_requests
         WHERE status<>'REJECTED' AND status<>'CANCELLED' AND request_date BETWEEN ? AND ?`, [from, to]),
-      first(db, `SELECT COUNT(*) n, COALESCE(SUM(net_payable),0) v FROM erp_payment_requests
-        WHERE status='PAID' AND request_date BETWEEN ? AND ?`, [from, to]),
-      all(db, `SELECT request_date, paid_at FROM erp_payment_requests
-        WHERE status='PAID' AND paid_at IS NOT NULL AND paid_at<>''
-          AND request_date BETWEEN ? AND ?`, [from, to]),
+      /*
+       * What went out is the sum of the payments, not the count of the flags.
+       * A request settled 30% down counts as 30% paid, which is the only
+       * reading that makes the payable rate mean anything on a supply order
+       * paid in instalments.
+       */
+      first(db, `SELECT COUNT(DISTINCT s.request_no) n, COALESCE(SUM(s.amount),0) v
+        FROM erp_payment_settlements s
+        JOIN erp_payment_requests r ON r.request_no=s.request_no
+        WHERE s.status<>'VOID' AND r.status<>'REJECTED' AND r.status<>'CANCELLED'
+          AND r.request_date BETWEEN ? AND ?`, [from, to]),
+      // The service level is measured on money leaving, so it reads the same
+      // settlements: a part payment is measured from when that part was paid.
+      all(db, `SELECT r.request_date, s.paid_date paid_at
+        FROM erp_payment_settlements s
+        JOIN erp_payment_requests r ON r.request_no=s.request_no
+        WHERE s.status<>'VOID' AND s.paid_date IS NOT NULL AND s.paid_date<>''
+          AND r.request_date BETWEEN ? AND ?`, [from, to]),
       first(db, `SELECT target_days FROM erp_service_levels WHERE code='RFP_PAYMENT'`).catch(() => null),
+      first(db, `SELECT COUNT(*) n, COALESCE(SUM(net_payable),0) v FROM erp_payment_requests
+        WHERE status='PARTIALLY_PAID' AND request_date BETWEEN ? AND ?`, [from, to]),
     ]);
 
     /*
@@ -267,6 +282,8 @@ dashboardRoutes.get('/home', async (c) => {
       // The payable side of the same question: what was asked for, what went out.
       payableRaised: raisedV, payableRaisedCount: Number(rfpRaised?.n || 0),
       payablePaid: paidV, payablePaidCount: Number(rfpPaid?.n || 0),
+      // Requests with money against them but not yet settled in full.
+      payablePartial: Number(partPaid?.n || 0), payablePartialValue: Number(partPaid?.v || 0),
       payableOutstanding: Math.max(0, Math.round((raisedV - paidV) * 100) / 100),
       payablePct: raisedV > 0 ? (paidV / raisedV) * 100 : null,
 

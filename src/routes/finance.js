@@ -7,7 +7,7 @@ import { saveAttachments, attachmentsFor } from '../lib/attachments.js';
 import { sendMailQuiet, mailLayout, mailFacts, mailAttachments } from '../lib/mailer.js';
 import { nextCode, normalizeText } from '../lib/codes.js';
 import {
-  ACTION_STAGE, STAGE_ROLE, STAGE_ROLE_ALIASES, checkApproval, mancomMin, rfpFlag,
+  ACTION_STAGE, STAGE_ROLE, STAGE_ROLE_ALIASES, checkApproval, mancomMin, rfpFlag, rfpSetting,
   requiredStages, nextStage,
 } from '../lib/rfp-rules.js';
 
@@ -623,7 +623,16 @@ financeRoutes.get('/payment-requests', requirePermission('FINANCE', 'VIEW'), asy
       WHERE l.rfp_ref=r.request_no AND COALESCE(l.account_title,'')<>'') account_count,
     (SELECT l.account_title FROM erp_payment_request_lines l WHERE l.rfp_ref=r.request_no
       AND COALESCE(l.account_title,'')<>'' GROUP BY l.account_title
-      ORDER BY SUM(l.gross_amount) DESC LIMIT 1) account_title
+      ORDER BY SUM(l.gross_amount) DESC LIMIT 1) account_title,
+    -- What has actually been paid against this request, and whether the money
+    -- has a document behind it. A part payment shows as a balance, not as unpaid.
+    (SELECT ROUND(COALESCE(SUM(s.amount),0),2) FROM erp_payment_settlements s
+      WHERE s.request_no=r.request_no AND s.status<>'VOID') settled_amount,
+    (SELECT COUNT(*) FROM erp_payment_settlements s
+      WHERE s.request_no=r.request_no AND s.status<>'VOID') settlement_count,
+    (SELECT COUNT(*) FROM erp_payment_settlements s
+      WHERE s.request_no=r.request_no AND s.status<>'VOID'
+        AND s.proof_attachment_id IS NULL AND COALESCE(s.proof_reference,'')='') settlements_without_proof
     FROM erp_payment_requests r JOIN erp_legal_entities e ON e.id=r.entity_id
     LEFT JOIN erp_partners p ON p.id=r.payee_partner_id
     LEFT JOIN erp_purchase_orders po ON po.id=r.purchase_order_id
@@ -740,7 +749,15 @@ financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), 
     stages:requiredStages(row.net_payable,min,review),
     nextStage:nextStage(row.net_payable,min,signatures,review),
     attachmentsEditable:['DRAFT','RETURNED'].includes(String(row.status||'').toUpperCase())};
-  return ok(c,{request:row,attachments,lines,byAccount,liquidation:liquidation||null,signatures,workflow});
+  const settlement=await settlementSummary(c.env.DB,row.request_no,row.net_payable);
+  const banks=await all(c.env.DB,`SELECT id,bank_account_code,bank_name,account_name
+    FROM erp_bank_accounts WHERE active=1 ORDER BY bank_name`);
+  return ok(c,{request:row,attachments,lines,byAccount,liquidation:liquidation||null,signatures,workflow,
+    settlement:{...settlement,banks,canSettle:canSettle(c.get('erpUser')),
+      evidenceFrom:await evidenceFrom(c.env.DB),
+      // A request raised on or after the cutoff is not called paid until the
+      // bank advice is on the record, whatever the settlements add up to.
+      proofRequired:String(row.request_date||'')>=String(await evidenceFrom(c.env.DB))}});
 });
 
 // RFP numbering, spec section 9: RFP-<DEPT><YEAR>-NNNN  e.g. RFP-OPS2026-0081.
@@ -872,6 +889,252 @@ financeRoutes.delete('/payment-requests/:id/attachments/:attachmentId', requireP
   await audit(c,{action:'DETACH',module:'FINANCE',recordType:'PAYMENT_REQUEST',
     recordId:id,recordNo:row.request_no,before:{file:att.file_name}});
   return ok(c,{removed:att.file_name});
+});
+
+/* =====================================================================
+ * Settling a payment request
+ *
+ * A payment is a row, not a flag. One request can be settled in several
+ * goes - a 30% down payment against a nine million peso supply order is
+ * the ordinary case, not the exception - so what is paid and what is
+ * still owed are added up from the settlements rather than asserted on
+ * the header.
+ *
+ * Each settlement carries its own proof of payment: the bank advice or
+ * cheque image, who uploaded it and when. A settlement without proof is
+ * a claim, and the screen says so.
+ * ===================================================================== */
+
+/*
+ * Only Finance records a payment or uploads its proof - the same line the
+ * receivables side draws, and the same one the RFP chain draws between
+ * checking a request and approving it. The Finance checker is included: she
+ * puts the paperwork straight, and a bank advice is paperwork.
+ */
+const FINANCE_SETTLE_ROLES=['FINANCE','FINANCE_MANAGER','CONTROLLER','ACCOUNTING',
+  'FINANCE_REVIEWER','ADMIN'];
+function canSettle(user){
+  const role=String(user?.role_code||user?.role||'').toUpperCase();
+  return FINANCE_SETTLE_ROLES.includes(role);
+}
+
+const round2=v=>Math.round(Number(v||0)*100)/100;
+
+/**
+ * Everything the screens need to know about how far a request is settled.
+ * Kept in one place so the list, the detail and the dashboard cannot drift.
+ */
+async function settlementSummary(db,requestNo,netPayable){
+  const rows=await all(db,`SELECT s.*,b.bank_name,b.account_name,
+      a.file_name proof_file_name,a.file_url proof_file_url
+    FROM erp_payment_settlements s
+    LEFT JOIN erp_bank_accounts b ON b.id=s.bank_account_id
+    LEFT JOIN erp_attachments a ON a.id=s.proof_attachment_id
+    WHERE s.request_no=? ORDER BY s.paid_date IS NULL, s.paid_date, s.id`,[requestNo]);
+  const live=rows.filter(r=>String(r.status||'SETTLED').toUpperCase()!=='VOID');
+  const settled=round2(live.reduce((s,r)=>s+Number(r.amount||0),0));
+  const net=round2(netPayable);
+  const balance=round2(Math.max(0,net-settled));
+  const evidenced=live.filter(r=>r.proof_attachment_id||normalizeText(r.proof_reference)).length;
+  return {
+    settlements:rows,
+    settled,balance,
+    settledPct:net>0?round2((settled/net)*100):null,
+    // FULLY when the balance is closed to the centavo, PART when some money
+    // has moved, NONE when none has.
+    coverage:settled<=0?'NONE':balance<=0.01?'FULLY':'PART',
+    withProof:evidenced,
+    withoutProof:live.length-evidenced,
+    proofComplete:live.length>0&&evidenced===live.length,
+  };
+}
+
+/** The date from which a payment needs its proof before it may be called paid. */
+const evidenceFrom=db=>rfpSetting(db,'rfp_paid_evidence_from','2026-07-31');
+
+/**
+ * The status a request should be standing at, given what has been settled.
+ * A request dated on or after the evidence cutoff is not called paid until a
+ * proof of payment is on the record, however much money the settlements say
+ * moved: the most recent requests have no bank advice behind them yet, and a
+ * paid flag nobody can show is worse than an honest outstanding one.
+ */
+function statusForSettlement(request,summary,cutoff){
+  if(summary.coverage==='NONE')return null;
+  const needsProof=String(request.request_date||'')>=String(cutoff||'');
+  if(summary.coverage==='FULLY'){
+    if(needsProof&&!summary.proofComplete)return 'PARTIALLY_PAID';
+    return 'PAID';
+  }
+  return 'PARTIALLY_PAID';
+}
+
+async function applySettlementStatus(c,request){
+  const summary=await settlementSummary(c.env.DB,request.request_no,request.net_payable);
+  const cutoff=await evidenceFrom(c.env.DB);
+  const want=statusForSettlement(request,summary,cutoff);
+  if(want&&want!==request.status){
+    const paidAt=want==='PAID'
+      ?(summary.settlements.filter(s=>s.paid_date).map(s=>s.paid_date).sort().pop()
+        ||new Date().toISOString().slice(0,10)):null;
+    await run(c.env.DB,`UPDATE erp_payment_requests SET status=?,paid_at=?,
+      paid_by=COALESCE(paid_by,?),updated_at=datetime('now') WHERE id=?`,
+      [want,paidAt,c.get('erpUser').email,request.id]);
+  }
+  if(!want&&['PAID','PARTIALLY_PAID'].includes(String(request.status||''))){
+    // Every settlement was voided: the request goes back to owing the money.
+    await run(c.env.DB,`UPDATE erp_payment_requests SET status='APPROVED',paid_at=NULL,
+      updated_at=datetime('now') WHERE id=?`,[request.id]);
+  }
+  return summary;
+}
+
+// The settlements on one request, with what is still owed.
+financeRoutes.get('/payment-requests/:id/settlements', requirePermission('FINANCE','VIEW'), async c=>{
+  const id=Number(c.req.param('id'));
+  const row=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
+  if(!row)return fail(c,'Payment request not found.',404);
+  const summary=await settlementSummary(c.env.DB,row.request_no,row.net_payable);
+  return ok(c,{request:{id:row.id,requestNo:row.request_no,netPayable:row.net_payable,status:row.status},
+    ...summary,canSettle:canSettle(c.get('erpUser')),
+    evidenceFrom:await evidenceFrom(c.env.DB)});
+});
+
+/*
+ * Record a payment against the request. Part or whole: the amount is what
+ * actually left the bank, and it may not take the total past what is owed.
+ *
+ * The proof of payment may come with it or follow later; either way the
+ * settlement records who put it there.
+ */
+financeRoutes.post('/payment-requests/:id/settlements', requirePermission('FINANCE','CREATE'), async c=>{
+  const id=Number(c.req.param('id'));
+  const user=c.get('erpUser');
+  if(!canSettle(user))return fail(c,'Only Finance records a payment against a request.',403);
+  const row=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
+  if(!row)return fail(c,'Payment request not found.',404);
+  if(['REJECTED','CANCELLED'].includes(String(row.status||'').toUpperCase()))
+    return fail(c,`${row.request_no} is ${String(row.status).toLowerCase()} and cannot be paid.`,409);
+  const b=await jsonBody(c);
+  const amount=round2(numberValue(b.amount));
+  if(!(amount>0))return fail(c,'Enter the amount that was paid.');
+  const before=await settlementSummary(c.env.DB,row.request_no,row.net_payable);
+  if(amount-before.balance>0.01)
+    return fail(c,`Only ${rfpMoney(before.balance)} is still owed on ${row.request_no}. `
+      +`Recording ${rfpMoney(amount)} would overpay it.`);
+  let bankAccountId=null;
+  if(b.bankAccountId){
+    const bank=await first(c.env.DB,`SELECT id FROM erp_bank_accounts WHERE id=?`,[Number(b.bankAccountId)]);
+    if(!bank)return fail(c,'Bank account not found.');
+    bankAccountId=bank.id;
+  }
+  const paidDate=normalizeText(b.paidDate)||new Date().toISOString().slice(0,10);
+  const r=await run(c.env.DB,`INSERT INTO erp_payment_settlements
+    (request_no,payment_request_id,amount,paid_date,payment_reference,payment_method,
+     bank_account_id,proof_reference,source,notes,recorded_by,natural_key)
+    VALUES(?,?,?,?,?,?,?,?,'SYSTEM',?,?,?)`,[
+    row.request_no,id,amount,paidDate,normalizeText(b.paymentReference)||null,
+    normalizeText(b.paymentMethod)||null,bankAccountId,normalizeText(b.proofReference)||null,
+    normalizeText(b.notes)||null,user.email,
+    `MANUAL:${row.request_no}:${Date.now()}`,
+  ]);
+  const settlementId=r.meta.last_row_id;
+  // Proof of payment, if it came with the entry.
+  let attach={saved:[],failed:[]};
+  if(Array.isArray(b.attachments)&&b.attachments.length){
+    attach=await saveAttachments(c.env,c.env.DB,{moduleCode:'FINANCE',recordType:'PAYMENT_PROOF',
+      recordId:settlementId,recordNo:row.request_no,files:b.attachments,uploadedBy:user.email});
+    if(attach.saved.length){
+      await run(c.env.DB,`UPDATE erp_payment_settlements SET proof_attachment_id=?,
+        proof_uploaded_by=?,proof_uploaded_at=datetime('now') WHERE id=?`,
+        [attach.saved[0].id,user.email,settlementId]);
+    }
+  }
+  const summary=await applySettlementStatus(c,row);
+  const after=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
+  await audit(c,{action:'SETTLE',module:'FINANCE',recordType:'PAYMENT_REQUEST',
+    recordId:id,recordNo:row.request_no,before:row,after:{...after,settled:summary.settled}});
+  return ok(c,{settlementId,request:after,...await settlementSummary(c.env.DB,row.request_no,row.net_payable),
+    attachments:attach.saved,attachmentErrors:attach.failed},201);
+});
+
+/*
+ * The proof of payment uploader.
+ *
+ * It hangs off the settlement rather than the request, because a part-paid
+ * order has one bank advice per instalment and filing them all in one pile
+ * loses which document proves which payment. It works on any settlement,
+ * including the ones the 2026 register was loaded with, which is the point:
+ * those 318 payments have a reference from a spreadsheet and no document, and
+ * this is how the document gets onto the record.
+ */
+financeRoutes.post('/payment-requests/:id/settlements/:settlementId/proof',
+  requirePermission('FINANCE','CREATE'), async c=>{
+  const id=Number(c.req.param('id'));
+  const settlementId=Number(c.req.param('settlementId'));
+  const user=c.get('erpUser');
+  if(!canSettle(user))return fail(c,'Only Finance uploads the proof of payment.',403);
+  const row=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
+  if(!row)return fail(c,'Payment request not found.',404);
+  const settlement=await first(c.env.DB,`SELECT * FROM erp_payment_settlements WHERE id=? AND request_no=?`,
+    [settlementId,row.request_no]);
+  if(!settlement)return fail(c,'That payment is not on this request.',404);
+  if(String(settlement.status||'').toUpperCase()==='VOID')
+    return fail(c,'That payment was voided. Record it again rather than proving a reversal.',409);
+  const b=await jsonBody(c);
+  const reference=normalizeText(b.proofReference);
+  const files=Array.isArray(b.attachments)?b.attachments:[];
+  if(!files.length&&!reference)
+    return fail(c,'Attach the bank advice, or give the reference it can be found under.');
+  let attach={saved:[],failed:[]};
+  if(files.length){
+    attach=await saveAttachments(c.env,c.env.DB,{moduleCode:'FINANCE',recordType:'PAYMENT_PROOF',
+      recordId:settlementId,recordNo:row.request_no,files,uploadedBy:user.email});
+    if(!attach.saved.length)
+      return fail(c,`The document could not be stored. ${(attach.failed[0]||{}).error||''}`.trim());
+  }
+  await run(c.env.DB,`UPDATE erp_payment_settlements SET
+      proof_attachment_id=COALESCE(?,proof_attachment_id),
+      proof_reference=COALESCE(?,proof_reference),
+      proof_uploaded_by=?,proof_uploaded_at=datetime('now') WHERE id=?`,
+    [attach.saved.length?attach.saved[0].id:null,reference||null,user.email,settlementId]);
+  // The proof may be what was holding the request out of paid.
+  await applySettlementStatus(c,row);
+  // And the trail the RFP screen already reads.
+  await run(c.env.DB,`INSERT INTO erp_rfp_proof_of_payment(rfp_ref,reference,paid_at,actor)
+    VALUES(?,?,?,?)`,[row.request_no,reference||(attach.saved[0]||{}).file_name||'',
+    settlement.paid_date||new Date().toISOString().slice(0,10),user.email]);
+  await audit(c,{action:'PROOF',module:'FINANCE',recordType:'PAYMENT_REQUEST',
+    recordId:id,recordNo:row.request_no,after:{settlementId,reference,files:attach.saved.length}});
+  const after=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
+  return ok(c,{request:after,...await settlementSummary(c.env.DB,row.request_no,row.net_payable),
+    attachments:attach.saved,attachmentErrors:attach.failed});
+});
+
+// A payment recorded in error. Voided, never deleted, and the request falls
+// back to whatever the remaining settlements say it is.
+financeRoutes.post('/payment-requests/:id/settlements/:settlementId/void',
+  requirePermission('FINANCE','EDIT'), async c=>{
+  const id=Number(c.req.param('id'));
+  const settlementId=Number(c.req.param('settlementId'));
+  const user=c.get('erpUser');
+  if(!canSettle(user))return fail(c,'Only Finance voids a recorded payment.',403);
+  const row=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
+  if(!row)return fail(c,'Payment request not found.',404);
+  const b=await jsonBody(c);
+  const reason=normalizeText(b.reason);
+  if(!reason)return fail(c,'Say why this payment is being voided.');
+  const settlement=await first(c.env.DB,`SELECT * FROM erp_payment_settlements WHERE id=? AND request_no=?`,
+    [settlementId,row.request_no]);
+  if(!settlement)return fail(c,'That payment is not on this request.',404);
+  if(String(settlement.status||'').toUpperCase()==='VOID')return fail(c,'That payment is already void.',409);
+  await run(c.env.DB,`UPDATE erp_payment_settlements SET status='VOID',voided_by=?,
+    voided_at=datetime('now'),void_reason=? WHERE id=?`,[user.email,reason,settlementId]);
+  await applySettlementStatus(c,row);
+  await audit(c,{action:'VOID',module:'FINANCE',recordType:'PAYMENT_REQUEST',
+    recordId:id,recordNo:row.request_no,before:settlement,after:{reason}});
+  const after=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
+  return ok(c,{request:after,...await settlementSummary(c.env.DB,row.request_no,row.net_payable)});
 });
 
 // Who to email at each stage. Roles are resolved from erp_users so no addresses
@@ -1084,8 +1347,35 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
         await saveAttachments(c.env,c.env.DB,{moduleCode:'FINANCE',recordType:'PAYMENT_REQUEST',
           recordId:id,recordNo:request.request_no,files:b.attachments,uploadedBy:user});
       }
+      // A request raised on or after the evidence cutoff cannot be closed on a
+      // typed reference alone. Somebody has to show the bank advice.
+      const proofFiles=Array.isArray(b.attachments)?b.attachments.length:0;
+      const cutoff=await evidenceFrom(c.env.DB);
+      if(String(request.request_date||'')>=String(cutoff)&&!proofFiles)
+        throw new Error(`Attach the proof of payment. Requests raised from ${cutoff} are not `
+          +`closed on a reference alone.`);
       await run(c.env.DB,`INSERT INTO erp_rfp_proof_of_payment(rfp_ref,reference,paid_at,actor)
         VALUES(?,?,datetime('now'),?)`,[request.request_no,normalizeText(b.proofReference),user]);
+      /*
+       * The payment itself, so this request reads the same way as one that was
+       * settled in instalments: an amount that moved, on a date, with proof.
+       */
+      const proofAttachment=await first(c.env.DB,`SELECT id FROM erp_attachments
+        WHERE record_type IN ('PAYMENT_PROOF','PAYMENT_REQUEST') AND record_no=? AND active=1
+        ORDER BY id DESC LIMIT 1`,[request.request_no]);
+      await run(c.env.DB,`INSERT OR IGNORE INTO erp_payment_settlements
+        (request_no,payment_request_id,amount,paid_date,payment_reference,bank_account_id,
+         proof_attachment_id,proof_reference,proof_uploaded_by,proof_uploaded_at,
+         source,recorded_by,natural_key)
+        VALUES(?,?,?,?,?,?,?,?,?,datetime('now'),'SYSTEM',?,?)`,[
+        request.request_no,id,request.net_payable,
+        b.paymentDate||new Date().toISOString().slice(0,10),
+        request.payment_reference||normalizeText(b.paymentReference)||null,
+        request.bank_account_id||null,
+        proofFiles?(proofAttachment?proofAttachment.id:null):null,
+        normalizeText(b.proofReference)||null,user,user,
+        `CONFIRM:${request.request_no}`,
+      ]);
       await run(c.env.DB,`UPDATE erp_payment_requests SET status='PAID',paid_by=?,
         paid_at=datetime('now'),updated_at=datetime('now') WHERE id=?`,[user,id]);
     }else if(action==='RETURN'||action==='CANCEL'||action==='REJECT'){
