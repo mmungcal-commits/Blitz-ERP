@@ -11,13 +11,29 @@
 // src/routes/finance.js (the chain the UI drives) and src/routes/rfp-alignment.js
 // (the SWIFT-compatible endpoints) enforce one identical rule set.
 
-export const STAGE_ORDER = ['DEPARTMENT', 'FINANCE', 'MANCOM', 'FINAL'];
+// FINANCE_REVIEW is E88's own step and is not in the SWIFT specification: before
+// a request reaches the head of Finance, a member of Finance checks the
+// requestor's paperwork and the department head's approval. It is a check, not
+// an approval - the person doing it holds no approval rights - but it is
+// recorded and signed like every other step so the printed form shows who
+// checked it.
+export const STAGE_ORDER = ['DEPARTMENT', 'FINANCE_REVIEW', 'FINANCE', 'MANCOM', 'FINAL'];
 
 export const STAGE_ROLE = {
   DEPARTMENT: 'DEPTHEAD',
+  FINANCE_REVIEW: 'FINANCE_REVIEWER',
   FINANCE: 'FINANCE',
   MANCOM: 'MANCOM',
   FINAL: 'CEO',
+};
+
+// Human labels, used on the printed form and in the worklist.
+export const STAGE_LABEL = {
+  DEPARTMENT: 'Department Head',
+  FINANCE_REVIEW: 'Finance Review',
+  FINANCE: 'Finance & Accounting',
+  MANCOM: 'MANCOM',
+  FINAL: 'Chief Executive Officer',
 };
 
 // The spec names the SWIFT role codes; this ERP uses its own. One stage may be
@@ -25,6 +41,7 @@ export const STAGE_ROLE = {
 // Manager standing in for the Department Head is normal practice here.
 export const STAGE_ROLE_ALIASES = {
   DEPARTMENT: ['DEPTHEAD', 'DEPT_HEAD', 'DEPT_MANAGER', 'DEPARTMENT_HEAD', 'DEPARTMENT_MANAGER', 'SCM_HEAD', 'SCM_MANAGER'],
+  FINANCE_REVIEW: ['FINANCE_REVIEWER', 'FINANCE', 'FINANCE_MANAGER', 'ACCOUNTING'],
   FINANCE: ['FINANCE', 'FINANCE_MANAGER', 'ACCOUNTING', 'CONTROLLER'],
   MANCOM: ['MANCOM', 'MANCOM_MEMBER', 'MANAGEMENT_COMMITTEE'],
   FINAL: ['CEO', 'PRESIDENT', 'CHIEF_EXECUTIVE'],
@@ -46,6 +63,7 @@ export function roleSatisfiesStage(role, stage) {
 // The action names the UI posts, mapped onto the spec's stage names.
 export const ACTION_STAGE = {
   DEPARTMENT_APPROVE: 'DEPARTMENT',
+  FINANCE_REVIEW: 'FINANCE_REVIEW',
   FINANCE_VALIDATE: 'FINANCE',
   MANCOM_APPROVE: 'MANCOM',
   FINAL_APPROVE: 'FINAL',
@@ -53,9 +71,17 @@ export const ACTION_STAGE = {
 
 export const APPROVAL_ACTIONS = Object.keys(ACTION_STAGE);
 
-/** Which stages this amount has to pass. MANCOM drops out below the threshold. */
-export function requiredStages(amount, mancomMin) {
-  return STAGE_ORDER.filter(s => s !== 'MANCOM' || Number(amount || 0) >= Number(mancomMin || 0));
+/**
+ * Which stages this request has to pass.
+ * MANCOM drops out below the threshold; FINANCE_REVIEW drops out when the
+ * Finance check is switched off (erp_rfp_settings.rfp_finance_review).
+ */
+export function requiredStages(amount, mancomMin, financeReview = true) {
+  return STAGE_ORDER.filter(s => {
+    if (s === 'MANCOM') return Number(amount || 0) >= Number(mancomMin || 0);
+    if (s === 'FINANCE_REVIEW') return !!financeReview;
+    return true;
+  });
 }
 
 /** Reads a value from erp_rfp_settings, tolerating a missing table. */
@@ -163,9 +189,9 @@ export function checkApproval({
 }
 
 /** Next stage still outstanding, or null when the RFP is fully approved. */
-export function nextStage(amount, min, trail) {
+export function nextStage(amount, min, trail, financeReview = true) {
   const done = activeTrail(trail)
     .filter(t => String(t.decision || '').toUpperCase() === 'APPROVED')
     .map(t => String(t.stage || '').toUpperCase());
-  return requiredStages(amount, min).find(s => !done.includes(s)) || null;
+  return requiredStages(amount, min, financeReview).find(s => !done.includes(s)) || null;
 }
