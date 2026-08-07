@@ -1,4 +1,4 @@
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R20.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R21.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -1930,6 +1930,19 @@ function openMobileCount(countId,data){
       mb.querySelector('#mcCount').textContent=log.length+Number(data.summary.counted||0);
       setStatus(`<b>${esc(serial)}</b> · ${esc(label)}`,isNew?(r.needsItemDetail?'warn':'good'):(variance?'bad':'good'));
       if(navigator.vibrate)navigator.vibrate((variance&&!isNew)?[60,60,60]:40);
+      // Nothing was set in the sticky panel and the system has never seen this
+      // serial: ask what it is now, while the unit is still in hand.
+      if(r.needsItemDetail&&r.lineId){
+        // The identify dialog takes over the modal, so the panel is rebuilt
+        // afterwards from fresh data rather than left behind an empty shell.
+        await identifyCountedUnit(countId,{id:r.lineId,actual_serial_no:serial},
+          {note:'This serial is not in the system yet. Identify it now, or set the model once in "Details for units not yet in the system" and keep scanning.'});
+        try{
+          const fresh=await api(`/inventory/cycle-counts/${countId}`,{noCache:true});
+          closeModal();openMobileCount(countId,fresh);
+        }catch(e){closeModal();}
+        return;
+      }
       mb.querySelector('#mcSerial').value='';
       // The motor number belongs to one unit; everything else is sticky.
       if(mb.querySelector('#mcMotorNo'))mb.querySelector('#mcMotorNo').value='';
@@ -3576,6 +3589,54 @@ function printCycleCountSheet(data){
   popup.document.close();
 }
 
+/* ===================================================================
+ * "What is this?" - the unit was counted but the system has never seen it.
+ * Shown right after the scan so the counter identifies it while the unit is
+ * still in their hands, and reused by the Edit button on the count sheet.
+ * =================================================================== */
+function identifyCountedUnit(countId,line,opts){
+  opts=opts||{};
+  const d=line||{};
+  const cats=[['','Use the count sheet class'],['MC','Motorcycle'],['BAT','Battery'],['BSS','Locker / Station'],
+    ['SP','Spare part'],['CHG','Charger'],['OTH','Other']];
+  const conds=[['GOOD','Good'],['DAMAGED','Damaged'],['FOR_REPAIR','For repair']];
+  return new Promise(resolve=>{
+    modal(opts.title||('Identify '+esc(d.actual_serial_no||'this unit')),
+      `<form id="iduForm" class="operational-form grid">
+        <p class="form-note">${esc(opts.note||'This serial is not in the system yet. Tell us what it is and it will be registered at this location when the count is posted.')}</p>
+        <label class="wide"><span>Serial</span><input name="serialNo" value="${esc(d.actual_serial_no||'')}" ${opts.lockSerial?'readonly':''}></label>
+        <label><span>Item code</span><input name="itemCode" value="${esc(d.item_code||'')}" placeholder="e.g. MC-0001" list="iduItems"></label>
+        <label><span>Item / model name</span><input name="itemName" value="${esc(d.item_name||'')}"></label>
+        <label><span>Class</span><select name="category">${cats.map(x=>`<option value="${x[0]}" ${String(d.new_category||'')===x[0]?'selected':''}>${esc(x[1])}</option>`).join('')}</select></label>
+        <label><span>Serial type</span><input name="serialType" value="${esc(d.new_serial_type||'SERIAL')}" placeholder="FRAME / BARCODE / SN"></label>
+        <label><span>Motor / secondary no.</span><input name="motorNo" value="${esc(d.new_motor_no||'')}"></label>
+        <label><span>Unit cost</span><input name="unitCost" type="number" step="0.01" min="0" value="${d.new_unit_cost!=null?Number(d.new_unit_cost):''}"></label>
+        <label><span>Condition</span><select name="conditionCode">${conds.map(x=>`<option value="${x[0]}" ${String(d.condition_code||'GOOD')===x[0]?'selected':''}>${esc(x[1])}</option>`).join('')}</select></label>
+        <datalist id="iduItems"></datalist>
+        <div class="modal-actions wide">
+          <button type="submit" class="command primary">Save</button>
+          <button type="button" class="command" id="iduSkip">${esc(opts.skipLabel||'Skip for now')}</button>
+        </div>
+      </form>`,'Anything left blank is still counted and flagged for review');
+    const mb=$('#modalBody');
+    // Offer the item codes already in the system so the counter can pick rather than type.
+    api('/masters/items?limit=400').then(r=>{
+      const list=mb.querySelector('#iduItems');
+      if(!list)return;
+      list.innerHTML=(r.rows||[]).map(i=>`<option value="${esc(i.item_code)}">${esc(i.item_name||'')}</option>`).join('');
+    }).catch(()=>{});
+    mb.querySelector('#iduSkip').onclick=()=>{closeModal();resolve(null);};
+    mb.querySelector('#iduForm').onsubmit=async event=>{
+      event.preventDefault();
+      const f=formDataObject(event.currentTarget);
+      try{
+        await api(`/inventory/cycle-counts/${countId}/lines/${d.id}`,{method:'PATCH',body:JSON.stringify(f)});
+        closeModal();toast('Unit identified');resolve(f);
+      }catch(error){toast(error.message,'error');}
+    };
+  });
+}
+
 async function renderPhysicalCount(countId=state.cycleCount){
   content.innerHTML='<div class="workspace-loading">Loading physical count…</div>';
   try{
@@ -3583,9 +3644,18 @@ async function renderPhysicalCount(countId=state.cycleCount){
     const id=Number(countId||register.rows.find(row=>row.status==='OPEN')?.id||register.rows[0]?.id||0);
     state.cycleCount=id||null;
     const data=id?await api(`/inventory/cycle-counts/${id}`):null;
-    const rows=(data?.lines||[]).map(row=>`<tr><td>${esc(row.item_code||'-')}</td><td>${esc(row.item_name||'-')}</td>
+    // A row stays editable and removable until the count is submitted: the
+    // counter scans first and identifies the unit afterwards.
+    const editable=data?.header?.status==='OPEN';
+    const rows=(data?.lines||[]).map(row=>{
+      const unidentified=row.is_new_unit&&!row.item_code;
+      return `<tr${unidentified?' class="row-needs-item"':''}>
+      <td>${row.item_code?esc(row.item_code):(row.is_new_unit?'<span class="needs-item">Identify this unit</span>':'-')}</td>
+      <td>${esc(row.item_name||'-')}</td>
       <td>${esc(row.expected_serial_no||'-')}</td><td>${esc(row.actual_serial_no||'-')}</td><td>${statusBadge(row.count_status)}</td>
-      <td>${row.variance_type?statusBadge(row.variance_type):'-'}</td><td>${esc(row.actual_location_code||'-')}</td></tr>`);
+      <td>${row.variance_type?statusBadge(row.variance_type):'-'}</td><td>${esc(row.actual_location_code||'-')}</td>
+      <td>${editable&&row.actual_serial_no?`<button class="table-action" data-edit-line="${row.id}">Edit</button>
+        <button class="table-action danger" data-drop-line="${row.id}">${row.expected_serial_no?'Undo scan':'Remove'}</button>`:'-'}</td></tr>`;});
     const body=`<div class="workspace-commandbar"><label class="inline-control"><span>Count Plan</span><select id="physicalCountSelect"><option value="">Select count…</option>${register.rows.map(row=>`<option value="${row.id}" ${row.id===id?'selected':''}>${esc(row.count_no)} · ${esc(row.location_code)} · ${esc(row.status)}</option>`).join('')}</select></label>
       ${data?`<button class="command" id="printCount">Print Count Sheet</button><button class="command primary" id="submitCount" ${data.header.status==='OPEN'?'':'disabled'}>Submit Count</button>`:''}</div>
       ${data?`<div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
@@ -3594,7 +3664,7 @@ async function renderPhysicalCount(countId=state.cycleCount){
           <button class="command" id="countCamera">Scan QR</button><button class="command" id="countMobile">Mobile count</button></div>
         <div class="scan-summary">${kpi('Expected',data.summary.expected)}${kpi('Scanned',data.summary.counted)}${kpi('Variances',data.summary.variances)}
           ${kpi('Missing',data.summary.missing)}${kpi('Location Mismatch',data.summary.locationMismatch)}</div>
-        ${operationalTable(['Item','Description','Expected Serial','Actual Serial','Count Status','Variance','Actual Location'],rows)}
+        ${operationalTable(['Item','Description','Expected Serial','Actual Serial','Count Status','Variance','Actual Location',''],rows)}
       </section></div><aside class="ramco-rail"><section><header>Mobile Count</header><div class="control-note"><b>Fast serial scan</b><p>Each QR scan checks the frozen count sheet and detects missing, unexpected, unknown, or wrong-location units.</p></div></section></aside></div>`:operationalEmpty('Create or select a cycle count plan.')}`;
     content.innerHTML=workbenchShell(body,'approvals');bindOperationalShell();
     $('#physicalCountSelect').onchange=event=>renderPhysicalCount(Number(event.target.value));
@@ -3605,7 +3675,14 @@ async function renderPhysicalCount(countId=state.cycleCount){
       if(!serial)return toast('Scan or enter a serial.','error');
       try{
         const result=await api(`/inventory/cycle-counts/${id}/scan`,{method:'POST',body:JSON.stringify({serialNo:serial,qrPayload:value||'',scanMethod:value?'QR':'MANUAL'})});
-        toast(result.result.varianceType?`${serial}: ${result.result.varianceType}`:`${serial} counted`,result.result.varianceType?'error':'success');
+        const r=result.result||{};
+        if(r.needsItemDetail){
+          // Unknown serial: ask what it is now, while the unit is still in hand.
+          toast(`${serial} counted · not in the system yet`,'success');
+          await identifyCountedUnit(id,{id:r.lineId,actual_serial_no:serial});
+        }else{
+          toast(r.varianceType?`${serial}: ${String(r.varianceType).replace(/_/g,' ')}`:`${serial} counted`,r.varianceType?'error':'success');
+        }
         await renderPhysicalCount(id);
       }catch(error){toast(error.message,'error');}
     };
@@ -3613,6 +3690,32 @@ async function renderPhysicalCount(countId=state.cycleCount){
     $('#countSerial').onkeydown=event=>{if(event.key==='Enter')scan('');};
     $('#countCamera').onclick=()=>scanQrWithCamera(scan);
     $('#countMobile').onclick=()=>openMobileCount(id,data);
+    $$('[data-edit-line]').forEach(b=>b.onclick=async()=>{
+      const line=(data.lines||[]).find(x=>String(x.id)===b.dataset.editLine);
+      if(!line)return;
+      await identifyCountedUnit(id,line,{title:'Edit counted unit',lockSerial:!!line.expected_serial_no,
+        note:line.is_new_unit?'This serial is not in the system yet. Identify it and it will be registered at this location when the count is posted.'
+          :'This unit is already registered. You can correct the serial you scanned.',skipLabel:'Cancel'});
+      await renderPhysicalCount(id);
+    });
+    $$('[data-drop-line]').forEach(b=>b.onclick=async()=>{
+      const line=(data.lines||[]).find(x=>String(x.id)===b.dataset.dropLine);
+      const expected=line&&line.expected_serial_no;
+      const question=expected
+        ? `Undo the scan of ${line.actual_serial_no}? The unit stays on the sheet as not yet counted.`
+        : `Remove ${line?line.actual_serial_no:'this row'} from the count sheet? It was scanned in error and will not be recorded.`;
+      modal(expected?'Undo this scan':'Remove this row',
+        `<div class="operational-form"><p>${esc(question)}</p>
+         <div class="modal-actions"><button type="button" class="command primary" id="dropYes">${expected?'Undo scan':'Remove row'}</button>
+         <button type="button" class="command" id="dropNo">Keep it</button></div></div>`);
+      const mb=$('#modalBody');
+      mb.querySelector('#dropNo').onclick=()=>closeModal();
+      mb.querySelector('#dropYes').onclick=async()=>{
+        try{await api(`/inventory/cycle-counts/${id}/lines/${b.dataset.dropLine}`,{method:'DELETE'});
+          closeModal();toast(expected?'Scan undone':'Row removed');await renderPhysicalCount(id);}
+        catch(error){toast(error.message,'error');}
+      };
+    });
     $('#submitCount').onclick=async()=>{
       try{await api(`/inventory/cycle-counts/${id}/submit`,{method:'POST',body:'{}'});toast('Cycle count submitted and variance report generated');await renderPhysicalCount(id);}
       catch(error){toast(error.message,'error');}
@@ -5591,6 +5694,11 @@ init();
   .mr-newunit label span{display:block;color:#5a6577;margin-bottom:2px}
   .mr-newunit label i{color:#8b97a8;font-style:italic}
   .mr-newunit input,.mr-newunit select{width:100%;padding:8px 9px;border:1px solid #dbe4ee;border-radius:8px;font-size:13px}
+  /* A counted row that still needs identifying stands out on the sheet. */
+  .row-needs-item{background:#fffaf0}
+  .needs-item{color:#b06f00;font-weight:600;font-size:11.5px}
+  .table-action.danger{color:#a4282b;border-color:#e7c3c4}
+  .table-action.danger:hover{background:#fdf2f2}
   .mr-status.warn{background:#fff6e5;color:#7a5300}
   .mr-item.new{border-left:3px solid #1e88e5}
   .mr-item.warn{border-left:3px solid #e8a33d}
