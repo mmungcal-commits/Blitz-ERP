@@ -680,6 +680,72 @@ await t('posted return cannot be voided', async()=>{
   return {note:r.json.error.slice(0,52)};
 });
 
+await t('an item code fills in its description from the master', async()=>{
+  const loc=sqlite.prepare('SELECT id FROM erp_locations LIMIT 1').get();
+  const cc=await call('POST','/api/inventory/cycle-counts',{locationId:loc.id,countDate:'2026-08-07',category:'SP'});
+  const ccId=cc.json.id;
+
+  // Scan an unregistered serial giving only the code - no name, no class, no cost.
+  const scan=await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,
+    {serialNo:'SN-MASTER-0001',itemCode:'SP-0001'});
+  if(!scan.json?.ok) throw new Error(scan.json?.error);
+  const stored=sqlite.prepare(`SELECT nu.item_code,nu.item_name,nu.category,nu.unit_cost
+    FROM erp_cycle_count_new_units nu JOIN erp_cycle_count_lines l ON l.id=nu.line_id
+    WHERE l.actual_serial_no='SN-MASTER-0001'`).get();
+  if(stored?.item_name!=='Brake pad') throw new Error('name not filled: '+JSON.stringify(stored));
+  if(stored?.category!=='SP') throw new Error('class not filled: '+stored?.category);
+  if(Number(stored?.unit_cost)!==500) throw new Error('cost not filled: '+stored?.unit_cost);
+
+  // A lowercase code still matches, and what the counter typed themselves wins.
+  const scan2=await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,
+    {serialNo:'SN-MASTER-0002',itemCode:'sp-0001',itemName:'Brake pad (rear, aftermarket)'});
+  if(!scan2.json?.ok) throw new Error(scan2.json?.error);
+  const s2=sqlite.prepare(`SELECT nu.item_code,nu.item_name FROM erp_cycle_count_new_units nu
+    JOIN erp_cycle_count_lines l ON l.id=nu.line_id WHERE l.actual_serial_no='SN-MASTER-0002'`).get();
+  if(s2?.item_code!=='SP-0001') throw new Error('code not normalised to the master: '+s2?.item_code);
+  if(s2?.item_name!=='Brake pad (rear, aftermarket)') throw new Error('typed name was overwritten');
+
+  // An unknown code is kept as typed rather than rejected - the floor is not blocked.
+  await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,{serialNo:'SN-MASTER-0003',itemCode:'NOT-IN-MASTER'});
+  const s3=sqlite.prepare(`SELECT nu.item_code,nu.item_name FROM erp_cycle_count_new_units nu
+    JOIN erp_cycle_count_lines l ON l.id=nu.line_id WHERE l.actual_serial_no='SN-MASTER-0003'`).get();
+  if(s3?.item_code!=='NOT-IN-MASTER') throw new Error('unknown code was dropped');
+
+  // The sheet shows the description without anyone retyping it.
+  const det=await call('GET',`/api/inventory/cycle-counts/${ccId}`);
+  const row=(det.json.lines||[]).find(x=>x.actual_serial_no==='SN-MASTER-0001');
+  if(row?.item_name!=='Brake pad') throw new Error('sheet still blank: '+row?.item_name);
+  return {note:'code only -> Brake pad / SP / 500; typed name kept; unknown code kept'};
+});
+
+await t('a line identified after the fact also picks up the description', async()=>{
+  const loc=sqlite.prepare('SELECT id FROM erp_locations LIMIT 1').get();
+  const cc=await call('POST','/api/inventory/cycle-counts',{locationId:loc.id,countDate:'2026-08-07',category:'SP'});
+  const ccId=cc.json.id;
+  const scan=await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,{serialNo:'SN-LATER-0001'});
+  if(!scan.json.result.needsItemDetail) throw new Error('should have asked what the unit is');
+  const lineId=scan.json.result.lineId;
+  const patch=await call('PATCH',`/api/inventory/cycle-counts/${ccId}/lines/${lineId}`,{itemCode:'SP-0001'});
+  if(!patch.json?.ok) throw new Error(patch.json?.error);
+  if(patch.json.detail?.item_name!=='Brake pad') throw new Error('name not filled on edit: '+patch.json.detail?.item_name);
+  return {note:'Edit -> code only -> '+patch.json.detail.item_name};
+});
+
+await t('an open count sheet can be removed, a submitted one cannot', async()=>{
+  const loc=sqlite.prepare('SELECT id FROM erp_locations LIMIT 1').get();
+  const cc=await call('POST','/api/inventory/cycle-counts',{locationId:loc.id,countDate:'2026-08-07',category:'SP'});
+  const ccId=cc.json.id;
+  const gone=await call('DELETE',`/api/inventory/cycle-counts/${ccId}`);
+  if(!gone.json?.ok) throw new Error(gone.json?.error);
+  const after=sqlite.prepare('SELECT status FROM erp_cycle_counts WHERE id=?').get(ccId);
+  if(after?.status!=='CANCELLED') throw new Error('status is '+after?.status);
+  const register=await call('GET','/api/inventory/cycle-counts');
+  if((register.json.rows||[]).some(r=>r.id===ccId)) throw new Error('cancelled sheet still on the register');
+  const again=await call('DELETE',`/api/inventory/cycle-counts/${ccId}`);
+  if(again.json?.ok) throw new Error('a cancelled sheet was removed twice');
+  return {note:'cancelled, off the register, not erased'};
+});
+
 
 console.log('\n=== Blitz - ERP end-to-end ===');
 for (const [s, n, note] of results) console.log(`${s}  ${n}${note ? '  ·  ' + note : ''}`);
