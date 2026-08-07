@@ -1,4 +1,6 @@
-const FOUNDATION_BUILD='BLITZ-ERP-20260807-R23.0';
+import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, bindViz, compact }
+  from './viz.js?v=20260807-r24';
+const FOUNDATION_BUILD='BLITZ-ERP-20260807-R24.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -1564,14 +1566,37 @@ async function renderServiceOverview(){
     const [summary,jobs]=await Promise.all([api('/service/summary'),api('/service/jobs?size=25')]);
     const byStatus=Object.fromEntries((summary.byStatus||[]).map(r=>[r.status,r.n]));
     const rows=(jobs.rows||[]).map(serviceRow);
+    const rev=summary.revenue||{};
+    const tiles=vizTiles([
+      {label:'Open jobs',value:(byStatus.DRAFT||0)+(byStatus.ESTIMATED||0)+(byStatus.IN_PROGRESS||0),
+       tone:'warning',sub:'not yet completed',section:'records'},
+      {label:'In progress',value:byStatus.IN_PROGRESS||0,tone:'serious',sub:'on the bench',section:'approvals'},
+      {label:'Completed',value:byStatus.COMPLETED||0,tone:'good',sub:'work finished',section:'records'},
+      {label:'Parts held',value:summary.partsReserved||0,sub:'reserved out of stock',section:'records'},
+      {label:'Revenue',value:Number(rev.revenue||0),sub:'billed on service',section:'reports'}
+    ]);
+    // Where the work is sitting.
+    const stages=[['DRAFT','Draft'],['ESTIMATED','Estimated'],['IN_PROGRESS','In progress'],
+      ['COMPLETED','Completed'],['CLOSED','Closed'],['CANCELLED','Cancelled']];
+    const pipeline=vizDonut(stages.map(([c,l])=>({label:l,value:Number(byStatus[c]||0)})),
+      {title:'Job orders by stage',totalLabel:'Jobs',keyLabel:'Stage',valueLabel:'Jobs'});
+    // Cost against what it was sold for. One scale, so the gap is honest.
+    const economics=vizBars([
+      {label:'Material',value:Number(rev.material||rev.parts_cost||0)},
+      {label:'Labour',value:Number(rev.labor||rev.labour||0)},
+      {label:'Revenue',value:Number(rev.revenue||0),color:VIZ.series[2]},
+      {label:'Margin',value:Number(rev.margin||0),color:VIZ.status.good}
+    ].filter(r=>r.value>0),{title:'Service economics',money:true,
+      keyLabel:'Measure',valueLabel:'Amount',labelWidth:86});
+    // The biggest jobs on the book, by what they will bill.
+    const topJobs=vizBars((jobs.rows||[])
+      .map(j=>({label:j.job_no,value:Number(j.final_price||j.estimated_price||0)}))
+      .filter(r=>r.value>0).sort((a,b)=>b.value-a.value),
+      {title:'Largest job orders',money:true,color:VIZ.series[1],
+       keyLabel:'Job',valueLabel:'Price',limit:6,labelWidth:104});
     const body=`${workflowStrip(['Job Order','Assembly Card','Estimate & Markup','Completion','Excess Return'],0)}
-      <div class="workspace-kpis">
-        ${kpi('Open Jobs',(byStatus.DRAFT||0)+(byStatus.ESTIMATED||0)+(byStatus.IN_PROGRESS||0),{section:'records'})}
-        ${kpi('In Progress',byStatus.IN_PROGRESS||0,{match:'IN_PROGRESS'})}
-        ${kpi('Completed',byStatus.COMPLETED||0,{match:'COMPLETED'})}
-        ${kpi('Service Revenue',money(summary.revenue&&summary.revenue.revenue),{section:'reports'})}
-        ${kpi('Gross Margin',money(summary.revenue&&summary.revenue.margin),{section:'reports'})}
-        ${kpi('Parts Held on Jobs',summary.partsReserved||0,{section:'records'})}</div>
+      ${tiles}
+      <div class="viz-grid">${pipeline}${economics}${topJobs}</div>
       <div class="ramco-layout"><div class="ramco-main">
         <section class="workspace-card"><header><div><h2>Service Job Orders</h2></div>
           <button class="ramco-primary" id="svcNew">New Job Order</button></header>
@@ -1583,7 +1608,7 @@ async function renderServiceOverview(){
         <button data-section-link="reports">Service Profitability</button>
         <button data-section-link="setup">Rates & Markup</button>
       </div></section></aside></div>`;
-    content.innerHTML=workbenchShell(body,'center');bindOperationalShell();
+    content.innerHTML=workbenchShell(body,'center');bindOperationalShell();bindViz(content,section=>openSection(section));
     $('#svcNew').onclick=openServiceJobForm;
     bindServiceRows();
   }catch(error){showWorkspaceError(error);}
@@ -3343,10 +3368,30 @@ async function renderWarehouseOverview(){
     const [data,classes]=await Promise.all([api('/inventory/visibility?size=1'),api('/inventory/by-class')]);
     const classOrder=['D400','R280','RSPORT','BAT','BSS','CHG','SP','OTH'];
     const byCode=new Map((classes.rows||[]).map(row=>[row.cls,row]));
-    const classKpis=classOrder.map(code=>{
-      const row=byCode.get(code)||{class_name:code,total:0,available:0};
-      return kpi(row.class_name,`${Number(row.total||0).toLocaleString()} units`);
-    }).join('');
+    const classRows=classOrder.map(code=>byCode.get(code)).filter(Boolean);
+    // Status first: what is sellable right now, what is stuck, what is unpriced.
+    const sum=k=>classRows.reduce((t,r)=>t+Number(r[k]||0),0);
+    const tiles=vizTiles([
+      {label:'Total units',value:sum('total'),sub:'on the books',section:'records'},
+      {label:'Available',value:sum('available'),tone:'good',sub:'ready to move',section:'records'},
+      {label:'Deployed',value:sum('deployed'),sub:'with customers',section:'records'},
+      {label:'Quarantine',value:sum('quarantine'),tone:sum('quarantine')?'serious':'good',
+       sub:'held back',section:'records'},
+      {label:'Missing cost',value:Number(data.summary?.unvalued_units||0),
+       tone:Number(data.summary?.unvalued_units||0)?'critical':'good',sub:'unvalued units',section:'reports'}
+    ]);
+    // Where the stock sits, and what each class is worth - two questions, two charts,
+    // never one chart with two scales.
+    const mix=vizDonut(classRows.map(r=>({label:r.class_name,value:Number(r.total||0)})),
+      {title:'Units by inventory class',totalLabel:'Units',keyLabel:'Class',valueLabel:'Units'});
+    const byLoc=vizBars((data.byLocation||[]).map(r=>({label:r.location_code,value:Number(r.total_units||0)}))
+        .sort((a,b)=>b.value-a.value),
+      {title:'Units by location',keyLabel:'Location',valueLabel:'Units',limit:7,labelWidth:104});
+    const value=vizBars(classRows.map(r=>({label:r.class_name,value:Number(r.inventory_value||0)}))
+        .filter(r=>r.value>0).sort((a,b)=>b.value-a.value),
+      {title:'Inventory value by class',money:true,color:VIZ.series[2],
+       keyLabel:'Class',valueLabel:'Value',limit:7,labelWidth:104});
+    const classKpis='';
     const locations=data.byLocation.map(row=>`<tr class="clickable-row" data-location-filter="${row.location_id}"><td><b>${esc(row.location_code)}</b></td><td>${esc(row.location_name)}</td>
       <td>${esc(row.location_type)}</td><td>${esc(row.total_units)}</td><td>${esc(row.available_units||0)}</td>
       <td>${esc(row.quarantine_units||0)}</td><td>${esc(row.unreconciled_units||0)}</td></tr>`);
@@ -3354,7 +3399,8 @@ async function renderWarehouseOverview(){
       <td>${esc(row.class_name)}</td><td><b>${esc(row.item_code)}</b></td><td>${esc(row.item_name)}</td>
       <td>${Number(row.total||0).toLocaleString()}</td><td>${Number(row.available||0).toLocaleString()}</td><td>${Number(row.deployed||0).toLocaleString()}</td>
       <td>${Number(row.quarantine||0).toLocaleString()}</td><td>${Number(row.unvalued||0).toLocaleString()}</td><td class="num">${money(row.inventory_value)}</td></tr>`);
-    const body=`<div class="workspace-kpis inventory-class-kpis">${classKpis}</div>
+    const body=`${tiles}
+      <div class="viz-grid">${mix}${byLoc}${value}</div>
       <section class="workspace-card"><header><div><h2>Inventory by Exact Material Code</h2></div><button class="ramco-primary" data-section-link="records">Open Serial Register</button></header>
         ${operationalTable(['Inventory Class','Material Code','Tagged Item / Description','Total Serials','Available','Deployed','Quarantine','Missing Cost','Inventory Value'],items,{key:'warehouse-items',emptyMessage:'No classified inventory records. Apply migration 0022 and verify opening data.'})}</section>
       <div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
@@ -3367,6 +3413,7 @@ async function renderWarehouseOverview(){
       </aside></div>`;
     content.innerHTML=workbenchShell(body,'center');
     bindOperationalShell();
+    bindViz(content,section=>openSection(section));
     $$('[data-location-filter]').forEach(row=>row.onclick=()=>renderWarehouseVisibility(row.dataset.locationFilter));
     $$('[data-item-filter]').forEach(row=>row.onclick=()=>renderWarehouseVisibility('',row.dataset.itemFilter,'',row.dataset.classFilter));
   }catch(error){showWorkspaceError(error);}
@@ -3636,23 +3683,62 @@ async function renderCycleWorkspace(section){
 }
 
 async function renderCycleOverview(){
-  content.innerHTML='<div class="workspace-loading">Loading cycle count control…</div>';
+  content.innerHTML='<div class="workspace-loading">Loading cycle count control\u2026</div>';
   try{
     const data=await api('/inventory/cycle-counts');
-    const open=data.rows.filter(row=>row.status==='OPEN').length;
-    const submitted=data.rows.filter(row=>row.status==='SUBMITTED').length;
-    const variances=data.rows.reduce((sum,row)=>sum+Number(row.variance_units||0),0);
-    const rows=data.rows.slice(0,20).map(row=>`<tr data-cycle="${row.id}"><td><b>${esc(row.count_no)}</b></td><td>${date(row.count_date)}</td>
-      <td>${esc(row.location_code)} · ${esc(row.location_name)}</td><td>${esc(row.category||'All')}</td><td>${esc(row.expected_units)}</td>
+    const all=data.rows||[];
+    const by=st=>all.filter(r=>r.status===st).length;
+    const variances=all.reduce((sum,row)=>sum+Number(row.variance_units||0),0);
+    const counted=all.reduce((sum,row)=>sum+Number(row.counted_units||0),0);
+    const expected=all.reduce((sum,row)=>sum+Number(row.expected_units||0),0);
+
+    // The coloured row across the top: state first, detail underneath.
+    const tiles=vizTiles([
+      {label:'Open',value:by('OPEN'),tone:'warning',sub:'being counted',section:'records'},
+      {label:'For approval',value:by('SUBMITTED'),tone:'serious',sub:'awaiting sign-off',section:'approvals'},
+      {label:'Approved',value:by('APPROVED')+by('POSTED'),tone:'good',sub:'closed out',section:'records'},
+      {label:'Variances',value:variances,tone:variances?'critical':'good',sub:'units in question',section:'reports'},
+      {label:'Units counted',value:counted,sub:'across all sheets',section:'approvals'}
+    ]);
+
+    // What the register is made of, by state.
+    const statuses=[['OPEN','Open'],['SUBMITTED','For approval'],['APPROVED','Approved'],
+      ['POSTED','Posted'],['CANCELLED','Cancelled']];
+    const donut=vizDonut(statuses.map(([code,label])=>({label,value:by(code)})),
+      {title:'Count sheets by status',totalLabel:'Sheets',keyLabel:'Status',valueLabel:'Sheets'});
+
+    // Where the variances actually are - the question a controller asks first.
+    const byLocation={};
+    all.forEach(r=>{const k=r.location_code||'Unassigned';
+      byLocation[k]=(byLocation[k]||0)+Number(r.variance_units||0);});
+    const varianceRows=Object.keys(byLocation).map(k=>({label:k,value:byLocation[k]}))
+      .filter(r=>r.value>0).sort((a,b)=>b.value-a.value);
+    const bars=vizBars(varianceRows,{title:'Variances by location',color:VIZ.status.critical,
+      keyLabel:'Location',valueLabel:'Variance units',limit:6,labelWidth:110});
+
+    // How far each open sheet has got. Progress, not a score.
+    const progress=all.filter(r=>r.status==='OPEN').slice(0,6).map(r=>{
+      const exp=Number(r.expected_units||0), got=Number(r.counted_units||0);
+      const pct=exp?Math.min(100,(got/exp)*100):(got?100:0);
+      return {label:r.count_no+' \u00b7 '+(r.location_code||''),pct,
+        valueLabel:got+(exp?' / '+exp:''),tone:pct>=100?'good':pct>=50?'warning':'serious'};
+    });
+    const meters=vizMeter(progress,{title:'Open sheets in progress',subtitle:'counted against expected'});
+
+    const rows=all.slice(0,20).map(row=>`<tr data-cycle="${row.id}"><td><b>${esc(row.count_no)}</b></td><td>${date(row.count_date)}</td>
+      <td>${esc(row.location_code)} \u00b7 ${esc(row.location_name)}</td><td>${esc(row.category||'All')}</td><td>${esc(row.expected_units)}</td>
       <td>${esc(row.counted_units)}</td><td>${esc(row.variance_units)}</td><td>${statusBadge(row.status)}</td></tr>`);
-    const body=`<div class="workspace-kpis">${kpi('Count Plans',data.total,{section:'records'})}${kpi('Open Counts',open,{section:'records'})}${kpi('For Approval',submitted,{section:'approvals'})}${kpi('Variances',variances,{section:'setup'})}</div>
+
+    const body=`${tiles}
+      <div class="viz-grid">${donut}${bars}${meters}</div>
       <div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
-        <header><div><h2>Inventory Cycle Counting</h2></div><button class="ramco-primary" data-section-link="records">New Count Plan</button></header>
+        <header><div><h2>Inventory Cycle Counting</h2><span>${all.length} sheet${all.length===1?'':'s'} \u00b7 ${compact(counted)} of ${compact(expected)} expected units counted</span></div><button class="ramco-primary" data-section-link="records">New Count Plan</button></header>
         ${operationalTable(['Count No.','Date','Location','Category','Expected','Counted','Variance','Status'],rows)}
       </section></div><aside class="ramco-rail"><section><header>Counting Actions</header><div class="ramco-action-links">
         <button data-section-link="records">Create / Print Count Plan</button><button data-section-link="approvals">Mobile Physical Count</button>
         <button data-section-link="reports">Variance Reports</button></div></section></aside></div>`;
     content.innerHTML=workbenchShell(body,'center');bindOperationalShell();
+    bindViz(content,section=>openSection(section));
     $$('[data-cycle]').forEach(row=>row.onclick=()=>{state.cycleCount=Number(row.dataset.cycle);renderPhysicalCount(state.cycleCount);});
   }catch(error){showWorkspaceError(error);}
 }
@@ -6104,7 +6190,7 @@ init();
     .blitz-wordmark{font-size:25px}
   }
   `;
-  var el=document.createElement('style');el.id='blitz-erp-style';el.textContent=css;
+  var el=document.createElement('style');el.id='blitz-erp-style';el.textContent=css+VIZ_CSS;
   document.head.appendChild(el);
   try{document.title='Blitz - ERP';}catch(e){}
   document.addEventListener('DOMContentLoaded',function(){try{document.title='Blitz - ERP';}catch(e){}});
