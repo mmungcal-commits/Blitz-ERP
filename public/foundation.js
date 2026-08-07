@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R38.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R39.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -201,7 +201,7 @@ function workspaceTabs(code=state.module?.code){
   ];
   if(code==='fa-receivables-management')return [
     ['center','Receivables Center'],['records','Sales Register'],['approvals','For Posting'],
-    ['reports','Revenue Reports'],['setup','Lists'],
+    ['statements','Statements'],['reports','Revenue Reports'],['setup','Lists'],
   ];
   if(code==='ip-cycle-counting')return [
     ['center','Overview'],['records','Count Plans'],['approvals','Physical Count'],
@@ -255,7 +255,7 @@ function showAuth(mode='login'){
     const startScope=state.scope==='ADMIN'?'ADMIN':'OPERATIONS';
     host.innerHTML=`<div class="blitz-auth">
       <div class="blitz-auth-brand">
-        <img class="blitz-mark" src="/logo-white.png?v=20260808-r37" alt="E88 Ventures Inc.">
+        <img class="blitz-mark" src="/logo-white.png?v=20260808-r39" alt="E88 Ventures Inc.">
         <div class="blitz-charge" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
       </div>
       <div class="auth-heading"><h1>Welcome back</h1><p>Sign in to continue.</p></div>
@@ -451,23 +451,23 @@ async function renderHomeDashboard(){
       {label:'Collection',value:m.collectionPct==null?0:Math.round(m.collectionPct),suffix:'%',
        pct:null,tone:m.collectionPct==null?null:(m.collectionPct>=80?'good':m.collectionPct>=50?'warning':'critical'),
        sub:m.collectionPct==null?'nothing billed in this period':'of '+money(m.billed)+' billed',
-       module:'fa-receivables-payables#records'},
+       module:'fa-receivables-management#records'},
       {label:'Receivables',value:m.receivablesPct==null?0:Math.round(m.receivablesPct),suffix:'%',
        tone:m.receivablesPct==null?null:(m.receivablesPct<=20?'good':m.receivablesPct<=50?'warning':'critical'),
        sub:m.receivablesPct==null?'nothing outstanding':money(m.outstanding)+' outstanding',
-       module:'fa-receivables-payables#records'}
+       module:'fa-receivables-management#records'}
     ]);
     cards.push(vizRing(m.collectionPct==null?0:m.collectionPct,{title:'Collection rate',
         subtitle:m.collectionPct==null?'nothing billed in this period':money(m.collected)+' of '+money(m.billed)+' billed',
         caption:'collected',valueLabel:m.collectionPct==null?'0%':undefined,
-        tipLabel:'Collected against billed',open:'fa-receivables-payables#records',
-        openLabel:'Open the payment requests',
+        tipLabel:'Collected against billed',open:'fa-receivables-management#records',
+        openLabel:'Open the sales register',
         tone:m.collectionPct==null?null:(m.collectionPct>=80?'good':m.collectionPct>=50?'warning':'critical')}));
     if((m.aging||[]).some(r=>Number(r.value)>0))
       cards.push(vizBars(m.aging.map(r=>({label:r.label,value:Number(r.value)||0})).filter(r=>r.value>0),
         {title:'Receivables ageing',money:true,color:VIZ.status.serious,
          keyLabel:'Bucket',valueLabel:'Outstanding',labelWidth:104,
-         open:'fa-receivables-payables#records',openLabel:'Open the receivables'}));
+         open:'fa-receivables-management#records',openLabel:'Open the sales register'}));
     cards.push(vizDonut([
         {label:'Available',value:m.availableUnits},{label:'Leased',value:m.leasedUnits},
         {label:'Sold',value:m.soldUnits},{label:'Deployed',value:m.deployedUnits}],
@@ -686,6 +686,48 @@ const MOBILE_TILES={
       {key:'move',label:'Stock Movement',sub:'Receive, issue and transfer',tone:'orange',icon:'truck',section:'approvals'},
       {key:'qr',label:'QR Trace',sub:'Scan a unit and read its history',tone:'blue',icon:'check',section:'reports'},
       {key:'loc',label:'Locations',sub:'Warehouses and bins',tone:'green',icon:'box',section:'setup'}
+    ]
+  },
+  /*
+   * The rest of the work that happens away from a desk. Receiving is done at
+   * the door, issuing at the gate, service at the bay and collection wherever
+   * the customer is - so each of those gets a phone launcher rather than the
+   * full workbench squeezed onto a small screen.
+   */
+  'ip-inbound-logistics':{
+    title:'Receiving',
+    tiles:[
+      {key:'receive',label:'Receive & Scan',sub:'Scan units against the manifest',tone:'orange',icon:'truck',section:'reports'},
+      {key:'expected',label:'Expected Shipments',sub:'What is on its way',tone:'blue',icon:'box',section:'approvals'},
+      {key:'po',label:'Purchase Orders',sub:'What was ordered',tone:'green',icon:'clipboard',section:'records'},
+      {key:'var',label:'Discrepancies',sub:'What did not match',tone:'slate',icon:'check',section:'setup'}
+    ]
+  },
+  'sd-outbound-logistics':{
+    title:'Outbound',
+    tiles:[
+      {key:'issue',label:'Goods Issuance',sub:'Release units to a holder',tone:'orange',icon:'truck',section:'reports'},
+      {key:'check',label:'Pre-release Check',sub:'Inspect before it leaves',tone:'blue',icon:'check',section:'approvals'},
+      {key:'req',label:'Requisitions',sub:'What has been asked for',tone:'green',icon:'clipboard',section:'records'},
+      {key:'del',label:'Delivery & Return',sub:'Confirm and take back',tone:'slate',icon:'box',section:'setup'}
+    ]
+  },
+  'sd-service-management':{
+    title:'Service',
+    tiles:[
+      {key:'jobs',label:'Job Orders',sub:'What is in the bay',tone:'orange',icon:'clipboard',section:'records'},
+      {key:'parts',label:'Parts & Completion',sub:'Draw parts, close the job',tone:'blue',icon:'box',section:'approvals'},
+      {key:'centre',label:'Overview',sub:'Service at a glance',tone:'slate',icon:'check',section:'center'},
+      {key:'rep',label:'Reports',sub:'Turnaround and repeat visits',tone:'green',icon:'check',section:'reports'}
+    ]
+  },
+  'fa-receivables-management':{
+    title:'Receivables',
+    tiles:[
+      {key:'reg',label:'Sales Register',sub:'Post entries, record collection',tone:'orange',icon:'clipboard',section:'records'},
+      {key:'post',label:'For Posting',sub:'Drafts waiting to be made final',tone:'blue',icon:'check',section:'approvals'},
+      {key:'centre',label:'Overview',sub:'Collected against billed',tone:'slate',icon:'box',section:'center'},
+      {key:'rep',label:'Revenue Reports',sub:'By stream and by month',tone:'green',icon:'check',section:'reports'}
     ]
   }
 };
@@ -2752,8 +2794,45 @@ async function renderInboundOverview(){
     const received=shipments.rows.reduce((sum,row)=>sum+Number(row.received_qty||0),0);
     const discrepancies=reconciliation.totals.openVariances;
     const recent=shipments.rows.slice(0,12);
+
+    /*
+     * Inbound is one question asked four ways: what did we commit to, what is
+     * on the water, what landed, and what does not agree. The ring answers the
+     * third against the second, which is the only one that moves daily.
+     */
+    const byStatus=k=>{const m={};(pos.rows||[]).forEach(r=>{const v=String(r[k]||'UNKNOWN').replace(/_/g,' ');m[v]=(m[v]||0)+1;});
+      return Object.keys(m).map(l=>({label:l,value:m[l]}));};
+    const shipStatus={};(shipments.rows||[]).forEach(r=>{const v=String(r.status||'UNKNOWN').replace(/_/g,' ');shipStatus[v]=(shipStatus[v]||0)+1;});
+    const vendorSpend={};(pos.rows||[]).filter(r=>['APPROVED','PARTIALLY_RECEIVED','RECEIVED'].includes(r.status))
+      .forEach(r=>{const v=r.vendor_name||'Unnamed';vendorSpend[v]=(vendorSpend[v]||0)+Number(r.total_amount||0);});
+    const pct=expected>0?Math.min(100,(received/expected)*100):null;
+
+    const tiles=vizTiles([
+      {label:'Approved POs',value:approved,tone:'good',sub:'ready to ship',section:'records'},
+      {label:'Expected units',value:expected,sub:'on the manifest',section:'approvals'},
+      {label:'Received units',value:received,tone:'good',sub:'scanned in',section:'reports'},
+      {label:'Discrepancies',value:discrepancies,tone:discrepancies?'critical':'good',
+       sub:discrepancies?'to resolve':'all reconciled',section:'setup'},
+    ]);
+    const charts='<div class="viz-grid">'
+      +vizRing(pct==null?0:pct,{title:'Receiving progress',
+        subtitle:expected?compact(received)+' of '+compact(expected)+' expected units':'nothing expected',
+        caption:'received',valueLabel:pct==null?'0%':undefined,tipLabel:'Received against expected',
+        section:'reports',open:'ip-inbound-logistics#reports',openLabel:'Open goods receipt',
+        tone:pct==null?null:(pct>=100?'good':pct>=50?'warning':'serious')})
+      +vizDonut(byStatus('status'),{title:'Purchase orders by status',totalLabel:'Orders',
+        keyLabel:'Status',valueLabel:'Orders',open:'ip-inbound-logistics#records',openLabel:'Open purchase orders'})
+      +vizDonut(Object.keys(shipStatus).map(l=>({label:l,value:shipStatus[l]})),
+        {title:'Shipments by status',totalLabel:'Shipments',keyLabel:'Status',valueLabel:'Shipments',
+         open:'ip-inbound-logistics#approvals',openLabel:'Open expected shipments'})
+      +vizBars(Object.keys(vendorSpend).map(l=>({label:l,value:vendorSpend[l]})).sort((x,y)=>y.value-x.value),
+        {title:'Committed spend by vendor',money:true,color:VIZ.series[1],keyLabel:'Vendor',
+         valueLabel:'Committed',limit:6,labelWidth:130,
+         open:'ip-inbound-logistics#records',openLabel:'Open purchase orders'})
+      +'</div>';
+
     const body=`${workflowStrip(['Purchase Order','ATLAS Expected Shipment','Goods Receipt','Warehouse Visibility'],0)}
-      <div class="workspace-kpis">${kpi('Approved POs',approved,{section:'records'})}${kpi('Expected Units',expected,{section:'approvals'})}${kpi('Received Units',received,{section:'reports'})}${kpi('Open Discrepancies',discrepancies,{section:'setup'})}</div>
+      ${tiles}${charts}
       <div class="ramco-layout">
         <div class="ramco-main">
           <section class="ramco-window">
@@ -2777,6 +2856,8 @@ async function renderInboundOverview(){
       </div>`;
     content.innerHTML=workbenchShell(body,'center');
     bindOperationalShell();
+    bindViz(content,sec=>openSection(sec),dest=>{const [code,s2]=String(dest).split('#');
+      if(code===state.module.code&&s2)return openSection(s2);openWorkspace(code);});
   }catch(error){showWorkspaceError(error);}
 }
 
@@ -2787,7 +2868,7 @@ async function renderPurchaseOrders(){
     const rows=data.rows.map(row=>`<tr data-po="${row.id}"><td><b>${esc(row.purchase_order_no)}</b></td><td>${date(row.order_date)}</td>
       <td>${esc(row.vendor_name||'-')}</td><td>${date(row.expected_delivery_date)}</td><td>${esc(row.currency)}</td>
       <td class="num">${money(row.total_amount)}</td><td>${esc(row.line_count)}</td><td>${statusBadge(row.status)}</td>
-      <td><button class="table-action" data-print-po="${row.id}">Print PO</button>${row.status==='DRAFT'&&can('PROCUREMENT','APPROVE')?`<button class="table-action" data-approve-po="${row.id}">Approve</button>`:''}</td></tr>`);
+      <td><button class="table-action" data-print-po="${row.id}">Print PO</button>${row.status==='DRAFT'&&can('PROCUREMENT','EDIT')?`<button class="table-action" data-edit-po="${row.id}">Edit</button>`:''}${row.status==='DRAFT'&&can('PROCUREMENT','APPROVE')?`<button class="table-action" data-approve-po="${row.id}">Approve</button>`:''}</td></tr>`);
     const body=`${workflowStrip(['Purchase Order','ATLAS Expected Shipment','Goods Receipt','Warehouse Visibility'],0)}
       <div class="workspace-commandbar"><button class="command primary" id="createPO">New Purchase Order</button>
         <span class="command-spacer"></span><span class="workspace-mode">PURCHASE ORDER REGISTER</span></div>
@@ -2798,10 +2879,92 @@ async function renderPurchaseOrders(){
     $('#createPO').onclick=renderPurchaseOrderForm;
     $$('[data-approve-po]').forEach(button=>button.onclick=async event=>{
       event.stopPropagation();
-      try{const result=await api(`/procurement/purchase-orders/${button.dataset.approvePo}/approve`,{method:'POST',body:'{}'});toast(result.approved?'Purchase order approved':`Approval step recorded; ${result.approvalDecision?.state?.pending||0} step(s) remain`);await renderPurchaseOrders();}
+      try{const result=await api(`/procurement/purchase-orders/${button.dataset.approvePo}/approve`,{method:'POST',body:'{}'});
+        const rfp=result.paymentRequest;
+        toast(result.approved
+          ?('Purchase order approved'+(rfp&&rfp.created?' \u00b7 '+rfp.requestNo+' drafted in Payables':''))
+          :`Approval step recorded; ${result.approvalDecision?.state?.pending||0} step(s) remain`);
+        await renderPurchaseOrders();}
       catch(error){toast(error.message,'error');}
     });
+    $$('[data-edit-po]').forEach(button=>button.onclick=event=>{
+      event.stopPropagation();openPoEdit(Number(button.dataset.editPo));});
   }catch(error){showWorkspaceError(error);}
+}
+
+
+/*
+ * A draft purchase order can be corrected in place. Once it is routed the
+ * figure is one somebody is being asked to sign for, so the Edit button is not
+ * offered and the API refuses it too.
+ */
+async function openPoEdit(id){
+  try{
+    const d=await api('/procurement/purchase-orders/'+id);
+    const h=d.header||{};
+    const lineRow=(l={})=>`<div class="po-edit-line">
+      <input data-l="itemCode" placeholder="Item code" value="${esc(l.item_code||'')}">
+      <input data-l="description" placeholder="Description" value="${esc(l.description||'')}">
+      <input data-l="qty" type="number" step="0.01" min="0" placeholder="Qty" value="${esc(l.ordered_qty!=null?l.ordered_qty:'')}">
+      <input data-l="unitCost" type="number" step="0.01" min="0" placeholder="Unit cost" value="${esc(l.unit_cost!=null?l.unit_cost:'')}">
+      <span class="po-edit-amt">0.00</span>
+      <button type="button" class="table-action danger" data-l-del>&times;</button></div>`;
+
+    modal('Edit '+esc(h.purchase_order_no||'purchase order'),
+      `<form id="poEditForm" class="operational-form po-edit">
+        <div class="form-grid">
+          <label><span>Vendor</span><input name="vendorName" value="${esc(h.vendor_name||'')}" required></label>
+          <label><span>Order date</span><input name="orderDate" type="date" value="${esc(h.order_date||'')}"></label>
+          <label><span>Expected delivery</span><input name="expectedDeliveryDate" type="date" value="${esc(h.expected_delivery_date||'')}"></label>
+          <label><span>Currency</span><input name="currency" value="${esc(h.currency||'PHP')}"></label>
+          <label><span>Payment terms</span><input name="paymentTerms" value="${esc(h.payment_terms||'')}"></label>
+          <label><span>Tax</span><input name="taxAmount" type="number" step="0.01" value="${esc(h.tax_amount||0)}"></label>
+        </div>
+        <div class="po-edit-head"><b>Lines</b><button type="button" class="command" id="poEditAdd">Add line</button></div>
+        <div id="poEditLines">${(d.lines||[]).map(lineRow).join('')||lineRow()}</div>
+        <div class="po-edit-total">Total <b id="poEditTotal">0.00</b></div>
+        <div class="modal-actions"><button type="submit" class="command primary">Save</button>
+        <button type="button" class="command" id="poEditNo">Cancel</button></div></form>`);
+
+    const mb=$('#modalBody');
+    const recalc=()=>{
+      let sum=0;
+      mb.querySelectorAll('.po-edit-line').forEach(row=>{
+        const q=Number(row.querySelector('[data-l="qty"]').value)||0;
+        const c=Number(row.querySelector('[data-l="unitCost"]').value)||0;
+        row.querySelector('.po-edit-amt').textContent=money(q*c);
+        sum+=q*c;
+      });
+      const tax=Number(mb.querySelector('[name="taxAmount"]').value)||0;
+      mb.querySelector('#poEditTotal').textContent=money(sum+tax);
+    };
+    const wire=()=>{
+      mb.querySelectorAll('.po-edit-line [data-l]').forEach(i=>{i.oninput=recalc;});
+      mb.querySelectorAll('[data-l-del]').forEach(b=>b.onclick=()=>{
+        if(mb.querySelectorAll('.po-edit-line').length<=1)return toast('A purchase order needs at least one line.','error');
+        b.closest('.po-edit-line').remove();recalc();});
+    };
+    mb.querySelector('[name="taxAmount"]').oninput=recalc;
+    mb.querySelector('#poEditAdd').onclick=()=>{
+      mb.querySelector('#poEditLines').insertAdjacentHTML('beforeend',lineRow());wire();recalc();};
+    mb.querySelector('#poEditNo').onclick=()=>closeModal();
+    wire();recalc();
+
+    mb.querySelector('#poEditForm').onsubmit=async e=>{
+      e.preventDefault();
+      const lines=[...mb.querySelectorAll('.po-edit-line')].map(row=>({
+        itemCode:row.querySelector('[data-l="itemCode"]').value.trim(),
+        description:row.querySelector('[data-l="description"]').value.trim(),
+        qty:Number(row.querySelector('[data-l="qty"]').value)||0,
+        unitCost:Number(row.querySelector('[data-l="unitCost"]').value)||0,
+      })).filter(l=>(l.itemCode||l.description)&&l.qty>0);
+      if(!lines.length)return toast('Give at least one line a description and a quantity.','error');
+      const body={...formDataObject(e.currentTarget),lines};
+      try{await api('/procurement/purchase-orders/'+id,{method:'PATCH',body:JSON.stringify(body)});
+        closeModal();toast('Saved');await renderPurchaseOrders();}
+      catch(error){toast(error.message,'error');}
+    };
+  }catch(error){toast(error.message,'error');}
 }
 
 async function renderPurchaseOrderForm(){
@@ -3260,9 +3423,39 @@ async function renderOutboundOverview(){
     const rows=open.slice(0,20).map(row=>`<tr><td><b>${esc(row.requisition_no)}</b></td><td>${esc(row.request_type||'-')}</td>
       <td>${esc(row.holder_type||'-')}</td><td>${esc(row.holder_name||row.partner_name||'-')}</td><td>${date(row.required_date)}</td>
       <td>${esc(row.serial_count||0)}</td><td>${esc(row.total_qty||0)}</td><td>${statusBadge(row.status)}</td></tr>`);
+    /*
+     * Outbound is a queue with a shape: what has been asked for, what is ready,
+     * what has left, and what is due back. The ring is how much of the open
+     * book has actually been issued, which is the number that stalls first.
+     */
+    const count=(list,key)=>{const m={};(list||[]).forEach(r=>{const v=String(r[key]||'UNKNOWN').replace(/_/g,' ');m[v]=(m[v]||0)+1;});
+      return Object.keys(m).map(l=>({label:l,value:m[l]}));};
+    const issued=(data.deliveries||[]).filter(r=>['RELEASED','DELIVERED','CONFIRMED'].includes(r.status)).length;
+    const pipeline=(data.deliveries||[]).length;
+    const dPct=pipeline>0?(issued/pipeline)*100:null;
+
+    const tiles=vizTiles([
+      {label:'Open requisitions',value:open.length,tone:open.length?'warning':'good',sub:'awaiting fulfilment',section:'records'},
+      {label:'Ready to issue',value:ready.length,tone:'good',sub:'passed checks',section:'approvals'},
+      {label:'Out for delivery',value:inTransit.length,sub:'released',section:'reports'},
+      {label:'Expected returns',value:returnable.length,tone:returnable.length?'warning':'good',sub:'due back',section:'setup'},
+    ]);
+    const charts='<div class="viz-grid">'
+      +vizRing(dPct==null?0:dPct,{title:'Issued against planned',
+        subtitle:pipeline?issued+' of '+pipeline+' deliveries released':'no deliveries planned',
+        caption:'released',valueLabel:dPct==null?'0%':undefined,tipLabel:'Released against planned',
+        open:'sd-outbound-logistics#reports',openLabel:'Open goods issuance',
+        tone:dPct==null?null:(dPct>=80?'good':dPct>=40?'warning':'serious')})
+      +vizDonut(count(data.requisitions,'status'),{title:'Requisitions by status',totalLabel:'Requests',
+        keyLabel:'Status',valueLabel:'Requests',open:'sd-outbound-logistics#records',openLabel:'Open requisitions'})
+      +vizDonut(count(data.deliveries,'status'),{title:'Deliveries by status',totalLabel:'Deliveries',
+        keyLabel:'Status',valueLabel:'Deliveries',open:'sd-outbound-logistics#setup',openLabel:'Open deliveries'})
+      +vizDonut(count(data.requisitions,'holder_type'),{title:'Who is holding the units',totalLabel:'Requests',
+        keyLabel:'Holder',valueLabel:'Requests',open:'sd-outbound-logistics#records',openLabel:'Open requisitions'})
+      +'</div>';
+
     const body=`${workflowStrip(['Requisition','Pre-release Checklist','Goods Issuance','Delivery / Custody'],0)}
-      <div class="workspace-kpis">${kpi('Open Requisitions',open.length,{section:'records'})}${kpi('Ready to Issue',ready.length,{section:'approvals'})}
-        ${kpi('Out for Delivery',inTransit.length,{section:'reports'})}${kpi('Expected Returns',returnable.length,{section:'setup'})}</div>
+      ${tiles}${charts}
       <div class="ramco-layout"><div class="ramco-main"><section class="workspace-card">
         <header><div><h2>Outbound & Custody Work Summary</h2></div>
           <button class="ramco-primary" data-section-link="records">New Requisition</button></header>
@@ -3272,6 +3465,8 @@ async function renderOutboundOverview(){
         <button data-section-link="reports">Post Goods Issuance</button><button data-section-link="setup">Delivery & Goods Return</button>
       </div></section></aside></div>`;
     content.innerHTML=workbenchShell(body,'center');bindOperationalShell();
+    bindViz(content,sec=>openSection(sec),dest=>{const [code,s2]=String(dest).split('#');
+      if(code===state.module.code&&s2)return openSection(s2);openWorkspace(code);});
   }catch(error){showWorkspaceError(error);}
 }
 
@@ -3684,8 +3879,15 @@ async function renderWarehouseVisibility(locationId='',search='',status='',categ
       <select id="unitClass"><option value="">All inventory classes</option>${[['D400','Motorcycle D400'],['R280','Motorcycle R280'],['RSPORT','Motorcycle R280 Sport'],['BAT','Batteries'],['BSS','Lockers / BSS'],['CHG','Chargers'],['SP','Spare Parts & Accessories']].map(([value,label])=>`<option value="${value}" ${value===category?'selected':''}>${label}</option>`).join('')}</select>
       <select id="unitLocation"><option value="">All locations</option>${lookups.locations.map(row=>`<option value="${row.id}" ${Number(row.id)===Number(locationId)?'selected':''}>${esc(row.code)} · ${esc(row.name)}</option>`).join('')}</select>
       <select id="unitStatus"><option value="">All statuses</option>${['AVAILABLE','ASSIGNED','QUARANTINE','UNDER_REPAIR','LEASED','SOLD'].map(value=>`<option ${value===status?'selected':''}>${value}</option>`).join('')}</select>
-      <button class="command primary" id="applyUnitFilter">Apply</button><span class="command-spacer"></span><span class="workspace-mode">${Number(data.total||0).toLocaleString()} UNITS · PAGE ${page}/${pages}</span>
-    </div><div class="workspace-kpis inventory-class-kpis">${((byClass&&(byClass.classes||byClass.rows))||[]).map(function(c){var av=Number(c.available||0),ls=Number(c.leased||0);return '<article class="workspace-kpi kpi-al"><span>'+esc(c.class_name||c.cls||c.class_code||'Class')+'</span><strong>'+av.toLocaleString()+' <small>available</small></strong><em>'+ls.toLocaleString()+' leased</em></article>';}).join('')}</div>
+      <button class="command primary" id="applyUnitFilter">Apply</button>
+      <button class="command" id="unitScan">Scan QR</button>${category?'<button class="command" id="unitClearClass">All classes</button>':''}<span class="command-spacer"></span><span class="workspace-mode">${Number(data.total||0).toLocaleString()} UNITS · PAGE ${page}/${pages}</span>
+    </div><div class="workspace-kpis inventory-class-kpis">${((byClass&&(byClass.classes||byClass.rows))||[]).map(function(c){
+      var av=Number(c.available||0),ls=Number(c.leased||0),code=String(c.cls||c.class_code||'');
+      // A class card is a question with an answer one click away: show me these.
+      return '<button type="button" class="workspace-kpi kpi-al is-drill'+(code===category?' on':'')+'" data-class-drill="'+esc(code)+'">'
+        +'<span>'+esc(c.class_name||code||'Class')+'</span>'
+        +'<strong>'+av.toLocaleString()+' <small>available</small></strong>'
+        +'<em>'+ls.toLocaleString()+' leased</em></button>';}).join('')}</div>
     <section class="workspace-card"><header><h2>Exact Serial Inventory Register</h2></header>
       ${operationalTable(['Serial','Material Code','Tagged Item','Class','Location','Location Name','Status','Assigned To','Unit Cost','Valuation','Reconciliation'],rows,{key:'serial-inventory',emptyMessage:'No serial records match the filters. Confirm D1 migrations and opening data were loaded.'})}
       <div class="table-pager"><button class="command" id="previousUnitPage" ${page<=1?'disabled':''}>Previous</button><span>Page ${page} of ${pages}</span><button class="command" id="nextUnitPage" ${page>=pages?'disabled':''}>Next</button></div>
@@ -3694,6 +3896,18 @@ async function renderWarehouseVisibility(locationId='',search='',status='',categ
     bindOperationalShell();
     const apply=()=>renderWarehouseVisibility($('#unitLocation').value,$('#unitSearch').value,$('#unitStatus').value,$('#unitClass').value,1);
     $('#applyUnitFilter').onclick=apply;
+    // Scanning a unit here searches for it, so a phone in the aisle answers
+    // "where is this one" without anyone typing a twenty-character serial.
+    $('#unitScan').onclick=()=>scanQrWithCamera(value=>{
+      const serial=serialFromQrPayload(value);
+      if(!serial)return toast('Nothing readable in that code.','error');
+      renderWarehouseVisibility('',serial,'','',1);
+    });
+    if($('#unitClearClass'))$('#unitClearClass').onclick=()=>renderWarehouseVisibility(locationId,search,status,'',1);
+    $$('[data-class-drill]').forEach(card=>card.onclick=()=>{
+      const code=card.dataset.classDrill;
+      renderWarehouseVisibility(locationId,search,status,code===category?'':code,1);
+    });
     $('#unitSearch').onkeydown=event=>{if(event.key==='Enter')apply();};
     if($('#previousUnitPage'))$('#previousUnitPage').onclick=()=>renderWarehouseVisibility(locationId,search,status,category,page-1);
     if($('#nextUnitPage'))$('#nextUnitPage').onclick=()=>renderWarehouseVisibility(locationId,search,status,category,page+1);
@@ -3940,6 +4154,7 @@ state.ar={stream:'',status:'',from:'',to:'',q:'',page:1,selected:new Set()};
 async function renderReceivablesWorkspace(section){
   if(section==='records')return renderArCollections();
   if(section==='approvals')return renderArCollections('DRAFT');
+  if(section==='statements')return renderArStatements();
   if(section==='reports')return renderArReports();
   if(section==='setup')return renderArLists();
   return renderArCenter();
@@ -4274,6 +4489,142 @@ function openArForm(row,lists){
       closeModal();toast(row.id?'Saved':'Draft created');await renderArCollections();
     }catch(error){toast(error.message,'error');}
   };
+}
+
+
+/*
+ * Statements of account. Generated from the register for one customer and one
+ * month, so the figures cannot disagree with the books, then editable until it
+ * is issued - because a real statement sometimes carries a line the ledger does
+ * not, and because a document the customer has seen must not change afterwards.
+ */
+async function renderArStatements(){
+  content.innerHTML='<div class="workspace-loading">Loading statements\u2026</div>';
+  try{
+    const d=await api('/receivables/statements');
+    const rows=(d.rows||[]).map(r=>`<tr class="${r.status==='VOID'?'is-void':''}">
+      <td><b>${esc(r.statement_no)}</b></td><td>${esc(r.period_month)}</td>
+      <td>${esc(r.customer_name)}</td>
+      <td class="num">${money(r.opening_balance)}</td>
+      <td class="num">${money(r.billed_amount)}</td>
+      <td class="num">${money(r.collected_amount)}</td>
+      <td class="num"><b>${money(r.closing_balance)}</b></td>
+      <td>${statusBadge(r.status)}</td>
+      <td><button class="table-action" data-soa-open="${r.id}">Open</button>
+        ${r.status==='DRAFT'?`<button class="table-action danger" data-soa-del="${r.id}">Remove</button>`:''}</td></tr>`);
+
+    const monthOpts=(d.months||[]).map(m=>`<option value="${esc(m.label)}">${esc(m.label)}</option>`).join('');
+    const custOpts=(d.customers||[]).map(c2=>`<option value="${esc(c2.label)}">${esc(c2.label)}</option>`).join('');
+    const body=`<div class="workspace-commandbar">
+        <label class="inline-control"><span>Customer</span><select id="soaCustomer">${custOpts||'<option value="">Nothing posted yet</option>'}</select></label>
+        <label class="inline-control"><span>Month</span><select id="soaMonth">${monthOpts}</select></label>
+        <button class="command primary" id="soaGenerate">Generate</button></div>
+      <section class="workspace-card"><header><div><h2>Statements of Account</h2>
+        <span>${(d.rows||[]).length} statements</span></div></header>
+        ${operationalTable(['Statement','Month','Customer','Opening','Charges','Payments','Closing','Status','Action'],
+          rows,{emptyMessage:'No statements yet.'})}</section>`;
+    content.innerHTML=workbenchShell(body,'statements');
+    bindOperationalShell();
+    $('#soaGenerate').onclick=async()=>{
+      const customerName=$('#soaCustomer').value, month=$('#soaMonth').value;
+      if(!customerName||!month)return toast('Pick a customer and a month.','error');
+      try{const r=await api('/receivables/statements/generate',
+          {method:'POST',body:JSON.stringify({customerName,month})});
+        toast(`${r.statementNo} \u00b7 ${r.lines} line${r.lines===1?'':'s'} \u00b7 closing ${money(r.closing)}`);
+        await renderArStatements();openArStatement(r.id);}
+      catch(error){toast(error.message,'error');}
+    };
+    $$('[data-soa-open]').forEach(b=>b.onclick=()=>openArStatement(Number(b.dataset.soaOpen)));
+    $$('[data-soa-del]').forEach(b=>b.onclick=async()=>{
+      try{await api('/receivables/statements/'+b.dataset.soaDel,{method:'DELETE'});
+        toast('Removed');await renderArStatements();}
+      catch(error){toast(error.message,'error');}});
+  }catch(error){showWorkspaceError(error);}
+}
+
+async function openArStatement(id){
+  try{
+    const d=await api('/receivables/statements/'+id);
+    const st=d.statement||{};
+    const draft=st.status==='DRAFT';
+    const lineRow=(l={})=>`<div class="soa-line">
+      <input data-s="lineDate" type="date" value="${esc(l.line_date||'')}" ${draft?'':'disabled'}>
+      <input data-s="reference" placeholder="Reference" value="${esc(l.reference||'')}" ${draft?'':'disabled'}>
+      <input data-s="description" placeholder="Description" value="${esc(l.description||'')}" ${draft?'':'disabled'}>
+      <input data-s="charge" type="number" step="0.01" value="${esc(l.charge||0)}" ${draft?'':'disabled'}>
+      <input data-s="credit" type="number" step="0.01" value="${esc(l.credit||0)}" ${draft?'':'disabled'}>
+      ${draft?'<button type="button" class="table-action danger" data-s-del>&times;</button>':'<span></span>'}</div>`;
+
+    modal(`${esc(st.statement_no||'')} \u00b7 ${esc(st.customer_name||'')}`,
+      `<form id="soaForm" class="operational-form soa">
+        <div class="ar-collect-head">
+          <div><span>Period</span><b>${esc(st.period_month||'')}</b></div>
+          <div><span>Opening</span><b>${money(st.opening_balance)}</b></div>
+          <div><span>Charges</span><b>${money(st.billed_amount)}</b></div>
+          <div><span>Payments</span><b>${money(st.collected_amount)}</b></div>
+          <div><span>Closing</span><b class="${Number(st.closing_balance)>0?'is-open':'is-good'}">${money(st.closing_balance)}</b></div>
+        </div>
+        <div class="soa-head"><b>Lines</b>${draft?'<button type="button" class="command" id="soaAdd">Add line</button>':statusBadge(st.status)}</div>
+        <div class="soa-line soa-line-head"><span>Date</span><span>Reference</span><span>Description</span>
+          <span>Charge</span><span>Payment</span><span></span></div>
+        <div id="soaLines">${(d.lines||[]).map(lineRow).join('')||(draft?lineRow():'')}</div>
+        <label class="wide"><span>Opening balance</span>
+          <input name="openingBalance" type="number" step="0.01" value="${esc(st.opening_balance||0)}" ${draft?'':'disabled'}></label>
+        <label class="wide"><span>Notes</span><input name="notes" value="${esc(st.notes||'')}" ${draft?'':'disabled'}></label>
+        <div class="soa-total">Closing <b id="soaClosing">${money(st.closing_balance)}</b></div>
+        <div class="modal-actions">
+          ${draft?'<button type="submit" class="command primary">Save</button><button type="button" class="command" id="soaIssue">Issue</button>':''}
+          <button type="button" class="command" id="soaPrint">Print</button>
+          <button type="button" class="command" id="soaClose">Close</button></div></form>`);
+
+    const mb=$('#modalBody');
+    const recalc=()=>{
+      let charge=0,credit=0;
+      mb.querySelectorAll('.soa-line:not(.soa-line-head)').forEach(row=>{
+        charge+=Number(row.querySelector('[data-s="charge"]').value)||0;
+        credit+=Number(row.querySelector('[data-s="credit"]').value)||0;});
+      const open=Number(mb.querySelector('[name="openingBalance"]').value)||0;
+      mb.querySelector('#soaClosing').textContent=money(open+charge-credit);
+    };
+    const wire=()=>{
+      mb.querySelectorAll('.soa-line:not(.soa-line-head) input').forEach(i=>{i.oninput=recalc;});
+      mb.querySelectorAll('[data-s-del]').forEach(b=>b.onclick=()=>{b.closest('.soa-line').remove();recalc();});
+    };
+    mb.querySelector('[name="openingBalance"]').oninput=recalc;
+    if(mb.querySelector('#soaAdd'))mb.querySelector('#soaAdd').onclick=()=>{
+      mb.querySelector('#soaLines').insertAdjacentHTML('beforeend',lineRow());wire();recalc();};
+    mb.querySelector('#soaClose').onclick=()=>closeModal();
+    mb.querySelector('#soaPrint').onclick=()=>window.print();
+    wire();recalc();
+
+    const collect=()=>[...mb.querySelectorAll('.soa-line:not(.soa-line-head)')].map(row=>({
+      lineDate:row.querySelector('[data-s="lineDate"]').value,
+      reference:row.querySelector('[data-s="reference"]').value.trim(),
+      description:row.querySelector('[data-s="description"]').value.trim(),
+      charge:Number(row.querySelector('[data-s="charge"]').value)||0,
+      credit:Number(row.querySelector('[data-s="credit"]').value)||0,
+    }));
+    if(draft){
+      mb.querySelector('#soaForm').onsubmit=async e=>{
+        e.preventDefault();
+        try{await api('/receivables/statements/'+id,{method:'PATCH',body:JSON.stringify({
+            openingBalance:Number(mb.querySelector('[name="openingBalance"]').value)||0,
+            notes:mb.querySelector('[name="notes"]').value,lines:collect()})});
+          closeModal();toast('Saved');await renderArStatements();}
+        catch(error){toast(error.message,'error');}
+      };
+      mb.querySelector('#soaIssue').onclick=async()=>{
+        try{
+          await api('/receivables/statements/'+id,{method:'PATCH',body:JSON.stringify({
+            openingBalance:Number(mb.querySelector('[name="openingBalance"]').value)||0,
+            notes:mb.querySelector('[name="notes"]').value,lines:collect()})});
+          const r=await api('/receivables/statements/'+id+'/issue',{method:'POST',body:'{}'});
+          closeModal();toast(`${r.issued} issued \u00b7 closing ${money(r.closingBalance)}`);
+          await renderArStatements();
+        }catch(error){toast(error.message,'error');}
+      };
+    }
+  }catch(error){toast(error.message,'error');}
 }
 
 async function renderArReports(){
@@ -5377,17 +5728,63 @@ async function renderSalesOrderWorkspace(section){
       <td>${row.status==='DRAFT'&&can('SALES','APPROVE')?`<button class="table-action" data-approve-sales="${row.id}">Approve</button>`:'-'}</td></tr>`);
     if(section==='reports'){
       const types=['SALE','LEASE','DEMO','PILOT','EMPLOYEE_ASSIGNMENT'].map(type=>[type,rows.filter(row=>row.transaction_type===type).length]);
-      const body=`<div class="workspace-kpis">${kpi('Orders',rows.length,{section:'records'})}${kpi('Draft',drafts.length,{match:'DRAFT'})}${kpi('Approved',approved.length,{match:'APPROVED'})}</div>
-        <div class="setup-grid"><section class="workspace-card"><header><h2>Orders by Business Transaction</h2></header>${horizontalBars(types)}</section>
-        <section class="workspace-card"><header><h2>Fulfilment Readiness</h2></header>${horizontalBars([['Draft',drafts.length,'orange'],['Approved',approved.length,'green'],['Posted',rows.filter(row=>row.status==='POSTED').length,'blue']])}</section></div>
+      const byMonth={};rows.forEach(r=>{const k=String(r.order_date||'').slice(0,7);if(k)byMonth[k]=(byMonth[k]||0)+Number(r.gross_amount||0);});
+      const body=`${vizTiles([
+          {label:'Orders',value:rows.length,section:'records'},
+          {label:'Draft',value:drafts.length,tone:drafts.length?'warning':'good',match:'DRAFT'},
+          {label:'Approved',value:approved.length,tone:'good',match:'APPROVED'},
+          {label:'Order value',value:value,sub:'gross'},
+        ])}
+        <div class="viz-grid">
+        ${vizDonut(types.map(t=>({label:String(t[0]).replace(/_/g,' '),value:t[1]})),
+          {title:'Orders by business transaction',totalLabel:'Orders',keyLabel:'Transaction',valueLabel:'Orders'})}
+        ${vizDonut([{label:'Draft',value:drafts.length},{label:'Approved',value:approved.length},
+          {label:'Posted',value:rows.filter(row=>row.status==='POSTED').length}],
+          {title:'Fulfilment readiness',totalLabel:'Orders',keyLabel:'Stage',valueLabel:'Orders'})}
+        ${vizColumns(Object.keys(byMonth).sort().map(k=>({label:k.slice(5),value:byMonth[k]})),
+          {title:'Order value by month',money:true,keyLabel:'Month',valueLabel:'Ordered'})}
+        </div>
         <section class="workspace-card"><header><h2>Sales Order Register</h2><span>${rows.length} orders</span></header>
           ${operationalTable(['Order','Date','Type','Customer / Holder','Lines','Gross','Credit','Status','Action'],tableRows)}</section>`;
       content.innerHTML=workbenchShell(body,'reports');bindOperationalShell();
+      bindViz(content,sec=>openSection(sec));
       return bindSalesOrderRows();
     }
     const center=section==='center';
-    const body=`${center?`<div class="workspace-kpis">${kpi('Open Drafts',drafts.length,{match:'DRAFT'})}
-      ${kpi('Approved for Fulfilment',approved.length,{match:'APPROVED'})}${kpi('Motorcycles Available',(lookups.assets||[]).filter(a=>a.category==='MC'&&/^R5FBM/i.test(a.serial_no||'')).length)}${kpi('Batteries Available',(lookups.assets||[]).filter(a=>a.category==='BAT').length)}${kpi('Swap Stations Available',(lookups.assets||[]).filter(a=>a.category==='BSS').length)}</div>
+    /*
+     * The order book read as one picture: how much of it has cleared approval,
+     * what it is made of, and who it is for. Value, not count, on the money
+     * charts - ten small orders and one large one are not the same book.
+     */
+    const groupCount=key=>{const m={};rows.forEach(r=>{const v=String(r[key]||'UNKNOWN').replace(/_/g,' ');m[v]=(m[v]||0)+1;});
+      return Object.keys(m).map(l=>({label:l,value:m[l]}));};
+    const byCustomer={};rows.forEach(r=>{const v=r.customer_name||'Unnamed';byCustomer[v]=(byCustomer[v]||0)+Number(r.gross_amount||0);});
+    const approvedValue=approved.reduce((sum,r)=>sum+Number(r.gross_amount||0),0);
+    const clearedPct=value>0?(approvedValue/value)*100:null;
+    const centreTiles=vizTiles([
+      {label:'Open drafts',value:drafts.length,tone:drafts.length?'warning':'good',sub:'awaiting approval',match:'DRAFT'},
+      {label:'Approved',value:approved.length,tone:'good',sub:'for fulfilment',match:'APPROVED'},
+      {label:'Order value',value:value,sub:rows.length+' orders',section:'reports'},
+      {label:'Motorcycles',value:(lookups.assets||[]).filter(a=>a.category==='MC'&&/^R5FBM/i.test(a.serial_no||'')).length,sub:'available'},
+      {label:'Batteries',value:(lookups.assets||[]).filter(a=>a.category==='BAT').length,sub:'available'},
+      {label:'Stations',value:(lookups.assets||[]).filter(a=>a.category==='BSS').length,sub:'available'},
+    ]);
+    const centreCharts='<div class="viz-grid">'
+      +vizRing(clearedPct==null?0:clearedPct,{title:'Cleared for fulfilment',
+        subtitle:value>0?money(approvedValue)+' of '+money(value)+' ordered':'no orders yet',
+        caption:'approved',valueLabel:clearedPct==null?'0%':undefined,tipLabel:'Approved value against ordered value',
+        section:'approvals',open:'sd-order-management#approvals',openLabel:'Open the approvals',
+        tone:clearedPct==null?null:(clearedPct>=70?'good':clearedPct>=35?'warning':'serious')})
+      +vizDonut(groupCount('transaction_type'),{title:'Orders by transaction',totalLabel:'Orders',
+        keyLabel:'Transaction',valueLabel:'Orders',open:'sd-order-management#records',openLabel:'Open the order register'})
+      +vizDonut(groupCount('status'),{title:'Orders by status',totalLabel:'Orders',
+        keyLabel:'Status',valueLabel:'Orders',open:'sd-order-management#records',openLabel:'Open the order register'})
+      +vizBars(Object.keys(byCustomer).map(l=>({label:l,value:byCustomer[l]})).sort((x,y)=>y.value-x.value),
+        {title:'Order value by customer',money:true,color:VIZ.series[2],keyLabel:'Customer',
+         valueLabel:'Ordered',limit:6,labelWidth:130,
+         open:'sd-order-management#records',openLabel:'Open the order register'})
+      +'</div>';
+    const body=`${center?`${centreTiles}${centreCharts}
       ${workflowStrip(['CRM / Customer','Sales Order','Approval','Requisition & Allocation','Pre-release','Goods Issue / Delivery'],2)}`:''}
       <div class="workspace-commandbar"><button class="command primary" id="newSalesOrder" ${can('SALES','CREATE')?'':'disabled'}>New Sales Order</button>
         <span class="command-spacer"></span><span class="workspace-mode">${section==='approvals'?'ORDER APPROVAL':'CONNECTED ORDER REGISTER'}</span></div>
@@ -5396,6 +5793,8 @@ async function renderSalesOrderWorkspace(section){
         </div>`;
     content.innerHTML=workbenchShell(body,section);bindOperationalShell();
     $('#newSalesOrder').onclick=()=>openSalesOrderForm(lookups);
+    bindViz(content,sec=>openSection(sec),dest=>{const [code,s2]=String(dest).split('#');
+      if(code===state.module.code&&s2)return openSection(s2);openWorkspace(code);});
     bindSalesOrderRows();
   }catch(error){showWorkspaceError(error);}
 }
@@ -5587,16 +5986,55 @@ async function renderSourcingWorkspace(section){
       const landedRows=landed.rows.map(row=>`<tr><td><b>${esc(row.landed_cost_no)}</b></td><td>${esc(row.shipment_no||row.purchase_order_no||'-')}</td>
         <td>${esc(row.allocation_method)}</td><td class="num">${money(row.total_cost)}</td><td>${statusBadge(row.status)}</td>
         <td>${row.status!=='POSTED'&&can('PROCUREMENT','POST')?`<button class="table-action" data-post-landed="${row.id}">Post</button>`:'-'}</td></tr>`);
-      const body=`<div class="workspace-kpis">${kpi('Approved Commitments',money(commitments))}${kpi('Purchase Orders',po.total)}
-        ${kpi('Open Sourcing',source.counts.total-source.counts.completed)}${kpi('Landed Cost Batches',landed.rows.length)}</div>
+      const spendByVendor={};approved.forEach(r=>{const v=r.vendor_name||'Unnamed';spendByVendor[v]=(spendByVendor[v]||0)+Number(r.total_amount||0);});
+      const poMonth={};po.rows.forEach(r=>{const k=String(r.order_date||'').slice(0,7);if(k)poMonth[k]=(poMonth[k]||0)+Number(r.total_amount||0);});
+      const body=`${vizTiles([
+          {label:'Approved commitments',value:commitments,tone:'good',sub:'value'},
+          {label:'Purchase orders',value:po.total,sub:'raised'},
+          {label:'Open sourcing',value:source.counts.total-source.counts.completed,sub:'cases'},
+          {label:'Landed cost batches',value:landed.rows.length,sub:'costed'},
+        ])}
+        <div class="viz-grid">
+        ${vizDonut(Object.keys(spendByVendor).map(l=>({label:l,value:spendByVendor[l]})),
+          {title:'Committed spend by supplier',totalLabel:'Committed',keyLabel:'Supplier',valueLabel:'Committed'})}
+        ${vizColumns(Object.keys(poMonth).sort().map(k=>({label:k.slice(5),value:poMonth[k]})),
+          {title:'Purchase orders by month',money:true,keyLabel:'Month',valueLabel:'Raised'})}
+        </div>
         <section class="workspace-card"><header><h2>Purchase Commitment Report</h2></header>
           ${operationalTable(['PO','Date','Supplier','Expected','Lines','Total','Status','Action'],poRows)}</section>
         <section class="workspace-card"><header><h2>Landed Cost Register</h2></header>
           ${operationalTable(['Landed Cost','Shipment / PO','Allocation','Total','Status','Action'],landedRows)}</section>`;
-      content.innerHTML=workbenchShell(body,'reports');bindOperationalShell();bindProcurementRows();return;
+      content.innerHTML=workbenchShell(body,'reports');bindOperationalShell();
+      bindViz(content,sec=>openSection(sec));bindProcurementRows();return;
     }
-    const body=`<div class="workspace-kpis">${kpi('Sourcing Cases',source.counts.total)}${kpi('Draft POs',drafts.length)}
-      ${kpi('Approved POs',approved.length)}${kpi('Purchase Commitments',money(commitments))}</div>
+    /*
+     * Procurement is measured in money committed, not orders raised, so the
+     * ring is approved value against everything raised. Everything else answers
+     * "committed to whom" and "sitting where".
+     */
+    const poStatus={};po.rows.forEach(r=>{const v=String(r.status||'UNKNOWN').replace(/_/g,' ');poStatus[v]=(poStatus[v]||0)+1;});
+    const vendorCommit={};approved.forEach(r=>{const v=r.vendor_name||'Unnamed';vendorCommit[v]=(vendorCommit[v]||0)+Number(r.total_amount||0);});
+    const raised=po.rows.reduce((sum,r)=>sum+Number(r.total_amount||0),0);
+    const commitPct=raised>0?(commitments/raised)*100:null;
+    const procTiles=vizTiles([
+      {label:'Sourcing cases',value:source.counts.total,sub:(source.counts.total-source.counts.completed)+' open',section:'records'},
+      {label:'Draft POs',value:drafts.length,tone:drafts.length?'warning':'good',sub:'not yet routed',section:'approvals'},
+      {label:'Approved POs',value:approved.length,tone:'good',sub:'committed',section:'approvals'},
+      {label:'Commitments',value:commitments,sub:'approved value',section:'reports'},
+      {label:'Landed cost batches',value:landed.rows.length,sub:'costed',section:'reports'},
+    ]);
+    const procCharts='<div class="viz-grid">'
+      +vizRing(commitPct==null?0:commitPct,{title:'Approved commitment',
+        subtitle:raised>0?money(commitments)+' of '+money(raised)+' raised':'nothing raised yet',
+        caption:'approved',valueLabel:commitPct==null?'0%':undefined,tipLabel:'Approved value against value raised',
+        section:'approvals',tone:commitPct==null?null:(commitPct>=70?'good':commitPct>=35?'warning':'serious')})
+      +vizDonut(Object.keys(poStatus).map(l=>({label:l,value:poStatus[l]})),
+        {title:'Purchase orders by status',totalLabel:'Orders',keyLabel:'Status',valueLabel:'Orders',section:'approvals'})
+      +vizBars(Object.keys(vendorCommit).map(l=>({label:l,value:vendorCommit[l]})).sort((x,y)=>y.value-x.value),
+        {title:'Committed by supplier',money:true,color:VIZ.series[1],keyLabel:'Supplier',
+         valueLabel:'Committed',limit:6,labelWidth:130,section:'approvals'})
+      +'</div>';
+    const body=`${procTiles}${procCharts}
       ${workflowStrip(['Purchase Request','RFQ & Comparison','Purchase Order','Expected Shipment / ATLAS','Goods Receipt','AP & Payment'],section==='approvals'?2:1)}
       <div class="workspace-commandbar"><button class="command primary" id="newPurchaseOrder" ${can('PROCUREMENT','CREATE')?'':'disabled'}>New Purchase Order</button>
         <button class="command" id="openSourcingCases">Sourcing & RFQ Register</button><span class="command-spacer"></span><span class="workspace-mode">${section==='approvals'?'PURCHASE ORDER APPROVAL':'PROCUREMENT CENTER'}</span></div>
@@ -5605,6 +6043,7 @@ async function renderSourcingWorkspace(section){
     content.innerHTML=workbenchShell(body,section);bindOperationalShell();
     $('#newPurchaseOrder').onclick=()=>openPurchaseOrderForm(lookups);
     $('#openSourcingCases').onclick=()=>openSection('records');
+    bindViz(content,sec=>openSection(sec));
     bindProcurementRows();
   }catch(error){showWorkspaceError(error);}
 }
@@ -6889,6 +7328,34 @@ init();
   .ar-collect .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px}
   .ar-collect .form-grid label.wide{grid-column:1/-1}
   .table-action.primary{border-color:#12305f;background:#12305f;color:#fff}
+
+  /* Statement of account: the closing balance is what the eye should land on. */
+  .soa-head{display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px}
+  .soa-line{display:grid;grid-template-columns:130px 130px 1fr 100px 100px 30px;gap:6px;
+    align-items:center;margin-bottom:5px}
+  .soa-line input{width:100%}
+  .soa-line-head span{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#8194a6}
+  .soa-total{display:flex;justify-content:flex-end;gap:8px;align-items:baseline;margin-top:10px;
+    padding-top:9px;border-top:1px solid #e2e9f0;color:#657586;font-size:12px}
+  .soa-total b{font-size:16px;color:#0a2239;font-variant-numeric:tabular-nums}
+  @media (max-width:720px){.soa-line{grid-template-columns:1fr 1fr;grid-auto-rows:auto}}
+
+  /* A class card is a filter you can press, and it shows which one is on. */
+  .workspace-kpi.is-drill{cursor:pointer;text-align:left;font:inherit;transition:transform .14s ease,box-shadow .14s ease}
+  .workspace-kpi.is-drill:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(10,34,57,.10)}
+  .workspace-kpi.is-drill.on{outline:2px solid #12305f;outline-offset:-2px}
+
+  /* Draft purchase-order editor: the rows and the total stay in step. */
+  .po-edit .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:9px}
+  .po-edit-head{display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px}
+  .po-edit-line{display:grid;grid-template-columns:1fr 1.6fr .7fr .8fr .9fr 30px;gap:6px;
+    align-items:center;margin-bottom:6px}
+  .po-edit-line input{width:100%}
+  .po-edit-amt{text-align:right;font-variant-numeric:tabular-nums;color:#42506a;font-size:12px}
+  .po-edit-total{display:flex;justify-content:flex-end;gap:8px;align-items:baseline;
+    margin-top:8px;padding-top:8px;border-top:1px solid #e2e9f0;color:#657586;font-size:12px}
+  .po-edit-total b{font-size:15px;color:#0a2239;font-variant-numeric:tabular-nums}
+  @media (max-width:720px){.po-edit-line{grid-template-columns:1fr 1fr;grid-auto-rows:auto}}
   .home-empty{margin-bottom:14px;padding:14px 16px;border:1px solid #e8eef4;border-radius:10px;background:#fff;
     box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
   .home-empty b{display:block;font-size:13px;color:#0a2239;margin-bottom:3px}
