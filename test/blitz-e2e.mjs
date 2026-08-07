@@ -537,6 +537,37 @@ await t('a counted unit that is not in the system gets registered', async()=>{
   if(b.reconciliation_status!=='FOR_REVIEW') throw new Error('missing item code should flag FOR_REVIEW, got '+b.reconciliation_status);
   return {note:`2 units registered · ${a.asset_no} full detail, ${b.asset_no} flagged FOR_REVIEW`};
 });
+await t('a counted row can be identified and removed before submitting', async()=>{
+  const loc=sqlite.prepare('SELECT id FROM erp_locations LIMIT 1').get();
+  const cc=await call('POST','/api/inventory/cycle-counts',{locationId:loc.id,countDate:'2026-08-07',category:'BAT'});
+  const ccId=cc.json.id;
+  const a=await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,{serialNo:'519110002370AAX001'});
+  const b=await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,{serialNo:'519110002370AAX002'});
+  if(!a.json?.ok||!b.json?.ok) throw new Error(a.json?.error||b.json?.error);
+  if(!a.json.result.needsItemDetail) throw new Error('the scan did not ask for the item');
+
+  // Identify the first one after the fact, exactly as the popup does.
+  const ed=await call('PATCH',`/api/inventory/cycle-counts/${ccId}/lines/${a.json.result.lineId}`,
+    {itemCode:'BAT-0001',itemName:'E88 Battery 72V',category:'BAT',serialType:'BARCODE',unitCost:24000,conditionCode:'GOOD'});
+  if(!ed.json?.ok) throw new Error(ed.json?.error);
+  const sheet=await call('GET',`/api/inventory/cycle-counts/${ccId}`);
+  const line=sheet.json.lines.find(l=>l.actual_serial_no==='519110002370AAX001');
+  if(line.item_code!=='BAT-0001') throw new Error('the sheet does not show the item');
+  if(!line.is_new_unit) throw new Error('line not flagged as a new unit');
+
+  // Remove the mis-scan.
+  const del=await call('DELETE',`/api/inventory/cycle-counts/${ccId}/lines/${b.json.result.lineId}`);
+  if(!del.json?.ok||!del.json.removed) throw new Error('row was not removed');
+  const after=await call('GET',`/api/inventory/cycle-counts/${ccId}`);
+  if(after.json.lines.some(l=>l.actual_serial_no==='519110002370AAX002')) throw new Error('removed row is still on the sheet');
+  if(after.json.summary.counted!==1) throw new Error('counted total not corrected: '+after.json.summary.counted);
+
+  // Once submitted the sheet is frozen.
+  await call('POST',`/api/inventory/cycle-counts/${ccId}/submit`,{});
+  const late=await call('DELETE',`/api/inventory/cycle-counts/${ccId}/lines/${a.json.result.lineId}`);
+  if(late.json?.ok) throw new Error('a submitted sheet was edited');
+  return {note:'identified BAT-0001 · removed the mis-scan · frozen after submit'};
+});
 await t('re-posting a count does not duplicate the unit', async()=>{
   const n=sqlite.prepare("SELECT COUNT(*) n FROM erp_assets WHERE serial_no='LC6PAGA13R0099001'").get().n;
   if(n!==1) throw new Error('serial exists '+n+' times');
