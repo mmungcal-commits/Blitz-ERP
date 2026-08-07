@@ -56,7 +56,11 @@ test('every tile points at a section that module actually has', () => {
 });
 
 test('the phone launcher is reachable from the home screen and from a section', () => {
-  assert.match(src, /function renderLaunchpad\(\)\{\s*if\(isPhone\(\)&&!state\.mobileFull\)return renderMobileLaunchpad\(\);/,
+  // Home is the landing cockpit; the module map (and on a phone, the tile
+  // launcher) sits behind "Open modules".
+  assert.match(src, /if\(!state\.showModuleMap\)return renderHomeDashboard\(\);/,
+    'signing in must land on the dashboard');
+  assert.match(src, /if\(isPhone\(\)&&!state\.mobileFull\)return renderMobileLaunchpad\(\);/,
     'the launchpad must hand off to the phone launcher');
   assert.match(src, /if\(isPhone\(\)&&!state\.mobileFull&&renderMobileTiles\(module\)\)return;/,
     'opening a module on a phone must show its tiles');

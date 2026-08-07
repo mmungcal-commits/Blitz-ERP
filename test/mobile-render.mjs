@@ -57,6 +57,8 @@ const server = createServer(async (req, res) => {
   if (path.startsWith('/api/')) {
     res.setHeader('content-type', 'application/json');
     if (path === '/api/session') return res.end(JSON.stringify(SESSION));
+    if (path === '/api/dashboard/home') return res.end(JSON.stringify(
+      { ok:true, user:{name:'Mark Mungcal',role:'FINANCE',email:'mark@e88.ph'}, sections:{}, waiting:[], activity:[] }));
     if (path.includes('/definition')) return res.end(JSON.stringify({ ok: true, definition: { fields: [], statuses: [], documentType: 'Cycle Count' } }));
     return res.end(JSON.stringify({ ok: true, rows: [], data: [], counts: [], summary: {} }));
   }
@@ -77,6 +79,11 @@ const errors = [];
 page.on('pageerror', e => errors.push(String(e)));
 
 await page.goto(base, { waitUntil: 'networkidle' });
+
+// Home is the cockpit now; the launcher is behind "Open modules".
+await page.waitForSelector('.home-shell', { timeout: 8000 });
+check('a phone lands on the dashboard', await page.locator('.home-shell').isVisible());
+await page.locator('#homeModules').click();
 await page.waitForSelector('.mtile-wrap, .enterprise-launchpad', { timeout: 8000 });
 
 check('the phone home screen is the tile launcher, not the eleven-column map',
@@ -132,6 +139,8 @@ check('an open count sheet can be removed from the phone too',
 // The desktop must be untouched by all of this.
 const desk = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 await desk.goto(base, { waitUntil: 'networkidle' });
+await desk.waitForSelector('.home-shell', { timeout: 8000 });
+await desk.locator('#homeModules').click();
 await desk.waitForSelector('.enterprise-launchpad', { timeout: 8000 });
 check('the desktop still gets the enterprise map',
   await desk.locator('.enterprise-columns').isVisible() && !(await desk.locator('.mtile-wrap').count()));

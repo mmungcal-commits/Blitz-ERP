@@ -50,6 +50,20 @@ const COUNTS = { ok:true, total:7, rows:[
     category:'BSS', expected_units:12, counted_units:12, variance_units:0, status:'CANCELLED' },
 ]};
 
+const HOME = { ok:true,
+  user:{ name:'Mark Mungcal', role:'FINANCE', email:'mark@e88.ph' },
+  sections:{
+    inventory:{ available:412, quarantine:7, unvalued:3, openCounts:3, variances:18,
+      byClass:[{label:'Motorcycle',value:210},{label:'Battery',value:120},{label:'Charger',value:82}] },
+    finance:{ open:5, mine:2, byStage:[{label:'FINANCE_REVIEWED',value:3},{label:'DRAFT',value:2}] },
+  },
+  waiting:[
+    { label:'Physical counts awaiting approval', count:2, module:'ip-cycle-counting' },
+    { label:'Payment requests for your validation', count:3, module:'fa-receivables-payables' },
+  ],
+  activity:[{ event_at:'2026-08-07', user_email:'judy@nrdev.ph', action:'SUBMIT_CYCLE_COUNT', module:'INVENTORY', record_no:'CC-0000002' }],
+};
+
 const results = [];
 const check = (name, pass, detail='') => {
   results.push({ name, pass, detail });
@@ -62,6 +76,7 @@ const server = createServer(async (req,res)=>{
     res.setHeader('content-type','application/json');
     if (path === '/api/session') return res.end(JSON.stringify(SESSION));
     if (path === '/api/inventory/cycle-counts') return res.end(JSON.stringify(COUNTS));
+    if (path === '/api/dashboard/home') return res.end(JSON.stringify(HOME));
     if (path.includes('/definition')) return res.end(JSON.stringify({ ok:true, definition:{ fields:[], statuses:[] } }));
     return res.end(JSON.stringify({ ok:true, rows:[], data:[], counts:[], summary:{} }));
   }
@@ -83,7 +98,27 @@ page.on('pageerror', e=>errors.push(String(e)));
 page.on('console', m=>{ if (m.type()==='error') errors.push('console: '+m.text()); });
 
 await page.goto(base, { waitUntil:'networkidle' });
+
+// Signing in lands on the cockpit, not the module map.
+await page.waitForSelector('.home-shell', { timeout:8000 });
+check('signing in lands on a dashboard, not the module map',
+  await page.locator('.home-shell').isVisible() && !(await page.locator('.enterprise-launchpad').count()));
+check('the queue with your name on it leads, biggest first',
+  (await page.locator('.home-wait b').allTextContents()).join(',') === '3,2',
+  (await page.locator('.home-wait span').allTextContents()).join(' | '));
+check('the dashboard carries live charts',
+  (await page.locator('.home-shell figure.viz').count()) >= 2,
+  `${await page.locator('.home-shell figure.viz').count()} figures`);
+check('a waiting item opens the module it belongs to',
+  (await page.locator('[data-home-go="ip-cycle-counting"]').count()) === 1);
+
+// The map is one button away, and still there.
+await page.screenshot({ path:SHOTS+'home-cockpit.png' });
+await page.locator('#homeModules').click();
 await page.waitForSelector('.enterprise-launchpad', { timeout:8000 });
+check('the module map opens from the dashboard button',
+  await page.locator('.enterprise-columns').isVisible());
+
 await page.locator('[data-workspace="ip-cycle-counting"]').click();
 await page.waitForSelector('.viz-tiles', { timeout:8000 });
 
@@ -169,7 +204,13 @@ await page.screenshot({ path:SHOTS+'viz-cockpit.png', fullPage:false });
 // And the same cockpit on a phone.
 const phone = await browser.newPage({ viewport:{ width:390, height:844 }, isMobile:true, hasTouch:true });
 await phone.goto(base, { waitUntil:'networkidle' });
+await phone.waitForSelector('.home-shell', { timeout:8000 });
+const homeOverflow = await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+check('the dashboard fits a phone', homeOverflow <= 1, `${homeOverflow}px`);
+await phone.locator('#homeModules').click();
 await phone.waitForSelector('.mtile-wrap', { timeout:8000 });
+check('a phone gets the tile launcher, not the eleven-column map',
+  await phone.locator('.mtile-wrap').isVisible());
 await phone.locator('[data-mgroup="ip"]').click();
 await phone.locator('[data-mmodule="ip-cycle-counting"]').click();
 await phone.waitForSelector('[data-mtile]', { timeout:8000 });
