@@ -7,7 +7,8 @@ import { saveAttachments, attachmentsFor } from '../lib/attachments.js';
 import { sendMailQuiet, mailLayout, mailFacts, mailAttachments } from '../lib/mailer.js';
 import { nextCode, normalizeText } from '../lib/codes.js';
 import {
-  ACTION_STAGE, STAGE_ROLE, checkApproval, mancomMin, rfpFlag, requiredStages, nextStage,
+  ACTION_STAGE, STAGE_ROLE, STAGE_ROLE_ALIASES, checkApproval, mancomMin, rfpFlag,
+  requiredStages, nextStage,
 } from '../lib/rfp-rules.js';
 import { fixedAssetAccountsForCategory, inventoryAccountForCategory } from '../lib/transaction-rules.js';
 import {
@@ -559,6 +560,10 @@ financeRoutes.get('/aging/:ledger', requirePermission('FINANCE', 'VIEW'), async 
 // Row-level privacy. A requestor only ever sees their own RFPs; a department
 // manager/head sees their own department; only Finance and the CEO see everything.
 // Controlled by erp_settings.RFP_PRIVACY_ENFORCED so it can be switched off for audit.
+// Kept in step with STAGE_ROLE_ALIASES.DEPARTMENT in src/lib/rfp-rules.js: a role
+// that may sign the DEPARTMENT stage must also be able to read that department.
+const DEPARTMENT_APPROVER_ROLES=STAGE_ROLE_ALIASES.DEPARTMENT;
+
 async function rfpVisibility(c){
   const user=c.get('erpUser')||{};
   const setting=await first(c.env.DB,`SELECT value FROM erp_settings WHERE key='RFP_PRIVACY_ENFORCED'`);
@@ -567,7 +572,11 @@ async function rfpVisibility(c){
   // MANCOM is an approval tier for the whole company, so it sees everything it
   // may be asked to approve - same as Finance and the CEO.
   if(['FINANCE','CEO','MANCOM','ADMIN','SUPER_ADMIN'].includes(role))return {where:'',args:[],level:'ALL'};
-  if(['DEPT_HEAD','DEPT_MANAGER','SCM_MANAGER'].includes(role)){
+  // Anyone who approves at the DEPARTMENT stage must be able to SEE their
+  // department's requests, or the approval screen shows them nothing and the
+  // action endpoint answers "Payment request not found". SCM_HEAD was missing
+  // here when the role was introduced, which silently stranded Supply Chain.
+  if(DEPARTMENT_APPROVER_ROLES.includes(role)){
     return {where:' AND (r.requestor_email=? OR r.department=?)',args:[user.email,user.department||''],level:'DEPARTMENT'};
   }
   return {where:' AND r.requestor_email=?',args:[user.email],level:'OWN'};
@@ -1697,7 +1706,7 @@ financeRoutes.post('/liquidations/:id/submit', requirePermission('FINANCE','CREA
         ['Variance',rfpMoney(header.variance)]])
       +mailAttachments(attachments),'Cash advance liquidation')});
   await audit(c,{action:'SUBMIT',module:'FINANCE',recordType:'LIQUIDATION',recordId:id,recordNo:header.liquidation_no,after:{spent:header.spent_amount,variance:header.variance}});
-  return ok(c,{submitted:true});
+  return ok(c,{submitted:true,status:'SUBMITTED',liquidationNo:header.liquidation_no});
 });
 
 financeRoutes.post('/liquidations/:id/review', requirePermission('FINANCE','APPROVE'), async c=>{
