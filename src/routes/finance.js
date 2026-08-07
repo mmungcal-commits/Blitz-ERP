@@ -617,7 +617,13 @@ financeRoutes.get('/payment-requests', requirePermission('FINANCE', 'VIEW'), asy
   const vis=await rfpVisibility(c);
   const rows=await all(c.env.DB,`SELECT r.*,e.entity_code,p.partner_code,p.name partner_name,
     po.purchase_order_no,b.bank_name,b.account_name,
-    (SELECT COUNT(*) FROM erp_attachments a WHERE a.record_type='PAYMENT_REQUEST' AND a.record_id=r.id AND a.active=1) attachment_count
+    (SELECT COUNT(*) FROM erp_attachments a WHERE a.record_type='PAYMENT_REQUEST' AND a.record_id=r.id AND a.active=1) attachment_count,
+    (SELECT COUNT(*) FROM erp_payment_request_lines l WHERE l.rfp_ref=r.request_no) line_count,
+    (SELECT COUNT(DISTINCT l.account_title) FROM erp_payment_request_lines l
+      WHERE l.rfp_ref=r.request_no AND COALESCE(l.account_title,'')<>'') account_count,
+    (SELECT l.account_title FROM erp_payment_request_lines l WHERE l.rfp_ref=r.request_no
+      AND COALESCE(l.account_title,'')<>'' GROUP BY l.account_title
+      ORDER BY SUM(l.gross_amount) DESC LIMIT 1) account_title
     FROM erp_payment_requests r JOIN erp_legal_entities e ON e.id=r.entity_id
     LEFT JOIN erp_partners p ON p.id=r.payee_partner_id
     LEFT JOIN erp_purchase_orders po ON po.id=r.purchase_order_id
@@ -636,6 +642,72 @@ financeRoutes.get('/payment-requests', requirePermission('FINANCE', 'VIEW'), asy
 });
 
 // One RFP with its Drive attachments and approval trail.
+/*
+ * A draft is a working document, so it can be corrected: the header, and the
+ * lines it is made of. Once it has been submitted somebody is being asked to
+ * sign for a figure, and the figure cannot move underneath them - so anything
+ * past DRAFT or RETURNED is refused.
+ *
+ * Lines are replaced wholesale and the header totals are re-derived from them,
+ * because a half-applied line edit is how a total stops matching its rows.
+ */
+financeRoutes.patch('/payment-requests/:id', requirePermission('FINANCE','EDIT'), async c => {
+  const id = Number(c.req.param('id'));
+  const before = await first(c.env.DB, `SELECT * FROM erp_payment_requests WHERE id=?`, [id]);
+  if (!before) return fail(c, 'Payment request not found.', 404);
+  if (!['DRAFT','RETURNED'].includes(String(before.status).toUpperCase()))
+    return fail(c, `${before.request_no} is ${String(before.status).toLowerCase().replace(/_/g,' ')} and can no longer be edited.`, 409);
+  const b = await jsonBody(c);
+  const pick = (k, fallback) => b[k] === undefined ? fallback : normalizeText(b[k]);
+
+  let gross = Number(before.gross_amount || 0);
+  let vat = Number(before.vat_amount || 0);
+  let ewt = Number(before.withholding_amount || 0);
+  let net = Number(before.net_payable || 0);
+
+  if (Array.isArray(b.lines)) {
+    const lines = b.lines.filter(l => normalizeText(l.accountTitle) || numberValue(l.grossAmount));
+    if (!lines.length) return fail(c, 'A request needs at least one line.');
+    await run(c.env.DB, `DELETE FROM erp_payment_request_lines WHERE rfp_ref=?`, [before.request_no]);
+    gross = vat = ewt = net = 0;
+    let lineNo = 0;
+    for (const l of lines) {
+      lineNo += 1;
+      const lg = round(numberValue(l.grossAmount));
+      const rate = numberValue(l.vatRate);
+      const lnet = rate ? round(lg / (1 + rate)) : lg;
+      const lvat = round(lg - lnet);
+      const lewt = round(numberValue(l.ewtAmount));
+      gross = round(gross + lg); vat = round(vat + lvat);
+      ewt = round(ewt + lewt); net = round(net + (lg - lewt));
+      await run(c.env.DB, `INSERT INTO erp_payment_request_lines(payment_request_id,rfp_ref,line_no,
+          account_title,source_account_title,procurement_category,description,cost_center,department,
+          gross_amount,vat_type,vat_rate,net_of_vat,input_vat,ewt_amount,net_payable)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        [id, before.request_no, lineNo, normalizeText(l.accountTitle), normalizeText(l.sourceAccountTitle),
+         normalizeText(l.procurementCategory), normalizeText(l.description),
+         normalizeText(l.costCenter) || before.cost_center, normalizeText(l.department) || before.department,
+         lg, normalizeText(l.vatType) || 'VATable', rate, lnet, lvat, lewt, round(lg - lewt)]);
+    }
+  }
+
+  await run(c.env.DB, `UPDATE erp_payment_requests SET payee_name=?,department=?,cost_center=?,
+      project_code=?,purpose=?,request_type=?,supplier_invoice_no=?,invoice_date=?,due_date=?,
+      gross_amount=?,vat_amount=?,withholding_amount=?,net_payable=?,updated_at=datetime('now')
+    WHERE id=?`,
+    [pick('payeeName', before.payee_name), pick('department', before.department),
+     pick('costCenter', before.cost_center), pick('projectCode', before.project_code),
+     pick('purpose', before.purpose), pick('requestType', before.request_type),
+     pick('supplierInvoiceNo', before.supplier_invoice_no), pick('invoiceDate', before.invoice_date),
+     pick('dueDate', before.due_date), gross, vat, ewt, net, id]);
+  const after = await first(c.env.DB, `SELECT * FROM erp_payment_requests WHERE id=?`, [id]);
+  await audit(c, { action:'EDIT', module:'FINANCE', recordType:'PAYMENT_REQUEST',
+    recordId:id, recordNo:after.request_no, before, after });
+  const lines = await all(c.env.DB, `SELECT * FROM erp_payment_request_lines WHERE rfp_ref=? ORDER BY line_no`,
+    [after.request_no]);
+  return ok(c, { request: after, lines });
+});
+
 financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), async c=>{
   const id=Number(c.req.param('id'));
   const vis=await rfpVisibility(c);
