@@ -568,6 +568,74 @@ await t('a counted row can be identified and removed before submitting', async()
   if(late.json?.ok) throw new Error('a submitted sheet was edited');
   return {note:'identified BAT-0001 · removed the mis-scan · frozen after submit'};
 });
+await t('an open count plan can be deleted, a submitted one cannot', async()=>{
+  const loc=sqlite.prepare('SELECT id FROM erp_locations LIMIT 1').get();
+  const a=await call('POST','/api/inventory/cycle-counts',{locationId:loc.id,countDate:'2026-08-07',category:'CHG'});
+  const del=await call('DELETE',`/api/inventory/cycle-counts/${a.json.id}`);
+  if(!del.json?.ok) throw new Error(del.json?.error);
+  // Removed from view, but nothing erased: the record survives as CANCELLED.
+  const still=sqlite.prepare('SELECT status FROM erp_cycle_counts WHERE id=?').get(a.json.id);
+  if(!still) throw new Error('the plan was hard-deleted');
+  if(still.status!=='CANCELLED') throw new Error('status '+still.status);
+  const list=await call('GET','/api/inventory/cycle-counts');
+  if((list.json.rows||[]).some(r=>r.id===a.json.id)) throw new Error('cancelled plan still in the register');
+  const withAll=await call('GET','/api/inventory/cycle-counts?includeCancelled=1');
+  if(!(withAll.json.rows||[]).some(r=>r.id===a.json.id)) throw new Error('cancelled plan not recoverable');
+
+  const b=await call('POST','/api/inventory/cycle-counts',{locationId:loc.id,countDate:'2026-08-07',category:'CHG'});
+  await call('POST',`/api/inventory/cycle-counts/${b.json.id}/submit`,{});
+  const no=await call('DELETE',`/api/inventory/cycle-counts/${b.json.id}`);
+  if(no.json?.ok) throw new Error('a submitted plan was deleted');
+  return {note:'open plan cancelled, not erased · '+no.json.error.slice(0,44)};
+});
+await t('a typed count sheet can be uploaded', async()=>{
+  const loc=sqlite.prepare('SELECT id FROM erp_locations LIMIT 1').get();
+  const cc=await call('POST','/api/inventory/cycle-counts',{locationId:loc.id,countDate:'2026-08-07',category:'MC'});
+  const ccId=cc.json.id;
+  const csv=['serial_no,item_code,item_name,category,serial_type,motor_no,unit_cost,condition,remarks',
+    'LC6UPLOAD0000001,MC-0001,E88 Cruiser,MC,FRAME,MTR-1,78000,GOOD,',
+    'LC6UPLOAD0000002,,,,,,,,no item code on purpose',
+    'LC6UPLOAD0000001,MC-0001,E88 Cruiser,MC,FRAME,MTR-9,78000,GOOD,duplicate row',
+    ',,,,,,,,blank serial'].join('\n');
+
+  // Preview first: nothing is written.
+  const pre=await call('POST',`/api/inventory/cycle-counts/${ccId}/import`,{csv});
+  if(!pre.json?.ok) throw new Error(pre.json?.error);
+  if(!pre.json.preview) throw new Error('preview flag missing');
+  if(pre.json.summary.DUPLICATE!==1) throw new Error('duplicate not caught');
+  if(pre.json.summary.SKIPPED!==1) throw new Error('blank serial not skipped');
+  if(pre.json.summary.NEW_UNIT!==2) throw new Error('new units '+pre.json.summary.NEW_UNIT);
+  // The plan may already carry expected lines for this class, so compare the
+  // count of rows that actually carry a scanned serial.
+  const scannedNow=sqlite.prepare('SELECT COUNT(*) n FROM erp_cycle_count_lines WHERE cycle_count_id=? AND actual_serial_no IS NOT NULL').get(ccId).n;
+  if(scannedNow!==0) throw new Error('preview wrote '+scannedNow+' rows');
+
+  // Commit.
+  const run1=await call('POST',`/api/inventory/cycle-counts/${ccId}/import`,{csv,commit:true});
+  if(run1.json.added!==2) throw new Error('added '+run1.json.added);
+  const d=sqlite.prepare("SELECT nu.item_code,nu.motor_no FROM erp_cycle_count_new_units nu JOIN erp_cycle_count_lines l ON l.id=nu.line_id WHERE l.actual_serial_no='LC6UPLOAD0000001'").get();
+  if(d?.item_code!=='MC-0001'||d?.motor_no!=='MTR-1') throw new Error('detail not stored');
+
+  // Re-uploading the same file adds nothing.
+  const run2=await call('POST',`/api/inventory/cycle-counts/${ccId}/import`,{csv,commit:true});
+  if(run2.json.added!==0) throw new Error('re-upload added '+run2.json.added);
+  if(run2.json.summary.ALREADY_COUNTED!==2) throw new Error('re-upload not detected');
+
+  // A file with no header is refused rather than silently eating row 1.
+  const bad=await call('POST',`/api/inventory/cycle-counts/${ccId}/import`,{csv:'LC6NOHEADER1,MC-0001'});
+  if(bad.json?.ok) throw new Error('a headerless file was accepted');
+
+  // Posting registers what was uploaded.
+  await call('POST',`/api/inventory/cycle-counts/${ccId}/submit`,{});
+  await call('POST',`/api/inventory/cycle-counts/${ccId}/approve`,{});
+  const posted=await call('POST',`/api/inventory/cycle-counts/${ccId}/post-adjustments`,{});
+  if(posted.json.registered!==2) throw new Error('registered '+posted.json.registered+' / '+JSON.stringify(posted.json).slice(0,120));
+  const a=sqlite.prepare("SELECT item_code,motor_no,reconciliation_status FROM erp_assets WHERE serial_no='LC6UPLOAD0000001'").get();
+  if(a?.item_code!=='MC-0001') throw new Error('uploaded item lost');
+  const b2=sqlite.prepare("SELECT reconciliation_status FROM erp_assets WHERE serial_no='LC6UPLOAD0000002'").get();
+  if(b2?.reconciliation_status!=='FOR_REVIEW') throw new Error('blank-item row not flagged');
+  return {note:'preview clean · 2 imported · re-upload adds 0 · both registered on post'};
+});
 await t('re-posting a count does not duplicate the unit', async()=>{
   const n=sqlite.prepare("SELECT COUNT(*) n FROM erp_assets WHERE serial_no='LC6PAGA13R0099001'").get().n;
   if(n!==1) throw new Error('serial exists '+n+' times');
