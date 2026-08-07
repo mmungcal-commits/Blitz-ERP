@@ -141,12 +141,12 @@ export const MODULE_PROFILES = {
   'fa-general-accounting':p('ledger','Journal Entry','Journal Entries','JE',o('Journal Entry','Adjusting Entry','Recurring Journal'),[
     f('ledgerAccount','Ledger Account'),f('counterAccount','Counter Account'),f('postingPeriod','Posting Period','month'),f('debit','Debit','number',{step:'0.01',list:true}),f('credit','Credit','number',{step:'0.01',list:true}),f('referenceNo','Source Reference'),
   ],o('fa-management-accounting','fa-consolidation-reporting'),o('Trial Balance','General Ledger','Journal Register'),o('Create Journal','Post Recurring Entry')),
-  'fa-receivables-payables':p('ledger','AR/AP Document','AR/AP Documents','ARP',o('Customer Invoice','Supplier Bill','Credit Memo','Debit Memo','Payment'),[
+  'fa-receivables-payables':p('ledger','Payable Document','Payable Documents','AP',o('Supplier Bill','Debit Memo','Payment','Cash Advance','Liquidation'),[
     f('documentNo','Invoice / Bill No.', 'text',{list:true}),f('counterpartyType','Customer / Supplier','select',{options:o('CUSTOMER','SUPPLIER')}),f('dueDate','Due Date','date',{list:true}),f('paymentTerms','Payment Terms'),f('balance','Open Balance','number',{step:'0.01',list:true}),f('agingBucket','Aging Bucket','select',{options:o('CURRENT','1-30','31-60','61-90','OVER_90')}),
-  ],o('sd-order-management','srp-billing-revenue'),o('AR Aging','AP Aging','Collection Forecast'),o('Record Invoice','Record Payment')),
+  ],o('ip-sourcing-purchasing','fa-general-accounting'),o('AP Aging','Supplier Balances','Payment Forecast'),o('Record Bill','Record Payment')),
   'fa-receivables-management':p('ledger','Receivable','Receivables','AR',o('Sale','Lease Billing','Battery Swap','After-sales','Warehouse Service','Collection'),[
     f('entryNo','Entry No.','text',{list:true}),f('stream','Revenue Stream','select',{options:o('MC_SOLD','MC_LEASED','BATTERY_SWAP','AFTERSALES','WAREHOUSE_SERVICE'),list:true}),f('customerName','Customer','text',{list:true}),f('grossAmount','Gross','number',{step:'0.01',list:true}),f('outputVat','Output VAT','number',{step:'0.01'}),f('collected','Collected','number',{step:'0.01',list:true}),f('balance','Balance','number',{step:'0.01',list:true}),
-  ],o('sd-order-management','fa-receivables-payables','fa-general-accounting'),o('Collection Rate','Receivables Ageing','Revenue by Stream'),o('New Entry','Record Collection')),
+  ],o('sd-order-management','fa-general-accounting','srp-billing-revenue'),o('Collection Rate','Receivables Ageing','Revenue by Stream'),o('New Entry','Record Collection')),
   'fa-fixed-assets':p('master','Fixed Asset','Fixed Assets','FA',o('Asset Acquisition','Capitalization','Depreciation Run','Asset Disposal','Asset Transfer'),[
     f('assetCode','Asset Code','text',{list:true}),f('assetClass','Asset Class','select',{options:o('MOTORCYCLE','BATTERY','BSS','EQUIPMENT','IT','LEASEHOLD')}),f('serialNo','Serial No.','text',{list:true}),f('acquisitionDate','Acquisition Date','date'),f('usefulLifeMonths','Useful Life (Months)','number'),f('location','Current Location','text',{list:true}),
   ],o('eam-induction-setup','ip-warehouse-management'),o('Asset Register','Depreciation Schedule','Asset Movement'),o('Capitalize Asset','Run Depreciation')),
@@ -174,7 +174,7 @@ export const MODULE_PROFILES = {
   ],o('sd-crm','ip-inventory-analysis','mf-planning'),o('Demand Forecast','Forecast Accuracy','Supply Gap'),o('Create Forecast','Recalculate Demand')),
   'sd-order-management':p('order','Sales Order','Sales Orders','SO',o('Motorcycle Sale','Lease Order','Aftersales Order','Battery Swap Order','Other Charge'),[
     f('customerType','Customer Type','select',{options:o('B2B','B2C','B2B2C'),list:true}),f('orderChannel','Order Channel','select',{options:o('DIRECT','DEALER','DIGITAL','FIELD_SALES')}),f('itemCode','Item Code','text',{list:true}),f('quantity','Quantity','number',{min:'1',list:true}),f('requiredDate','Required Date','date',{list:true}),f('deliveryLocation','Delivery Location'),
-  ],o('sd-crm','sd-outbound-logistics','sd-lease-contract-management','fa-receivables-payables'),o('Sales Order Register','Order Fulfilment','Sales by Channel'),o('Create Sales Order','Check Availability')),
+  ],o('sd-crm','sd-outbound-logistics','sd-lease-contract-management','fa-receivables-management'),o('Sales Order Register','Order Fulfilment','Sales by Channel'),o('Create Sales Order','Check Availability')),
   'sd-lease-contract-management':p('contract','Lease Contract','Lease Contracts','LCT',o('B2B Lease','B2C Lease','B2B2C Lease','Lease Amendment','Lease Termination'),[
     f('businessChannel','Business Channel','select',{options:o('B2B','B2C','B2B2C'),required:true,list:true}),
     f('contractNo','Client Contract Reference','text',{list:true}),f('serviceProvider','Service Provider','text',{default:'E88 Ventures, Inc.'}),
@@ -204,7 +204,7 @@ export const MODULE_PROFILES = {
   ],o('ip-inventory-analysis','mf-costing','sd-order-management'),o('Product Catalog','Price List','Product Completeness'),o('Create Product','Publish Product')),
   'sd-customer-portal':p('request','Customer Request','Customer Portal Requests','CPR',o('Service Request','Billing Inquiry','Delivery Inquiry','Contract Request','Complaint'),[
     f('customerAccount','Customer Account','text',{list:true}),f('requestType','Request Type','select',{options:o('SERVICE','BILLING','DELIVERY','CONTRACT','COMPLAINT'),list:true}),f('priority','Priority','select',{options:o('LOW','NORMAL','HIGH','URGENT')}),f('submittedBy','Submitted By'),f('contactNo','Contact No.'),f('targetResponseDate','Target Response Date','date',{list:true}),
-  ],o('sd-crm','sd-service-management','fa-receivables-payables'),o('Portal Requests','Response SLA','Customer Issues'),o('Create Request','Assign Request')),
+  ],o('sd-crm','sd-service-management','fa-receivables-management'),o('Portal Requests','Response SLA','Customer Issues'),o('Create Request','Assign Request')),
 
   'ip-inventory-analysis':p('planning','Inventory Plan','Inventory Plans','IAP',o('Stock Analysis','Reorder Plan','Safety Stock Review','Slow-moving Review'),[
     f('itemCode','Item Code','text',{list:true}),f('warehouse','Warehouse','text',{list:true}),f('onHandQty','On-hand Qty','number',{list:true}),f('committedQty','Committed Qty','number'),f('reorderPoint','Reorder Point','number'),f('safetyStock','Safety Stock','number'),f('recommendedOrderQty','Recommended Order Qty','number',{list:true}),
@@ -271,7 +271,7 @@ export const MODULE_PROFILES = {
   ],o('pm-definition','pm-closure','fm-work-reporting'),o('Project Progress','Milestone Status','Risk Register'),o('Update Progress','Create Change Request')),
   'pm-billing':p('ledger','Project Billing','Project Billings','PB',o('Milestone Billing','Time & Material Billing','Progress Billing','Retention Billing'),[
     f('projectCode','Project Code','text',{list:true}),f('customer','Customer','text',{list:true}),f('milestone','Billing Milestone'),f('billingPeriod','Billing Period','month'),f('invoiceNo','Invoice No.'),f('billableAmount','Billable Amount','number',{step:'0.01',list:true}),f('dueDate','Due Date','date',{list:true}),
-  ],o('pm-tracking','fa-receivables-payables','srp-billing-revenue'),o('Project Billing Register','Unbilled Revenue','Project Receivables'),o('Create Project Billing','Generate Invoice')),
+  ],o('pm-tracking','fa-receivables-management','srp-billing-revenue'),o('Project Billing Register','Unbilled Revenue','Project Receivables'),o('Create Project Billing','Generate Invoice')),
   'pm-closure':p('project','Project Closure','Project Closures','PCL',o('Completion Review','Financial Closure','Contract Closure','Lessons Learned'),[
     f('projectCode','Project Code','text',{list:true}),f('closureDate','Closure Date','date',{list:true}),f('finalCost','Final Cost','number',{step:'0.01'}),f('finalRevenue','Final Revenue','number',{step:'0.01'}),f('acceptanceReference','Acceptance Reference'),f('lessonsLearned','Lessons Learned','textarea'),f('openItems','Open Items','number',{list:true}),
   ],o('pm-definition','pm-tracking','fa-consolidation-reporting'),o('Project Closure Status','Final Project Margin','Open Closure Items'),o('Start Closure','Approve Closure')),
@@ -372,7 +372,7 @@ export const MODULE_PROFILES = {
   ],o('srp-sow-project','fa-receivables-payables','hcm-payroll-benefits'),o('Expense Register','Project Expenses','Reimbursement Status'),o('Create Expense Claim','Submit Liquidation')),
   'srp-billing-revenue':p('ledger','Billing Document','Billing & Revenue Documents','BR',o('Customer Invoice','Revenue Recognition','Credit Note','Billing Adjustment'),[
     f('client','Client','text',{list:true}),f('projectCode','Project / SOW','text',{list:true}),f('invoiceNo','Invoice No.','text',{list:true}),f('billingPeriod','Billing Period','month'),f('billingBasis','Billing Basis','select',{options:o('MILESTONE','TIME_MATERIAL','FIXED_FEE','USAGE')}),f('recognizedRevenue','Recognized Revenue','number',{step:'0.01',list:true}),f('dueDate','Due Date','date',{list:true}),
-  ],o('srp-sow-project','srp-timesheet','fa-receivables-payables'),o('Billing Register','Revenue Recognition','Unbilled Revenue'),o('Generate Invoice','Recognize Revenue')),
+  ],o('srp-sow-project','srp-timesheet','fa-receivables-management'),o('Billing Register','Revenue Recognition','Unbilled Revenue'),o('Generate Invoice','Recognize Revenue')),
   'srp-budgets':p('planning','Service Project Budget','Service Project Budgets','SBUD',o('SOW Budget','Resource Budget','Expense Budget','Revenue Forecast'),[
     f('projectCode','Project / SOW','text',{list:true}),f('budgetPeriod','Budget Period','month'),f('costCategory','Cost Category','text',{list:true}),f('budgetAmount','Budget Amount','number',{step:'0.01'}),f('forecastAmount','Forecast Amount','number',{step:'0.01',list:true}),f('actualAmount','Actual Amount','number',{step:'0.01'}),f('varianceAmount','Variance','number',{step:'0.01',list:true}),
   ],o('srp-sow-project','srp-resource-bench','fa-planning-budgeting'),o('Project Budget','Budget Variance','Revenue Forecast'),o('Create Project Budget','Revise Forecast')),
