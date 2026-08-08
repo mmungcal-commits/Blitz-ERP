@@ -2059,6 +2059,72 @@ await t('a redeploy does not settle anything twice or undo a correction', async(
   return {note:'no double settlement, no resurrected import, the void and its reason survive'};
 });
 
+await t('a deleted receivable stays deleted through a redeploy', async()=>{
+  /*
+   * Alexis deleted entries from the receivables register and found them back
+   * the next morning. The seed guard in 0060 reads "insert unless this
+   * source_key is present", and a deleted row is not present, so every deploy
+   * loaded it again. A deletion has to leave a mark the seed can see.
+   */
+  const reseed=()=>{
+    for(const f of readdirSync(join(ROOT,'migrations'))
+        .filter(f=>/^006[0-5].*\.sql$/.test(f)).sort()){
+      sqlite.exec(readFileSync(join(ROOT,'migrations',f),'utf8'));
+    }
+  };
+
+  const target=sqlite.prepare(`SELECT id,entry_no,source_key FROM erp_ar_collections
+     WHERE source_key IS NOT NULL AND status='DRAFT' ORDER BY id LIMIT 1`).get();
+  if(!target) throw new Error('no imported draft entry to delete - the 0060 seed did not load');
+
+  sqlite.prepare("UPDATE erp_users SET role_code='FINANCE' WHERE email='mmungcal@nrdev.ph'").run();
+  const del=await call('DELETE','/api/receivables/collections/'+target.id);
+  if(!del.json?.ok) throw new Error(del.json?.error||'the delete was refused');
+
+  const tomb=sqlite.prepare(`SELECT COUNT(*) n FROM erp_import_tombstones
+     WHERE table_name='erp_ar_collections' AND source_key=?`).get(target.source_key).n;
+  if(tomb!==1) throw new Error('the deletion left no tombstone, so the seed cannot know');
+
+  reseed();
+  const back=sqlite.prepare('SELECT COUNT(*) n FROM erp_ar_collections WHERE source_key=?')
+    .get(target.source_key).n;
+  if(back!==0) throw new Error(`${target.entry_no} came back after a redeploy`);
+
+  reseed();   // twice must equal once
+  const again=sqlite.prepare('SELECT COUNT(*) n FROM erp_ar_collections WHERE source_key=?')
+    .get(target.source_key).n;
+  if(again!==0) throw new Error(`${target.entry_no} came back on the second redeploy`);
+
+  const orphans=sqlite.prepare(`SELECT COUNT(*) n FROM erp_ar_receipts r
+     WHERE NOT EXISTS (SELECT 1 FROM erp_ar_collections c WHERE c.id=r.collection_id)`).get().n;
+  if(orphans) throw new Error(orphans+' receipts left pointing at a deleted entry');
+
+  /*
+   * The same hole, one table over: 0060 part 2 creates a receipt for any posted
+   * entry that has none outside VOID, so voiding the only receipt invited a
+   * fresh one with the same number beside it on the next deploy.
+   */
+  const rec=sqlite.prepare(`SELECT r.id,r.collection_id,r.receipt_no FROM erp_ar_receipts r
+     WHERE r.status='ACTIVE' AND r.remarks='Received per the 2026 sales monitoring sheet.'
+     ORDER BY r.id LIMIT 1`).get();
+  if(rec){
+    const v=await call('POST','/api/receivables/receipts/'+rec.id+'/void',
+      {reason:'Recorded against the wrong customer'});
+    if(!v.json?.ok) throw new Error(v.json?.error||'the void was refused');
+    reseed();
+    const live=sqlite.prepare(`SELECT COUNT(*) n FROM erp_ar_receipts
+       WHERE collection_id=? AND receipt_no=? AND status<>'VOID'`)
+      .get(rec.collection_id,rec.receipt_no).n;
+    if(live!==0) throw new Error('the redeploy wrote '+live+' fresh receipts over a void');
+    const still=sqlite.prepare('SELECT status FROM erp_ar_receipts WHERE id=?').get(rec.id);
+    if(still?.status!=='VOID') throw new Error('the redeploy un-voided the receipt');
+    // Put the register back as it was: later checks read it whole, and this
+    // void was staged to prove a point, not to correct anything.
+    sqlite.prepare("UPDATE erp_ar_receipts SET status='ACTIVE',void_reason=NULL WHERE id=?").run(rec.id);
+  }
+  return {note:`${target.entry_no} deleted and it stayed deleted; a voided receipt was not rewritten`};
+});
+
 await t('closing a payment is a Finance act, and settles only the balance', async()=>{
   const mk=await call('POST','/api/finance/payment-requests',{
     payeeName:'Confirm Vendor',department:'Operations',purpose:'Confirm path',
