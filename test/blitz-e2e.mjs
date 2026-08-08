@@ -577,6 +577,76 @@ await t('a counted unit that is not in the system gets registered', async()=>{
   if(b.reconciliation_status!=='FOR_REVIEW') throw new Error('missing item code should flag FOR_REVIEW, got '+b.reconciliation_status);
   return {note:`2 units registered · ${a.asset_no} full detail, ${b.asset_no} flagged FOR_REVIEW`};
 });
+await t('a counted unit registers in the class its item master says', async()=>{
+  /*
+   * The live opening count found this. Three hundred and forty Ampace batteries
+   * were scanned against ESP00263, which the master seeds as BAT. The counters
+   * typed "BATTERY" on a hundred and twelve of them and left the rest blank, and
+   * the typed word was overriding the master: the hundred and twelve would have
+   * stored the literal string BATTERY, a class the register does not group by,
+   * and the rest would have stored OTH. Three hundred and forty batteries would
+   * have registered as nought batteries.
+   */
+  const loc=sqlite.prepare('SELECT id,code FROM erp_locations LIMIT 1').get();
+  sqlite.exec(`INSERT OR IGNORE INTO erp_items(item_code,item_name,normalized_name,category,
+    serialized,base_uom,standard_cost,active)
+    VALUES('BAT-MASTER','Ampace Pack','ampace pack','BAT',1,'EA',4200,1)`);
+  const cc=await call('POST','/api/inventory/cycle-counts',
+    {locationId:loc.id,countDate:'2026-08-07',category:'BAT'});
+  const ccId=cc.json.id;
+
+  // Typed loosely, typed as the wrong class, and not typed at all.
+  await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,
+    {serialNo:'CATCHK0000000001',itemCode:'BAT-MASTER',category:'BATTERY'});
+  await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,
+    {serialNo:'CATCHK0000000002',itemCode:'BAT-MASTER',category:'OTH'});
+  await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,
+    {serialNo:'CATCHK0000000003',itemCode:'BAT-MASTER'});
+  // An item nobody has ever heard of, typed loosely. There is no master to
+  // defer to, so the word has to be normalised rather than stored raw.
+  await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,
+    {serialNo:'CATCHK0000000004',itemCode:'CHG-UNKNOWN-1',itemName:'Fast charger',category:'Charger'});
+
+  // The sheet has to show the class it will register as, or nobody can catch
+  // this before it is posted, which is exactly what happened.
+  const sheet=await call('GET',`/api/inventory/cycle-counts/${ccId}`);
+  const known=['CATCHK0000000001','CATCHK0000000002','CATCHK0000000003'];
+  const shown=(sheet.json.lines||[]).filter(l=>known.includes(l.actual_serial_no));
+  if(shown.length!==3) throw new Error('expected 3 known-item lines, got '+shown.length);
+  for(const l of shown){
+    if(l.new_category!=='BAT')
+      throw new Error(`${l.actual_serial_no} reads as ${l.new_category} on the sheet, not BAT`);
+  }
+
+  await submitCount(ccId);
+  await approveCountChain(ccId);
+  const posted=await call('POST',`/api/inventory/cycle-counts/${ccId}/post-adjustments`,{});
+  if(!posted.json?.ok) throw new Error(posted.json?.error);
+
+  const cats=sqlite.prepare(`SELECT serial_no,category,unit_cost,reconciliation_status
+    FROM erp_assets WHERE serial_no LIKE 'CATCHK%' ORDER BY serial_no`).all();
+  if(cats.length!==4) throw new Error('registered '+cats.length+' of 4');
+  for(const a of cats.slice(0,3)){
+    if(a.category!=='BAT') throw new Error(`${a.serial_no} registered as ${a.category}, not BAT`);
+    // No cost was scanned, so the master's price is what values it.
+    if(Number(a.unit_cost)!==4200) throw new Error(`${a.serial_no} valued at ${a.unit_cost}, not 4,200`);
+    if(a.reconciliation_status!=='CLEAR')
+      throw new Error(`${a.serial_no} is ${a.reconciliation_status} though it is priced and identified`);
+  }
+  const unknown=cats[3];
+  if(unknown.category!=='CHG')
+    throw new Error(`an unknown item typed "Charger" registered as ${unknown.category}, not CHG`);
+  /*
+   * Nothing priced it and no master could, so it must be visible for cleanup.
+   * Registering stock at nought and calling it CLEAR is how a register comes to
+   * say it holds 340 batteries worth nothing.
+   */
+  if(Number(unknown.unit_cost)!==0) throw new Error('an unpriced unit acquired a price from nowhere');
+  if(unknown.reconciliation_status!=='FOR_REVIEW')
+    throw new Error('a unit registered at no value reads '+unknown.reconciliation_status);
+  return {note:'master class wins over the typed word; unpriced stock is flagged, not called clear'};
+});
+
 await t('a counted row can be identified and removed before submitting', async()=>{
   const loc=sqlite.prepare('SELECT id FROM erp_locations LIMIT 1').get();
   const cc=await call('POST','/api/inventory/cycle-counts',{locationId:loc.id,countDate:'2026-08-07',category:'BAT'});
