@@ -749,10 +749,13 @@ financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), 
     stages:requiredStages(row.net_payable,min,review),
     nextStage:nextStage(row.net_payable,min,signatures,review),
     attachmentsEditable:['DRAFT','RETURNED'].includes(String(row.status||'').toUpperCase())};
+  const encoder=await first(c.env.DB,`SELECT * FROM erp_rfp_encoders WHERE request_no=?`,[row.request_no])
+    .catch(()=>null);
   const settlement=await settlementSummary(c.env.DB,row.request_no,row.net_payable);
   const banks=await all(c.env.DB,`SELECT id,bank_account_code,bank_name,account_name
     FROM erp_bank_accounts WHERE active=1 ORDER BY bank_name`);
   return ok(c,{request:row,attachments,lines,byAccount,liquidation:liquidation||null,signatures,workflow,
+    encoder:encoder||null,
     settlement:{...settlement,banks,canSettle:canSettle(c.get('erpUser')),
       evidenceFrom:await evidenceFrom(c.env.DB),
       // A request raised on or after the cutoff is not called paid until the
@@ -802,13 +805,28 @@ financeRoutes.post('/payment-requests', requirePermission('FINANCE','CREATE'), a
   const isCashAdvance=/cash\s*advance/i.test(rawType);
   const requestDate=b.requestDate||new Date().toISOString().slice(0,10);
   const requestNo=await rfpNumber(c.env.DB,b.department,requestDate);
+  /*
+   * Who asked, and who typed it in.
+   *
+   * Rucel encodes every request in the company. If the record says she is the
+   * requestor then the separation-of-duties rule - which is right - refuses to
+   * let her check it, on every request. So a Finance encoder may name the
+   * person the request is actually for, and the record carries both.
+   *
+   * Anyone else raising their own request is the requestor, as before.
+   */
+  const creator=c.get('erpUser');
+  const requestedFor=normalizeText(b.requestedFor||b.requestorEmail).toLowerCase();
+  const encoding=!!requestedFor&&requestedFor!==String(creator.email||'').toLowerCase()
+    &&canReclassify(creator);
+  const requestorEmail=encoding?requestedFor:creator.email;
   const inserted=await run(c.env.DB,`INSERT INTO erp_payment_requests(
     request_no,entity_id,request_date,requestor_email,payee_partner_id,payee_name,department,
     cost_center,project_code,purpose,request_type,purchase_order_id,purchase_order_no,landed_cost_id,
     supplier_invoice_no,invoice_date,gross_amount,vat_amount,withholding_amount,net_payable,
     due_date,payment_method,status)
     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'DRAFT')`,[
-    requestNo,entity.id,requestDate,c.get('erpUser').email,
+    requestNo,entity.id,requestDate,requestorEmail,
     partner?.id||null,payee,normalizeText(b.department),normalizeText(b.costCenter),
     normalizeText(b.projectCode),normalizeText(b.purpose),normalizeText(b.requestType||'SUPPLIER_PAYMENT'),
     po?.id||null,po?.purchase_order_no||normalizeText(b.purchaseOrderNo),landedCost?.id||null,
@@ -816,6 +834,11 @@ financeRoutes.post('/payment-requests', requirePermission('FINANCE','CREATE'), a
     b.dueDate||'',normalizeText(b.modeOfPayment||b.paymentMethod),
   ]);
   const rfpId=inserted.meta.last_row_id;
+  // Who typed it in, kept beside who asked. On an encoded request the approval
+  // trail would otherwise read as though Rucel wanted the money.
+  await run(c.env.DB,`INSERT OR REPLACE INTO erp_rfp_encoders(request_no,encoded_by,encoded_for,note)
+    VALUES(?,?,?,?)`,[requestNo,creator.email,requestorEmail,
+    encoding?`Encoded by ${creator.display_name||creator.email} on behalf of ${requestorEmail}.`:null]);
   // Extra fields captured on the redesigned form live in the RFP settings-style
   // side table so no ALTER of erp_payment_requests is needed.
   const extras={requestorName:normalizeText(b.requestorName),requestorEmail:normalizeText(b.requestorEmail)||c.get('erpUser').email,
@@ -829,8 +852,8 @@ financeRoutes.post('/payment-requests', requirePermission('FINANCE','CREATE'), a
   // The requestor's e-signature opens the approval trail.
   if(normalizeText(b.requestorSignature)){
     await run(c.env.DB,`INSERT INTO erp_rfp_approvals(rfp_ref,stage,decision,actor,actor_name,signature,amount)
-      VALUES(?,?,?,?,?,?,?)`,[requestNo,'REQUESTOR','SIGNED',c.get('erpUser').email,
-      normalizeText(b.requestorName)||c.get('erpUser').display_name||'',
+      VALUES(?,?,?,?,?,?,?)`,[requestNo,'REQUESTOR','SIGNED',requestorEmail,
+      normalizeText(b.requestorName)||(encoding?requestedFor:creator.display_name)||'',
       String(b.requestorSignature).slice(0,300000),net]);
   }
   // Supporting documents -> Google Drive / Payables Management / <RFP no>
@@ -917,6 +940,13 @@ function canSettle(user){
   const role=String(user?.role_code||user?.role||'').toUpperCase();
   return FINANCE_SETTLE_ROLES.includes(role);
 }
+
+/*
+ * Putting the filing straight is the checker's job, and she commits nothing by
+ * doing it: a department is not a figure. Rucel checks every request, so she is
+ * the one who sees that a station rent came in under Admin.
+ */
+const canReclassify = canSettle;
 
 const round2=v=>Math.round(Number(v||0)*100)/100;
 
@@ -1219,6 +1249,98 @@ financeRoutes.put('/business-lines/BSS/hosts', requirePermission('FINANCE','EDIT
   await audit(c,{action:'EDIT',module:'FINANCE',recordType:'BUSINESS_LINE',recordNo:'BSS',
     before:{hosts:before.map(r=>r.match_value)},after:{hosts:wanted}});
   return ok(c,{hosts:wanted});
+});
+
+/*
+ * Correcting the department a cost was filed under.
+ *
+ * The station rents paid to Alfamart came into the register under Admin. They
+ * are RideBox costs: the station stands in the shop and the shop is paid rent
+ * for it. Nothing about that is a payment error, it is a filing error, and
+ * putting the filing straight is exactly what a Finance checker does.
+ *
+ * So this is open to the checker as well as to Finance proper, and it works at
+ * any status: a request approved and paid six months ago can still have been
+ * filed under the wrong department, and refusing to correct it would leave the
+ * business line wrong forever.
+ *
+ * What it will not do is touch a figure. Department, cost centre and project
+ * are a classification; the amount, the payee and the evidence are not.
+ */
+async function reclassify(c, rows, want, reason){
+  const user=c.get('erpUser');
+  const changed=[];
+  for(const row of rows){
+    const before={department:row.department,cost_center:row.cost_center,project_code:row.project_code};
+    const after={
+      department:want.department!=null?want.department:row.department,
+      cost_center:want.costCenter!=null?want.costCenter:row.cost_center,
+      project_code:want.projectCode!=null?want.projectCode:row.project_code,
+    };
+    if(after.department===before.department&&after.cost_center===before.cost_center
+      &&after.project_code===before.project_code)continue;
+    await run(c.env.DB,`UPDATE erp_payment_requests SET department=?,cost_center=?,project_code=?,
+      updated_at=datetime('now') WHERE id=?`,
+      [after.department,after.cost_center,after.project_code,row.id]);
+    // The lines carry the department too, and a chart that reads the lines
+    // would otherwise disagree with one that reads the header.
+    await run(c.env.DB,`UPDATE erp_payment_request_lines SET department=?,cost_center=?
+      WHERE rfp_ref=?`,[after.department,after.cost_center,row.request_no]);
+    await run(c.env.DB,`INSERT INTO erp_rfp_approvals(rfp_ref,stage,decision,actor,actor_name,reason,amount)
+      VALUES(?,?,?,?,?,?,?)`,[row.request_no,'RECLASSIFY','CORRECTED',user.email,
+      user.display_name||user.email,
+      `${before.department||'(none)'} -> ${after.department||'(none)'}${reason?': '+reason:''}`,
+      row.net_payable]);
+    changed.push({requestNo:row.request_no,from:before.department,to:after.department});
+  }
+  await audit(c,{action:'RECLASSIFY',module:'FINANCE',recordType:'PAYMENT_REQUEST',
+    recordNo:changed.map(x=>x.requestNo).slice(0,20).join(', '),
+    before:{n:rows.length},after:{changed:changed.length,department:want.department,reason}});
+  return changed;
+}
+
+// One request.
+financeRoutes.patch('/payment-requests/:id/classification', requirePermission('FINANCE','EDIT'), async c=>{
+  const user=c.get('erpUser');
+  if(!canReclassify(user))return fail(c,'Only Finance corrects how a cost is filed.',403);
+  const id=Number(c.req.param('id'));
+  const row=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
+  if(!row)return fail(c,'Payment request not found.',404);
+  const b=await jsonBody(c);
+  if(!normalizeText(b.department)&&b.costCenter==null&&b.projectCode==null)
+    return fail(c,'Give a department, a cost centre or a project to move it to.');
+  const changed=await reclassify(c,[row],{
+    department:normalizeText(b.department)||null,
+    costCenter:b.costCenter==null?null:normalizeText(b.costCenter),
+    projectCode:b.projectCode==null?null:normalizeText(b.projectCode),
+  },normalizeText(b.reason));
+  return ok(c,{changed});
+});
+
+/*
+ * Every request for one payee at once.
+ *
+ * Ten Alfamart requests were all filed the same wrong way, and correcting them
+ * one at a time is how nine of them get corrected and the tenth does not.
+ */
+financeRoutes.post('/payees/reclassify', requirePermission('FINANCE','EDIT'), async c=>{
+  const user=c.get('erpUser');
+  if(!canReclassify(user))return fail(c,'Only Finance corrects how a cost is filed.',403);
+  const b=await jsonBody(c);
+  const key=payeeKey(b.payee||b.payeeKey);
+  const department=normalizeText(b.department);
+  if(!key)return fail(c,'Name the payee whose requests are being moved.');
+  if(!department)return fail(c,'Name the department they belong to.');
+  const rows=await all(c.env.DB,`SELECT r.* FROM erp_payment_requests r
+    JOIN v_payee_normalised p ON p.request_no=r.request_no
+    WHERE p.payee_key=? AND r.status NOT IN ('REJECTED','CANCELLED')`,[key]);
+  if(!rows.length)return fail(c,'No request is on record for that payee.',404);
+  const changed=await reclassify(c,rows,{
+    department,
+    costCenter:b.costCenter==null?null:normalizeText(b.costCenter),
+    projectCode:null,
+  },normalizeText(b.reason));
+  return ok(c,{payee:key,department,requests:rows.length,changed});
 });
 
 // Who to email at each stage. Roles are resolved from erp_users so no addresses
