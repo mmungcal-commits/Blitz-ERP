@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r60';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R60.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R61.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -649,6 +649,7 @@ async function renderHomeDashboard(){
         {label:'Available',value:m.availableUnits},{label:'Leased',value:m.leasedUnits},
         {label:'Sold',value:m.soldUnits},{label:'Deployed',value:m.deployedUnits}],
         {title:'Where the fleet is',totalLabel:'Units',keyLabel:'State',valueLabel:'Units',
+         countInLegend:true,
          subtitle:fleetPending?compact(fleetPending)+' counted, awaiting posting':undefined,
          open:'ip-warehouse-management#records',openLabel:'Open unit visibility'}));
 
@@ -718,8 +719,19 @@ async function renderHomeDashboard(){
      */
     const waiting=Number((d.progress||{}).awaitingRegistration||0);
     const pending=waiting?compact(waiting)+' counted, awaiting posting':'';
+    /*
+     * Available stock by model. "MC 210" tells nobody which motorcycles are on
+     * the floor; D400, R280 and R280 Sport are what people ask for by name.
+     */
+    if((i.byClass||[]).some(r=>Number(r.available)>0))
+      cards.push(vizBars(i.byClass.map(r=>({label:r.label||'Unclassified',value:Number(r.available)||0}))
+          .filter(r=>r.value>0),
+        {title:'Available units by model',keyLabel:'Model',valueLabel:'Available',
+         limit:8,labelWidth:140,color:VIZ.series[2],
+         open:'ip-warehouse-management#records',openLabel:'Open unit visibility'}));
     cards.push(vizDonut((i.byClass||[]).map(r=>({label:r.label||'Unclassified',value:Number(r.value)||0})),
         {title:'Inventory by class',totalLabel:'Units',keyLabel:'Class',valueLabel:'Units',
+         countInLegend:true,
          subtitle:pending||undefined,
          open:'ip-warehouse-management#records',openLabel:'Open unit visibility'}));
     /*
