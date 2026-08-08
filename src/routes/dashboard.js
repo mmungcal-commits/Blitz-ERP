@@ -180,8 +180,9 @@ dashboardRoutes.get('/home', async (c) => {
    * billed anybody yet, and counting it would understate collection.
    */
   if (can.FINANCE) await attempt('management', async () => {
-    const [units, billed, collected, overdue, aging,
-           byStream, byCustomer, byMonth] = await Promise.all([
+    const [units, billed, collected, overdue, aging, agingWho,
+           byStream, byCustomer, byMonth,
+           billedCustomers, owingCustomers, allPayees, owedPayees] = await Promise.all([
       first(db, `SELECT
           COUNT(CASE WHEN current_status IN ('AVAILABLE','IN_STOCK','AVAILABLE_FOR_SALE','AVAILABLE_FOR_LEASE') THEN 1 END) available,
           COUNT(CASE WHEN current_status IN ('LEASED','ON_LEASE') THEN 1 END) leased,
@@ -216,6 +217,11 @@ dashboardRoutes.get('/home', async (c) => {
             WHERE r.collection_id=c.id AND r.status='ACTIVE'),0) bal
           FROM erp_ar_collections c WHERE c.status='POSTED'
         ) WHERE bal > 0 GROUP BY label`),
+      all(db, `SELECT customer_name label, COALESCE(SUM(bal),0) value FROM (
+          SELECT c.customer_name, c.gross_amount - COALESCE((SELECT SUM(r.amount)
+            FROM erp_ar_receipts r WHERE r.collection_id=c.id AND r.status='ACTIVE'),0) bal
+          FROM erp_ar_collections c WHERE c.status='POSTED'
+        ) WHERE bal > 0 GROUP BY label ORDER BY value DESC LIMIT 8`),
       /*
        * What the revenue is made of, who it came from, and when.
        *
@@ -236,8 +242,8 @@ dashboardRoutes.get('/home', async (c) => {
        */
       all(db, `SELECT COALESCE(NULLIF(stream,''),'OTHER') label,
           COALESCE(SUM(gross_amount),0) value
-        FROM erp_ar_collections WHERE status<>'VOID'
-        GROUP BY 1 HAVING value>0 ORDER BY value DESC`),
+        FROM erp_ar_collections WHERE status<>'VOID' AND txn_date BETWEEN ? AND ?
+        GROUP BY 1 HAVING value>0 ORDER BY value DESC`, [from, to]),
       /*
        * Leasing customers only.
        *
@@ -249,10 +255,31 @@ dashboardRoutes.get('/home', async (c) => {
       all(db, `SELECT COALESCE(NULLIF(customer_name,''),'Unnamed') label,
           COALESCE(SUM(gross_amount),0) value
         FROM erp_ar_collections WHERE status<>'VOID' AND stream='MC_LEASED'
-        GROUP BY 1 HAVING value>0 ORDER BY value DESC LIMIT 8`),
+          AND txn_date BETWEEN ? AND ?
+        GROUP BY 1 HAVING value>0 ORDER BY value DESC LIMIT 8`, [from, to]),
       all(db, `SELECT substr(txn_date,1,7) label, COALESCE(SUM(gross_amount),0) value
         FROM erp_ar_collections WHERE status<>'VOID' AND COALESCE(txn_date,'')<>''
-        GROUP BY 1 ORDER BY 1`),
+          AND txn_date BETWEEN ? AND ?
+        GROUP BY 1 ORDER BY 1`, [from, to]),
+      // How many customers were billed at all, and how many still owe.
+      first(db, `SELECT COUNT(DISTINCT customer_name) n FROM erp_ar_collections
+        WHERE status='POSTED' AND txn_date BETWEEN ? AND ?`, [from, to]),
+      first(db, `SELECT COUNT(*) n FROM (
+          SELECT c.customer_name FROM erp_ar_collections c
+           WHERE c.status='POSTED' AND c.txn_date BETWEEN ? AND ?
+           GROUP BY c.customer_name
+          HAVING SUM(c.gross_amount) - COALESCE(SUM((SELECT SUM(r.amount) FROM erp_ar_receipts r
+             WHERE r.collection_id=c.id AND r.status='ACTIVE')),0) > 0.009)`, [from, to]),
+      // And the same on the paying side: payees asked for, payees still owed.
+      first(db, `SELECT COUNT(DISTINCT payee_name) n FROM erp_payment_requests
+        WHERE status NOT IN ('REJECTED','CANCELLED') AND request_date BETWEEN ? AND ?`, [from, to]),
+      first(db, `SELECT COUNT(*) n FROM (
+          SELECT r.payee_name FROM erp_payment_requests r
+           WHERE r.status NOT IN ('REJECTED','CANCELLED') AND r.request_date BETWEEN ? AND ?
+           GROUP BY r.payee_name
+          HAVING SUM(r.net_payable) - COALESCE(SUM((SELECT SUM(s.amount)
+             FROM erp_payment_settlements s
+            WHERE s.request_no=r.request_no AND s.status<>'VOID')),0) > 0.009)`, [from, to]),
     ]);
     /*
      * "Pending approval" means an RFP sitting in the chain - submitted, not yet
@@ -328,16 +355,26 @@ dashboardRoutes.get('/home', async (c) => {
       soldUnits: Number(units?.sold || 0),
       deployedUnits: Number(units?.deployed || 0),
       billed: billedV, collected: collectedValue, outstanding: openV, invoices: Number(billed?.n || 0),
+      // A percentage says how much. The count says how many, and how many is
+      // what somebody chases: 3 customers of 114 is a morning's work, 90 of 114
+      // is a different conversation entirely.
+      customers: Number(billedCustomers?.n || 0),
+      customersOwing: Number(owingCustomers?.n || 0),
       // Undefined, not zero, when nothing was billed - 0% collection on no
       // invoices would read as a failure rather than as no activity.
       collectionPct: billedV > 0 ? (collectedValue / billedV) * 100 : null,
       receivablesPct: billedV > 0 ? (openV / billedV) * 100 : null,
       overdue: Number(overdue?.v || 0), overdueCount: Number(overdue?.n || 0),
       aging: aging || [],
+      // Who owes it. A bucket says how old the money is; a name says who to
+      // ring about it, and that is the only part anybody can act on.
+      agingByCustomer: agingWho || [],
       byStream: byStream || [], byCustomer: byCustomer || [], byMonth: byMonth || [],
 
       // The payable side of the same question: what was asked for, what went out.
       payableRaised: raisedV, payableRaisedCount: Number(rfpRaised?.n || 0),
+      payeesOwed: Number(owedPayees?.n || 0),
+      payees: Number(allPayees?.n || 0),
       payablePaid: paidV, payablePaidCount: Number(rfpPaid?.n || 0),
       // Requests with money against them but not yet settled in full.
       payablePartial: Number(partPaid?.n || 0), payablePartialValue: Number(partPaid?.v || 0),
@@ -406,13 +443,26 @@ dashboardRoutes.get('/home', async (c) => {
         sites: { amount: Number(kind('SITES').amount || 0), lines: Number(kind('SITES').lines || 0),
           requests: Number(kind('SITES').requests || 0) },
         // Who the company pays to keep a station where it stands.
-        hosts: await all(db, `SELECT r.payee_name label, COUNT(*) n,
+        /*
+         * Who the company pays to keep a station where it stands.
+         *
+         * RideBox runs the swapping network, so a site cost filed under any
+         * other department is not a station cost however the line reads.
+         *
+         * Grouped on the normalised payee rather than the typed one: the same
+         * host arrives as "ALFAMART ... INC." and "ALFAMART ... INC", and
+         * grouping on the raw name listed it twice and split its own total in
+         * half, which is what the chart was showing.
+         */
+        hosts: await all(db, `SELECT MIN(r.payee_name) label, COUNT(*) n,
             ROUND(SUM(k.gross_amount),2) value
           FROM v_bss_cost_kind k
           JOIN erp_payment_requests r ON r.request_no=k.request_no
+          JOIN v_payee_normalised p ON p.request_no=r.request_no
           WHERE k.cost_kind='SITES' AND r.status NOT IN ('REJECTED','CANCELLED')
+            AND UPPER(TRIM(COALESCE(r.department,''))) LIKE '%RIDEBOX%'
             AND r.request_date BETWEEN ? AND ?
-          GROUP BY r.payee_name ORDER BY value DESC LIMIT 8`, [from, to]),
+          GROUP BY p.payee_key ORDER BY value DESC LIMIT 8`, [from, to]),
       };
     } catch (e) {
       /*
