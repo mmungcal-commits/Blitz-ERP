@@ -1954,6 +1954,170 @@ await t('a unit out with a customer is deployed, not missing', async()=>{
   return {note:'deployed to '+lease.lease_no+', refused a second contract, returned and back on the shelf'};
 });
 
+await t('a lease contract opens with its units, its paper and its gap', async()=>{
+  const lease=sqlite.prepare(`SELECT id,lease_no,unit_count FROM erp_lease_contracts
+    WHERE status='ACTIVE' ORDER BY id LIMIT 1`).get();
+  if(!lease) throw new Error('no running contract to open');
+
+  const before=await call('GET',`/api/sales/leases/${lease.id}`);
+  if(!before.json?.ok) throw new Error(before.json?.error);
+  if(before.json.header.lease_no!==lease.lease_no) throw new Error('opened the wrong contract');
+  if(!Array.isArray(before.json.units)) throw new Error('the contract cannot list its units');
+  if(!Array.isArray(before.json.documents)) throw new Error('the contract cannot list its paper');
+
+  // Tag two units out and read them back off the contract.
+  const spare=sqlite.prepare(`SELECT serial_no FROM erp_assets
+    WHERE current_status='AVAILABLE' AND serial_no NOT IN
+      (SELECT serial_no FROM erp_asset_deployments WHERE returned_at IS NULL)
+    ORDER BY id LIMIT 2`).all().map(r=>r.serial_no);
+  if(spare.length<2) throw new Error('not enough free units to tag out');
+  const tag=await call('POST',`/api/sales/leases/${lease.id}/deploy`,{serials:spare,note:'e2e'});
+  if(!tag.json?.ok) throw new Error(tag.json?.error);
+  if(tag.json.deployed.length!==2) throw new Error('tagged '+tag.json.deployed.length+' of 2');
+
+  const opened=await call('GET',`/api/sales/leases/${lease.id}`);
+  const open=opened.json.units.filter(u=>!u.returned_at).map(u=>u.serial_no);
+  for(const s of spare) if(!open.includes(s)) throw new Error(s+' is tagged out but not on the contract');
+
+  /*
+   * The signed contract. Filed against the lease, and it must be reachable from
+   * the lease register too, or the screen reads "no contract on file" for a
+   * contract that is plainly on file.
+   */
+  const up=await call('POST',`/api/sales/leases/${lease.id}/documents`,
+    {attachments:[{fileName:'lease-signed.pdf',contentType:'application/pdf',size:12,
+      data:Buffer.from('signed here').toString('base64')}]});
+  if(!up.json?.ok) throw new Error(up.json?.error);
+  const withDoc=await call('GET',`/api/sales/leases/${lease.id}`);
+  if(!withDoc.json.documents.some(d=>d.file_name==='lease-signed.pdf'))
+    throw new Error('the uploaded contract is not on the record');
+  const register=await call('GET','/api/sales/leases');
+  const row=(register.json.rows||[]).find(r=>r.id===lease.id);
+  if(!row) throw new Error('the contract fell out of the register');
+  if(!Number(row.documents)) throw new Error('the register still reads no contract on file');
+  if(Number(row.units_out)<2) throw new Error('the register reads '+row.units_out+' units out, expected at least 2');
+
+  // Put them back so the rest of the suite starts where it found things.
+  await call('POST',`/api/sales/leases/${lease.id}/return`,{serials:spare,reason:'e2e teardown'});
+  return {note:`${lease.lease_no} opened with ${opened.json.units.length} units and its signed contract`};
+});
+
+await t('a contract that arrived without a rate can be priced, and its order follows', async()=>{
+  /*
+   * Sixteen of the twenty-two contracts came off the lease sheet with the
+   * daily-rate cell blank, so the order behind each valued at zero and the
+   * register read as if the company leased motorcycles for nothing. The rate is
+   * only on the signed contract, so it has to be typeable - and the order value
+   * has to follow the rate rather than be typed beside it.
+   */
+  const blank=sqlite.prepare(`SELECT id,lease_no,sales_order_id,unit_count
+    FROM erp_lease_contracts WHERE COALESCE(daily_rate_vat_ex,0)=0 AND sales_order_id IS NOT NULL
+    ORDER BY id LIMIT 1`).get();
+  if(!blank) throw new Error('no contract without a rate to price');
+  const before=sqlite.prepare(`SELECT gross_amount FROM erp_sales_orders WHERE id=?`).get(blank.sales_order_id);
+  if(Number(before.gross_amount)!==0) throw new Error('the order already carries '+before.gross_amount);
+
+  const saved=await call('PATCH',`/api/sales/leases/${blank.id}`,
+    {dailyRateVatEx:200,unitCount:5,effectiveDate:'2026-01-01',endOfTerm:'2027-01-01',depositAmount:50000});
+  if(!saved.json?.ok) throw new Error(saved.json?.error);
+  // 200 x 5 units x 365 days.
+  if(Math.abs(saved.json.orderValue-365000)>0.01)
+    throw new Error('valued at '+saved.json.orderValue+', expected 365,000');
+  const after=sqlite.prepare(`SELECT gross_amount,contract_start,contract_end FROM erp_sales_orders WHERE id=?`)
+    .get(blank.sales_order_id);
+  if(Math.abs(Number(after.gross_amount)-365000)>0.01)
+    throw new Error('the order still reads '+after.gross_amount);
+  if(after.contract_start!=='2026-01-01') throw new Error('the term did not follow onto the order');
+  const c=sqlite.prepare(`SELECT daily_rate_vat_ex,unit_count,deposit_amount FROM erp_lease_contracts WHERE id=?`)
+    .get(blank.id);
+  if(Number(c.daily_rate_vat_ex)!==200) throw new Error('the rate was not stored');
+  if(Number(c.deposit_amount)!==50000) throw new Error('the deposit was not stored');
+
+  // The register reads it back, so the screen and the record agree.
+  const list=await call('GET','/api/sales/leases');
+  const row=(list.json.rows||[]).find(r=>r.id===blank.id);
+  if(Number(row.daily_rate_vat_ex)!==200) throw new Error('the register does not carry the rate');
+
+  // Nonsense is refused rather than stored and shown as a figure.
+  const bad=await call('PATCH',`/api/sales/leases/${blank.id}`,{dailyRateVatEx:-5});
+  if(bad.json?.ok) throw new Error('a negative rate was accepted');
+  const back=await call('PATCH',`/api/sales/leases/${blank.id}`,
+    {effectiveDate:'2027-01-01',endOfTerm:'2026-01-01'});
+  if(back.json?.ok) throw new Error('a term that ends before it starts was accepted');
+  const stillThere=sqlite.prepare(`SELECT daily_rate_vat_ex FROM erp_lease_contracts WHERE id=?`).get(blank.id);
+  if(Number(stillThere.daily_rate_vat_ex)!==200) throw new Error('a refused edit still changed the record');
+  return {note:`${blank.lease_no} priced at 200/day, its order re-valued to 365,000`};
+});
+
+await t('a count does not write off a unit that is out with a customer', async()=>{
+  /*
+   * The money bug this guards. A leased unit is absent from the shelf on
+   * purpose; counting it as MISSING takes its cost out of inventory and books a
+   * loss against a unit whose holder the company can name.
+   */
+  const lease=sqlite.prepare(`SELECT id,lease_no FROM erp_lease_contracts
+    WHERE status='ACTIVE' ORDER BY id LIMIT 1`).get();
+  const unit=sqlite.prepare(`SELECT a.id,a.serial_no,a.current_location_id,a.unit_cost,a.category
+    FROM erp_assets a
+    WHERE a.current_status='AVAILABLE' AND a.current_location_id IS NOT NULL AND a.category='MC'
+      AND COALESCE(a.unit_cost,0)>0
+      AND a.serial_no NOT IN (SELECT serial_no FROM erp_asset_deployments WHERE returned_at IS NULL)
+    ORDER BY a.id LIMIT 1`).get();
+  if(!lease||!unit) throw new Error('no free unit at a location to count');
+
+  const cc=await call('POST','/api/inventory/cycle-counts',
+    {locationId:unit.current_location_id,countDate:'2026-08-07',category:'MC'});
+  if(!cc.json?.ok) throw new Error(cc.json?.error);
+  const ccId=cc.json.id;
+
+  // The unit leaves for a customer after the sheet was raised, which is exactly
+  // the case that used to read as a loss.
+  const out=await call('POST',`/api/sales/leases/${lease.id}/deploy`,{serials:[unit.serial_no]});
+  if(!out.json?.ok) throw new Error(out.json?.error);
+
+  await submitCount(ccId);
+  const sheet=await call('GET',`/api/inventory/cycle-counts/${ccId}`);
+  const line=(sheet.json.lines||[]).find(l=>l.expected_serial_no===unit.serial_no);
+  if(!line) throw new Error('the unit is not on the count sheet');
+  if(line.variance_type!=='MISSING') throw new Error('expected MISSING, got '+line.variance_type);
+  if(line.deployed_customer!==(out.json.customer||line.deployed_customer))
+    throw new Error('the sheet does not say who has it');
+  if(!line.deployed_customer) throw new Error('the sheet cannot say who has the unit');
+  if(!(sheet.json.summary.withCustomer>=1))
+    throw new Error('the summary counts it as lost rather than out with a customer');
+  if(sheet.json.summary.missing!==0&&(sheet.json.lines||[])
+      .filter(l=>l.variance_type==='MISSING'&&!l.deployed_customer).length===0)
+    throw new Error('missing and with-a-customer are being counted together');
+
+  await approveCountChain(ccId);
+  const posted=await call('POST',`/api/inventory/cycle-counts/${ccId}/post-adjustments`,{});
+  if(!posted.json?.ok) throw new Error(posted.json?.error);
+  if(!(posted.json.withCustomer>=1)) throw new Error('the posting did not recognise the deployment');
+
+  const asset=sqlite.prepare(`SELECT current_status FROM erp_assets WHERE id=?`).get(unit.id);
+  if(asset.current_status==='MISSING') throw new Error('a leased unit was written off as missing');
+  /*
+   * Other units on the same sheet may be genuinely lost, and those should still
+   * be written off. What must not appear in the shortage is the cost of the one
+   * unit whose holder the company can name.
+   */
+  const genuine=sqlite.prepare(`SELECT COALESCE(SUM(a.unit_cost),0) v FROM erp_cycle_count_lines ccl
+    JOIN erp_assets a ON a.id=COALESCE(ccl.actual_asset_id,ccl.expected_asset_id)
+    WHERE ccl.cycle_count_id=? AND ccl.variance_type='MISSING'
+      AND NOT EXISTS(SELECT 1 FROM erp_asset_deployments d
+        WHERE d.serial_no=COALESCE(ccl.expected_serial_no,ccl.actual_serial_no)
+          AND d.returned_at IS NULL)`).get(ccId).v;
+  if(Math.abs(Number(posted.json.financialDecrease||0)-Number(genuine))>0.01)
+    throw new Error(`wrote off ${posted.json.financialDecrease} against ${genuine} genuinely missing`);
+  const ev=sqlite.prepare(`SELECT amount FROM erp_finance_source_events
+    WHERE event_key=? AND event_type='CYCLE_COUNT_ADJUSTMENT'`).get(`CYCLE_COUNT_ADJUSTMENT:${ccId}`);
+  if(ev&&Math.abs(Number(ev.amount)-Number(genuine))>0.01)
+    throw new Error('Finance was told '+ev.amount+' was short against '+genuine);
+
+  await call('POST',`/api/sales/leases/${lease.id}/return`,{serials:[unit.serial_no],reason:'e2e teardown'});
+  return {note:`${unit.serial_no} counted absent, recorded as out with ${out.json.customer}, no loss booked`};
+});
+
 await t('a lease contract is a sales order, and its units are deployed', async()=>{
   const c=sqlite.prepare(`SELECT COUNT(*) n, SUM(unit_count) u FROM erp_lease_contracts`).get();
   if(!(c.n>0)) throw new Error('no lease contract was loaded');
