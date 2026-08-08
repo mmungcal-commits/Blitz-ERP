@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Request for Payment · E88 Ventures Inc.</title>
+<style>
+  html,body{margin:0;background:#eef1f5;font-family:Arial,Helvetica,sans-serif;color:#222}
+  #state{max-width:640px;margin:80px auto;background:#fff;padding:28px 30px;border-radius:8px;
+    box-shadow:0 1px 3px rgba(15,32,58,.12);font-size:14px;line-height:1.55}
+  #state h1{margin:0 0 10px;font-size:17px;color:#15294B}
+  #state p{margin:0 0 8px;color:#445}
+  .muted{color:#7a8194;font-size:12.5px}
+  iframe{border:0;width:100%;height:100vh;display:block;background:#eef1f5}
+</style>
+</head>
+<body>
+<div id="state">
+  <h1>Opening the request for payment…</h1>
+  <p class="muted">E88 Ventures Inc.</p>
+</div>
+<script type="module">
+/*
+ * The page Monde Nissin land on from the dispatch email.
+ *
+ * It renders with the same builder the Print RFP button uses inside Blitz, so
+ * the payer and the office are looking at the same piece of paper. Nothing here
+ * can act on the request: it fetches one read-only payload and paints it.
+ */
+import { rfpDocumentHtml } from './rfp-doc.js?v=20260808-r65';
+
+const state = document.getElementById('state');
+const show = (title, detail) => {
+  state.innerHTML = `<h1>${title}</h1><p>${detail}</p>`
+    + '<p class="muted">E88 Ventures Inc. · 15 Brixton St., Kapitolyo, Pasig City 1603 Philippines</p>';
+};
+
+const token = new URLSearchParams(location.search).get('t') || '';
+if (!token) {
+  show('This link is incomplete.',
+    'Open the link exactly as it appeared in the email from E88 Finance, or ask them to send it again.');
+} else {
+  try {
+    const res = await fetch('/api/rfp-document/' + encodeURIComponent(token), { cache:'no-store' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      show('This link is no longer valid.',
+        (data && data.error) || 'Ask E88 Finance to send the request for payment again.');
+    } else {
+      const r = Object.assign({}, data.request, { __signatures: data.signatures || [] });
+      /*
+       * Painted into an iframe rather than into this document. The form is a
+       * complete HTML page with its own body styling, and dropping it into a
+       * page that already has a body is how a printed form ends up with two.
+       */
+      document.body.innerHTML = '<iframe id="doc" title="Request for Payment"></iframe>';
+      const frame = document.getElementById('doc');
+      frame.srcdoc = rfpDocumentHtml(r, { origin: location.origin });
+      document.title = 'Request for Payment ' + (data.request.request_no || '');
+    }
+  } catch (err) {
+    show('The request for payment could not be loaded.',
+      'Please try again in a moment, or ask E88 Finance to resend it.');
+  }
+}
+</script>
+</body>
+</html>
