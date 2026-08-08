@@ -521,8 +521,18 @@ inventoryRoutes.get('/cycle-counts/:id', requirePermission('INVENTORY','VIEW'), 
       nu.secondary_serial new_secondary_serial,
       COALESCE(NULLIF(nu.unit_cost,0),ni.standard_cost) new_unit_cost,
       nu.status new_status,
-      CASE WHEN nu.line_id IS NOT NULL THEN 1 ELSE 0 END is_new_unit
+      CASE WHEN nu.line_id IS NOT NULL THEN 1 ELSE 0 END is_new_unit,
+      -- A serial nobody can find on the shelf is not missing if it is standing
+      -- in a customer's yard. The count has to be told, or it reports a loss
+      -- every cycle against a unit the company knows the whereabouts of.
+      dep.customer_name deployed_customer,
+      dep.deployed_at deployed_at,
+      dl.lease_no deployed_lease_no
     FROM erp_cycle_count_lines ccl
+    LEFT JOIN erp_asset_deployments dep
+      ON dep.serial_no=COALESCE(ccl.expected_serial_no,ccl.actual_serial_no)
+     AND dep.returned_at IS NULL
+    LEFT JOIN erp_lease_contracts dl ON dl.id=dep.lease_contract_id
     LEFT JOIN erp_assets a ON a.id=COALESCE(ccl.actual_asset_id,ccl.expected_asset_id)
     LEFT JOIN erp_items i ON i.id=COALESCE(ccl.expected_item_id,a.item_id)
     LEFT JOIN erp_cycle_count_new_units nu ON nu.line_id=ccl.id
@@ -541,11 +551,14 @@ inventoryRoutes.get('/cycle-counts/:id', requirePermission('INVENTORY','VIEW'), 
     out.expected+=row.expected_asset_id?1:0;
     if(row.actual_serial_no)out.counted+=1;
     if(row.variance_type)out.variances+=1;
-    if(row.variance_type==='MISSING')out.missing+=1;
+    // Not found on the shelf but out with a customer is an explained absence.
+    // It is still a variance against this location; it is not a loss, and the
+    // two are counted apart so the missing figure means what it says.
+    if(row.variance_type==='MISSING')row.deployed_customer?out.withCustomer+=1:out.missing+=1;
     if(['UNEXPECTED_SERIAL','UNKNOWN_SERIAL'].includes(row.variance_type))out.unexpected+=1;
     if(row.variance_type==='LOCATION_MISMATCH')out.locationMismatch+=1;
     return out;
-  },{expected:0,counted:0,variances:0,missing:0,unexpected:0,locationMismatch:0});
+  },{expected:0,counted:0,variances:0,missing:0,withCustomer:0,unexpected:0,locationMismatch:0});
   return ok(c,{header,lines,summary});
 });
 
@@ -1017,11 +1030,16 @@ inventoryRoutes.post('/cycle-counts/:id/post-adjustments', requirePermission('IN
   if(await countChainOn(c.env.DB)&&!COUNT_CHAIN_ROLES.FINANCE.includes(postRole)){
     return fail(c,'Only Finance can post a physical count to inventory.',403);
   }
-  const lines=await all(c.env.DB,`SELECT ccl.*,a.unit_cost,a.category,a.item_id
+  const lines=await all(c.env.DB,`SELECT ccl.*,a.unit_cost,a.category,a.item_id,
+      dep.customer_name deployed_customer,dl.lease_no deployed_lease_no
     FROM erp_cycle_count_lines ccl
     LEFT JOIN erp_assets a ON a.id=COALESCE(ccl.actual_asset_id,ccl.expected_asset_id)
+    LEFT JOIN erp_asset_deployments dep
+      ON dep.serial_no=COALESCE(ccl.expected_serial_no,ccl.actual_serial_no)
+     AND dep.returned_at IS NULL
+    LEFT JOIN erp_lease_contracts dl ON dl.id=dep.lease_contract_id
     WHERE ccl.cycle_count_id=? AND ccl.variance_type IS NOT NULL AND ccl.variance_type!=''`,[id]);
-  let decrease=0;let moved=0;let unresolved=0;let registered=0;const registeredSerials=[];
+  let decrease=0;let moved=0;let unresolved=0;let registered=0;let withCustomer=0;const registeredSerials=[];
   const user=c.get('erpUser').email;
   for(const line of lines){
     const assetId=line.actual_asset_id||line.expected_asset_id;
@@ -1062,7 +1080,24 @@ inventoryRoutes.post('/cycle-counts/:id/post-adjustments', requirePermission('IN
       }
       continue;
     }
-    if(line.variance_type==='MISSING'&&asset){
+    /*
+     * A unit that is out with a customer is absent from the shelf on purpose.
+     * Writing it off as MISSING would take its cost out of inventory and put a
+     * loss in the ledger against a unit the company can name the holder of, so
+     * the count records where it is instead and leaves the value alone.
+     */
+    if(line.variance_type==='MISSING'&&asset&&line.deployed_customer){
+      await postMovement(c.env.DB,{
+        serialNo:asset.serial_no,movementType:'CYCLE_COUNT_ADJUSTMENT',
+        movementDate:new Date().toISOString(),toLocationId:count.location_id,
+        toLocationCode:count.location_code,toStatus:'LEASED',
+        reasonCode:'DEPLOYED_TO_CUSTOMER',
+        sourceDocType:'CYCLE_COUNT',sourceDocId:id,sourceDocNo:count.count_no,
+        notes:`Not on the shelf because it is out with ${line.deployed_customer}`
+          +(line.deployed_lease_no?` on ${line.deployed_lease_no}`:'')+'.',
+      },user);
+      withCustomer+=1;
+    }else if(line.variance_type==='MISSING'&&asset){
       await postMovement(c.env.DB,{
         serialNo:asset.serial_no,movementType:'CYCLE_COUNT_ADJUSTMENT',
         movementDate:new Date().toISOString(),toLocationId:count.location_id,
@@ -1094,9 +1129,9 @@ inventoryRoutes.post('/cycle-counts/:id/post-adjustments', requirePermission('IN
   }
   await run(c.env.DB,`UPDATE erp_cycle_counts SET status='POSTED' WHERE id=?`,[id]);
   await audit(c,{action:'POST_CYCLE_COUNT_ADJUSTMENTS',module:'INVENTORY',recordType:'CYCLE_COUNT',
-    recordId:id,recordNo:count.count_no,after:{decrease,moved,unresolved,registered}});
+    recordId:id,recordNo:count.count_no,after:{decrease,moved,unresolved,registered,withCustomer}});
   return ok(c,{status:'POSTED',financialDecrease:decrease,locationCorrections:moved,unresolved,
-    registered,registeredSerials});
+    registered,registeredSerials,withCustomer});
 });
 
 inventoryRoutes.get('/cycle-counts/:id/variances', requirePermission('INVENTORY','VIEW'), async(c)=>{

@@ -30,8 +30,13 @@ salesRoutes.get('/leases', requirePermission('SALES','VIEW'), async c => {
       s.sales_order_no, p.name customer_name,
       (SELECT COUNT(*) FROM erp_asset_deployments d
         WHERE d.lease_contract_id=l.id AND d.returned_at IS NULL) units_out,
-      (SELECT COUNT(*) FROM erp_attachments a
-        WHERE a.record_type='SALES_ORDER' AND a.record_id=l.sales_order_id AND a.active=1) documents
+      -- The signed contract may have been filed against the order it came in on
+      -- or against the lease itself. Counting only one of the two reads as "no
+      -- contract on file" for a contract that is plainly on file.
+      ((SELECT COUNT(*) FROM erp_attachments a
+         WHERE a.record_type='SALES_ORDER' AND a.record_id=l.sales_order_id AND a.active=1)
+       +(SELECT COUNT(*) FROM erp_attachments a
+         WHERE a.record_type='LEASE_CONTRACT' AND a.record_id=l.id AND a.active=1)) documents
     FROM erp_lease_contracts l
     LEFT JOIN erp_lease_contract_batches b ON b.lease_contract_id=l.id
     LEFT JOIN erp_sales_orders s ON s.id=l.sales_order_id
@@ -44,6 +49,119 @@ salesRoutes.get('/leases', requirePermission('SALES','VIEW'), async c => {
   const deployed = await first(c.env.DB, `SELECT COUNT(*) n FROM erp_asset_deployments
     WHERE returned_at IS NULL`);
   return ok(c, { rows, totals: { ...totals, unitsDeployed: Number(deployed?.n || 0) } });
+});
+
+/*
+ * One contract, opened.
+ *
+ * The units are listed returned-last rather than filtered, because "who had it
+ * before" is the question asked of a unit that has come back damaged, and a
+ * screen that hides closed rows cannot answer it.
+ */
+salesRoutes.get('/leases/:id', requirePermission('SALES','VIEW'), async c => {
+  const id = Number(c.req.param('id'));
+  const header = await first(c.env.DB, `SELECT l.*, b.cb_code, b.batch_code, b.transaction_code,
+      b.units_r280, b.units_r280s, b.units_d400, b.charging_kits, b.batteries,
+      s.sales_order_no, p.name customer_name
+    FROM erp_lease_contracts l
+    LEFT JOIN erp_lease_contract_batches b ON b.lease_contract_id=l.id
+    LEFT JOIN erp_sales_orders s ON s.id=l.sales_order_id
+    LEFT JOIN erp_partners p ON p.id=l.customer_id
+    WHERE l.id=?`, [id]);
+  if (!header) return fail(c, 'Lease contract not found.', 404);
+  const units = await all(c.env.DB, `SELECT d.id, d.serial_no, d.deployed_at, d.deployed_by,
+      d.returned_at, d.returned_by, d.return_reason, d.note,
+      a.category, a.current_status, i.item_name
+    FROM erp_asset_deployments d
+    LEFT JOIN erp_assets a ON a.id=d.asset_id
+    LEFT JOIN erp_items i ON i.id=a.item_id
+    WHERE d.lease_contract_id=?
+    ORDER BY (d.returned_at IS NOT NULL), d.deployed_at DESC, d.serial_no`, [id]);
+  const onLease = await attachmentsFor(c.env.DB, 'LEASE_CONTRACT', id);
+  const onOrder = header.sales_order_id
+    ? await attachmentsFor(c.env.DB, 'SALES_ORDER', header.sales_order_id) : [];
+  const documents = [...onLease, ...onOrder];
+  return ok(c, { header, units, documents });
+});
+
+/*
+ * The rate, typed in.
+ *
+ * Sixteen of the twenty-two contracts arrived from the lease sheet with the
+ * daily-rate cell blank, so their order value computed to zero and the register
+ * read as if the company were leasing motorcycles for nothing. The rate is not
+ * derivable from anything else on the record - only the contract says it - so
+ * it has to be typeable, and the order value has to follow it rather than being
+ * typed separately and drifting.
+ *
+ * Value = daily rate x units x days of term, which is the same arithmetic the
+ * loader used. One formula, so a contract corrected here reads identically to
+ * one that arrived complete.
+ */
+salesRoutes.patch('/leases/:id', requirePermission('SALES','EDIT'), async c => {
+  const id = Number(c.req.param('id'));
+  const before = await first(c.env.DB, `SELECT * FROM erp_lease_contracts WHERE id=?`, [id]);
+  if (!before) return fail(c, 'Lease contract not found.', 404);
+  const b = await jsonBody(c);
+
+  const rate = b.dailyRateVatEx === undefined || b.dailyRateVatEx === null || b.dailyRateVatEx === ''
+    ? Number(before.daily_rate_vat_ex || 0) : numberValue(b.dailyRateVatEx);
+  const units = b.unitCount === undefined || b.unitCount === null || b.unitCount === ''
+    ? Number(before.unit_count || 0) : Math.round(numberValue(b.unitCount));
+  const deposit = b.depositAmount === undefined || b.depositAmount === null || b.depositAmount === ''
+    ? Number(before.deposit_amount || 0) : numberValue(b.depositAmount);
+  const start = normalizeText(b.effectiveDate) || before.effective_date;
+  const end = normalizeText(b.endOfTerm) || before.end_of_term;
+  if (rate < 0 || units < 0 || deposit < 0) return fail(c, 'A rate, a unit count and a deposit cannot be negative.');
+  if (start && end && end < start) return fail(c, 'The end of term cannot fall before the contract starts.');
+
+  await run(c.env.DB, `UPDATE erp_lease_contracts SET daily_rate_vat_ex=?, unit_count=?,
+      deposit_amount=?, effective_date=?, end_of_term=?, billing_frequency=COALESCE(?,billing_frequency),
+      updated_at=datetime('now') WHERE id=?`,
+    [rate, units, deposit, start || null, end || null, normalizeText(b.billingFrequency) || null, id]);
+
+  /*
+   * The order carries the money. Recomputed rather than accepted from the
+   * screen, because a value typed beside a rate is a second version of the same
+   * fact and one of the two will be wrong within a month.
+   */
+  let value = null;
+  if (before.sales_order_id) {
+    const days = start && end
+      ? Math.max(0, Math.round((Date.parse(end) - Date.parse(start)) / 86400000)) : 0;
+    value = Math.round(rate * Math.max(units, 1) * days * 100) / 100;
+    await run(c.env.DB, `UPDATE erp_sales_orders SET gross_amount=?,
+        contract_start=COALESCE(?,contract_start), contract_end=COALESCE(?,contract_end)
+      WHERE id=?`, [value, start || null, end || null, before.sales_order_id]);
+  }
+  await audit(c, { action: 'UPDATE', module: 'SALES', recordType: 'LEASE_CONTRACT',
+    recordId: id, recordNo: before.lease_no,
+    before: { rate: before.daily_rate_vat_ex, units: before.unit_count,
+      deposit: before.deposit_amount, start: before.effective_date, end: before.end_of_term },
+    after: { rate, units, deposit, start, end, orderValue: value } });
+  return ok(c, { id, leaseNo: before.lease_no, dailyRateVatEx: rate, unitCount: units,
+    depositAmount: deposit, effectiveDate: start, endOfTerm: end, orderValue: value });
+});
+
+/*
+ * The signed contract itself.
+ *
+ * Filed against the lease rather than the order, because a lease can be renewed
+ * onto a new term without a new order, and the paper belongs to the term.
+ */
+salesRoutes.post('/leases/:id/documents', requirePermission('SALES','EDIT'), async c => {
+  const id = Number(c.req.param('id'));
+  const lease = await first(c.env.DB, `SELECT id,lease_no FROM erp_lease_contracts WHERE id=?`, [id]);
+  if (!lease) return fail(c, 'Lease contract not found.', 404);
+  const b = await jsonBody(c);
+  if (!Array.isArray(b.attachments) || !b.attachments.length)
+    return fail(c, 'Choose at least one file to upload.');
+  const attach = await saveAttachments(c.env, c.env.DB, { moduleCode: 'SALES',
+    recordType: 'LEASE_CONTRACT', recordId: id, recordNo: lease.lease_no,
+    files: b.attachments, uploadedBy: c.get('erpUser').email });
+  await audit(c, { action: 'ATTACH', module: 'SALES', recordType: 'LEASE_CONTRACT',
+    recordId: id, recordNo: lease.lease_no, after: { files: attach.saved.length } });
+  return ok(c, { attachments: attach.saved, attachmentErrors: attach.failed });
 });
 
 /*
