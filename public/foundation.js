@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
-  from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R59.0';
+  from './viz.js?v=20260808-r60';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R60.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -576,6 +576,13 @@ async function renderHomeDashboard(){
     cards.push(vizRing(m.collectionPct==null?0:m.collectionPct,{title:'Collection rate',
         subtitle:m.collectionPct==null?'nothing billed in this period':money(m.collected)+' of '+money(m.billed)+' billed',
         caption:'collected',valueLabel:m.collectionPct==null?'0%':undefined,
+        /*
+         * A rate says how much is outstanding. The count says how many people
+         * you have to ring about it, which is the number somebody actually
+         * acts on: 3 of 114 is a morning, 90 of 114 is a different problem.
+         */
+        aside:Number(m.customers||0)?{value:Number(m.customersOwing||0)+' / '+Number(m.customers||0),
+          label:'customers still owing'}:null,
         tipLabel:'Collected against billed',open:'fa-receivables-management#records',
         openLabel:'Open the sales register',
         tone:m.collectionPct==null?null:(m.collectionPct>=80?'good':m.collectionPct>=50?'warning':'critical')}));
@@ -589,6 +596,8 @@ async function renderHomeDashboard(){
         subtitle:m.payablePct==null?'nothing requested in this period'
           :money(m.payablePaid)+' of '+money(m.payableRaised)+' requested',
         caption:'paid',valueLabel:m.payablePct==null?'0%':undefined,
+        aside:Number(m.payees||0)?{value:Number(m.payeesOwed||0)+' / '+Number(m.payees||0),
+          label:'payees still owed'}:null,
         tipLabel:'Paid against requested',open:'fa-receivables-payables#approvals',
         openLabel:'Open the payment requests',
         tone:m.payablePct==null?null:(m.payablePct>=80?'good':m.payablePct>=50?'warning':'critical')}));
@@ -601,8 +610,16 @@ async function renderHomeDashboard(){
         open:'fa-receivables-payables#approvals',openLabel:'Open the payment requests',
         tone:m.slaPct==null?null:(m.slaPct>=90?'good':m.slaPct>=70?'warning':'critical')}));
     if((m.aging||[]).some(r=>Number(r.value)>0))
-      cards.push(vizBars(m.aging.map(r=>({label:r.label,value:Number(r.value)||0})).filter(r=>r.value>0),
-        {title:'Receivables ageing',money:true,color:VIZ.status.serious,
+      /*
+       * Who owes it, not only how old it is. A bucket chart answers "is this
+       * money going stale"; the question that follows is always "whose", and
+       * the name is the only part anybody can pick up a phone about.
+       */
+      cards.push(vizBars((m.agingByCustomer||[]).length
+          ? m.agingByCustomer.map(r=>({label:r.label||'Unnamed',value:Number(r.value)||0}))
+          : m.aging.map(r=>({label:r.label,value:Number(r.value)||0})).filter(r=>r.value>0),
+        {title:'Receivables ageing',subtitle:(m.agingByCustomer||[]).length?'outstanding by customer':undefined,
+         money:true,color:VIZ.status.serious,
          keyLabel:'Bucket',valueLabel:'Outstanding',labelWidth:104,
          open:'fa-receivables-management#records',openLabel:'Open the sales register'}));
     /*
@@ -764,6 +781,7 @@ async function renderHomeDashboard(){
   if(sec.finance)
     cards.push(vizDonut((sec.finance.byStage||[]).map(r=>({label:String(r.label||'').replace(/_/g,' '),value:Number(r.value)||0})),
       {title:'Payment requests by stage',totalLabel:'Requests',keyLabel:'Stage',valueLabel:'Requests',
+       countInLegend:true,
        open:'fa-receivables-payables#records',openLabel:'Open the payment requests'}));
   if(sec.service&&(sec.service.byStatus||[]).length)
     cards.push(vizDonut(sec.service.byStatus.map(r=>({label:String(r.label||'').replace(/_/g,' '),value:Number(r.value)||0})),
@@ -8639,7 +8657,17 @@ init();
   .home-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .home-scope{padding:5px 11px;border:1px solid #cfdbe6;border-radius:999px;background:#fff;color:#42506a;font-size:11px}
   .home-open{font-weight:700}
-  .home-hello{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:0 0 16px}
+  /*
+   * The greeting and the date range stay put while the cards scroll under them.
+   * The range is the control every figure below answers to, so scrolling it off
+   * the screen means reading a number without being able to see the window it
+   * covers - and scrolling back up to check is how people misread a report.
+   */
+  .home-hello{position:sticky;top:0;z-index:12;display:flex;align-items:flex-end;
+    justify-content:space-between;gap:14px;flex-wrap:wrap;margin:0 0 16px;
+    padding:12px 0 10px;background:var(--home-bg,#f6f9fb);
+    box-shadow:0 6px 14px -12px rgba(10,34,57,.5)}
+  @media(max-width:700px){.home-hello{position:static;box-shadow:none;padding:0}}
   .home-range{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
   .home-range-presets{display:flex;gap:4px}
   .home-range-presets button{padding:6px 11px;border:1px solid #d8e2ea;border-radius:999px;background:#fff;

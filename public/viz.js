@@ -150,7 +150,15 @@ export function vizDonut(rows, opts){
     open:opts.open, openLabel:opts.openLabel,
     body:'<svg viewBox="0 0 124 124" class="viz-svg viz-donut" role="img" aria-label="'
       +esc(opts.title||'Breakdown')+'">'+arcs+centre+'</svg>',
-    legend: legendOf(data.map((r,i)=>({label:r.label+' · '+compact(r.value),
+    /*
+     * A slice on its own says how big. Against the total it says how many of
+     * how many, which is the form somebody reads a queue in: 36 of 356 in
+     * draft is a fact you can act on, "36" beside a wedge is not.
+     */
+    legend: legendOf(data.map((r,i)=>({
+      label:r.label+' · '+(opts.countInLegend
+        ? compact(r.value)+' / '+compact(total)
+        : compact(r.value)),
       color:r.color||VIZ.series[i%VIZ.series.length]}))),
     table: tableOf([opts.keyLabel||'Item', opts.valueLabel||'Value'],
       data.map(r=>[r.label, compact(r.value)])) });
@@ -360,8 +368,24 @@ export function vizRing(pct, opts){
       +esc(opts.valueLabel!=null?opts.valueLabel:Math.round(v)+'%')+'</text>'
     +(opts.caption?'<text x="'+cx+'" y="'+(cy+18)+'" class="viz-heroSub" text-anchor="middle">'+esc(opts.caption)+'</text>':'')
     +'</svg>';
-  return figure({ id, title:opts.title, subtitle:opts.subtitle, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, open:opts.open, openLabel:opts.openLabel, body,
-    table: tableOf([opts.keyLabel||'Measure','Value'], [[opts.title||'Progress', Math.round(v)+'%']]) });
+  /*
+   * An optional figure beside the ring.
+   *
+   * A rate answers "how much"; this answers "how many", and how many is the
+   * number somebody acts on. It sits to the right of the ring rather than
+   * inside it, because the middle of a ring is where the rate lives and two
+   * numbers in one hole is how neither gets read.
+   */
+  const wrapped = opts.aside
+    ? '<div class="viz-ring-row">' + body
+      + '<div class="viz-ring-aside"><b>' + esc(opts.aside.value) + '</b>'
+      + '<span>' + esc(opts.aside.label || '') + '</span></div></div>'
+    : body;
+  return figure({ id, title:opts.title, subtitle:opts.subtitle,
+    open:opts.open, openLabel:opts.openLabel, body: wrapped,
+    table: tableOf([opts.keyLabel||'Measure','Value'],
+      [[opts.title||'Progress', Math.round(v)+'%']]
+        .concat(opts.aside?[[opts.aside.label||'Count', String(opts.aside.value)]]:[])) });
 }
 
 /* A 12-point sparkline for a stat tile. Trend only - it carries no axis, so
@@ -528,6 +552,12 @@ export function bindViz(root, onNavigate, onOpen){
 
 /* ----------------------------------------------------------- the CSS */
 export const VIZ_CSS = `
+.viz-ring-row{display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap}
+.viz-ring-row .viz-ring{flex:none}
+.viz-ring-aside{display:flex;flex-direction:column;gap:2px;min-width:0}
+.viz-ring-aside b{font-size:22px;font-weight:800;color:#0a2239;line-height:1.1}
+.viz-ring-aside span{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#8194a6}
+
 .viz{margin:0;padding:13px 15px 11px;background:#fff;border:1px solid #e8eef4;border-radius:10px;min-width:0;
   box-shadow:0 1px 2px rgba(10,34,57,.05),0 4px 14px rgba(10,34,57,.05)}
 .viz figcaption{display:flex;align-items:baseline;gap:8px;margin-bottom:10px}
