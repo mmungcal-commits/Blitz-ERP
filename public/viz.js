@@ -129,6 +129,21 @@ export function vizDonut(rows, opts){
     const a1 = angle + sweep - (data.length>1?GAP/2:0);
     angle += sweep;
     if (a1 <= a0) return '';
+    /*
+     * A single category is a whole circle, and an SVG arc whose start and end
+     * points are the same draws nothing at all: both elliptical-arc segments
+     * are dropped by the spec. A month where every peso came from one stream
+     * was rendering as a blank card with a total floating in the middle, which
+     * reads as a chart that failed to load. Two rings, not one arc.
+     */
+    if (a1 - a0 >= Math.PI*2 - 1e-6) {
+      const ring = (rad,dir) => 'M'+(cx-rad)+' '+cy
+        +'A'+rad+' '+rad+' 0 1 '+dir+' '+(cx+rad)+' '+cy
+        +'A'+rad+' '+rad+' 0 1 '+dir+' '+(cx-rad)+' '+cy+'Z';
+      return '<path d="'+ring(R,1)+' '+ring(r,0)+'" fill="'+color+'" fill-rule="evenodd"'
+        +' tabindex="0" role="img"'
+        +' data-viz-tip="'+esc(row.label)+': '+esc(compact(row.value))+' (100%)"></path>';
+    }
     const big = (a1-a0) > Math.PI ? 1 : 0;
     const p = (rad,ang)=>[cx+rad*Math.cos(ang), cy+rad*Math.sin(ang)];
     const [x0,y0]=p(R,a0), [x1,y1]=p(R,a1), [x2,y2]=p(r,a1), [x3,y3]=p(r,a0);

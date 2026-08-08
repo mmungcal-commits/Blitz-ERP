@@ -1,7 +1,7 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
-  from './viz.js?v=20260808-r60';
-import { rfpDocumentHtml } from './rfp-doc.js?v=20260808-r65';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R65.0';
+  from './viz.js?v=20260808-r67';
+import { rfpDocumentHtml } from './rfp-doc.js?v=20260808-r67';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R67.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -1230,6 +1230,10 @@ function workbenchShell(body,active=state.section){
 }
 function bindWorkbench(){
   bindKpiCards();
+  // Every register, on every module screen. enhanceTables() only runs on the
+  // operational shell, so the generic module tables were still left-aligning
+  // their money under centred headings.
+  $$('.record-table').forEach(markNumericColumns);
   $$('.workbench-home').forEach(button=>button.onclick=renderLaunchpad);
   $$('.workbench-logout').forEach(button=>button.onclick=logout);
   $$('[data-workbench-section]').forEach(button=>button.onclick=()=>openSection(button.dataset.workbenchSection));
@@ -1280,7 +1284,32 @@ function operationalTable(headers,rows,options={}){
   const key=options.key||headers.join('|').replace(/[^a-z0-9]+/gi,'-').toLowerCase();
   return `<div class="record-table-wrap" data-table-key="${esc(key)}"><table class="record-table"><thead><tr>${headers.map((header,index)=>`<th data-column-index="${index}">${esc(header)}<span class="column-resizer" aria-hidden="true"></span></th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>`;
 }
+/*
+ * A money column reads as money.
+ *
+ * The convention is class="num" for right alignment, but the shared table
+ * helper never put it on a header and a hundred callers never put it on their
+ * cells, so figures sat left-aligned under centred headings with the decimal
+ * points ragged. Deciding it once from the column heading fixes every register
+ * at the same time, and cannot drift the way a hundred call sites would.
+ */
+const NUMERIC_HEADING=/(amount|value|cost|price|rate|total|balance|qty|quantity|units?|gross|net|vat|pct|paid|owed|outstanding|collected|payable|depreciation|count|serials|available|deployed|pay)\b/i;
+function markNumericColumns(table){
+  if(!table)return;
+  const heads=[...table.querySelectorAll('thead th')];
+  if(!heads.length)return;
+  const numeric=heads.map(th=>NUMERIC_HEADING.test(th.textContent||''));
+  heads.forEach((th,i)=>{ if(numeric[i]) th.classList.add('num'); });
+  table.querySelectorAll('tbody tr').forEach(tr=>{
+    [...tr.children].forEach((cell,i)=>{
+      // A cell that spans columns has no column of its own to align to.
+      if(cell.colSpan>1)return;
+      if(numeric[i]) cell.classList.add('num');
+    });
+  });
+}
 function enhanceTables(){
+  $$('.record-table').forEach(markNumericColumns);
   $$('.record-table-wrap').forEach(wrap=>{
     if(wrap.dataset.enhanced==='1')return;
     wrap.dataset.enhanced='1';
@@ -2856,7 +2885,7 @@ async function renderServiceReports(){
     const rows=closed.map(r=>`<tr><td><b>${esc(r.job_no)}</b></td><td>${esc(r.customer_name||'-')}</td>
       <td class="num">${money(r.final_material_cost)}</td><td class="num">${money(r.labor_cost)}</td>
       <td class="num">${money(r.overhead_cost)}</td><td class="num">${money(r.final_cost)}</td>
-      <td class="num">${esc(r.markup_pct)}%</td><td class="num">${money(r.final_price)}</td>
+      <td class="num">${r.markup_pct==null||r.markup_pct===''?'-':esc(r.markup_pct)+'%'}</td><td class="num">${money(r.final_price)}</td>
       <td class="num">${money(r.gross_margin)}</td></tr>`);
     const body=`<div class="workspace-kpis">
         ${kpi('Revenue',money(summary.revenue&&summary.revenue.revenue))}
@@ -2951,7 +2980,7 @@ async function openServiceJob(id){
         <div class="workspace-kpis">
           ${kpi('Status',h.status)}${kpi('Material',money(h.material_cost))}${kpi('Labour',money(h.labor_cost))}
           ${kpi('Overhead',money(h.overhead_cost))}${kpi('Cost',money(h.estimated_cost))}
-          ${kpi('Markup',h.markup_pct+'%')}${kpi('Price / Revenue',money(h.estimated_price))}
+          ${kpi('Markup',h.markup_pct==null||h.markup_pct===''?'-':Number(h.markup_pct).toFixed(1)+'%')}${kpi('Price / Revenue',money(h.estimated_price))}
           ${['COMPLETED','CLOSED'].includes(h.status)?kpi('Final price',money(h.final_price))+kpi('Margin',money(h.gross_margin)):''}</div>
 
         <div class="record-fields">
@@ -3560,7 +3589,7 @@ async function renderBudgetActual(){
     const data=await api(`/finance/reports/budget-actual?year=${new Date().getFullYear()}`);
     const rows=data.rows.map(row=>`<tr><td><b>${esc(row.department||'Unassigned')}</b></td><td>${esc(row.cost_center||'-')}</td>
       <td>${esc(row.account_title)}</td><td class="num">${money(row.budget_amount)}</td><td class="num">${money(row.actual_amount)}</td>
-      <td class="num">${money(row.variance)}</td><td class="num">${money(row.utilizationPct)}%</td></tr>`);
+      <td class="num">${money(row.variance)}</td><td class="num">${row.utilizationPct==null?'-':Number(row.utilizationPct).toFixed(1)+'%'}</td></tr>`);
     const body=`<div class="workspace-commandbar"><span class="workspace-mode">${data.year} BUDGET PERFORMANCE</span></div>
       <section class="workspace-card"><header><h2>Department Budget vs Actual</h2></header>
         ${financeTable(['Department','Cost Center','Account','Budget','Actual','Remaining / (Over)','Utilization'],rows)}</section>`;
@@ -3591,8 +3620,7 @@ async function renderConsolidation(section){
       ${kpi('Consolidated Assets',money(totals.assets))}</div>
       <section class="workspace-card"><header><h2>Entity Financial Statements</h2></header>
         ${financeTable(['Entity','Revenue','COGS','Operating Expense','Net Income','Assets','Liabilities'],rows)}</section>
-      <section class="workspace-card"><header><h2>Consolidation Control</h2></header>
-        </section>`;
+`;
     content.innerHTML=workbenchShell(body,section==='reports'?'reports':section==='records'?'records':'center');bindWorkbench();
   }catch(error){showWorkspaceError(error);}
 }
@@ -5866,7 +5894,7 @@ async function renderCyclePlans(){
         </form>
       </section>
       <section class="workspace-card"><header><h2>Cycle Count Register</h2><span>${data.total} plans</span></header>
-        ${operationalTable(['Count No.','Date','Location','Type','Category','Assigned To','Expected','Status',''],rows)}</section>
+        ${operationalTable(['Count No.','Date','Location','Type','Category','Assigned To','Expected','Status'],rows)}</section>
       </div></div>`;
     content.innerHTML=workbenchShell(body,'records');bindOperationalShell();
     $('#cyclePlanForm').onsubmit=async event=>{
@@ -6318,8 +6346,6 @@ async function renderSupplierPortal(section){
       '<div class="workspace-commandbar"><span class="workspace-mode">VENDOR ACCREDITATION</span><span class="command-spacer"></span>'+portalBtn+'</div>'+
       '<div class="workspace-kpis">'+kpi('Vendors',vendors.length)+kpi('Accredited',vendors.filter(function(v){return /^accredited$/i.test((v.status||'').trim());}).length)+kpi('Required Documents',docList.length)+kpi('Portal',portalUrl?'Linked':'Not linked')+'</div>'+
       '<div class="ramco-layout"><div class="ramco-main">'+
-        '<section class="workspace-card"><header><div><h2>How vendor accreditation works</h2></div></header>'+
-          '</section>'+
         '<section class="workspace-card"><header><div><h2>Vendor Directory</h2></div></header>'+
           operationalTable(['Vendor','Vendor Code','Status'],vrows,{key:'vendor-directory',emptyMessage:'No accredited vendors loaded.'})+'</section>'+
       '</div><aside class="ramco-rail">'+
@@ -6693,7 +6719,7 @@ async function renderInventoryPlanningReports(){
     const clip=v=>{v=String(v||'');return v.length>60?v.slice(0,60)+'...':v;};
     const spareRows=spareReorder.map(r=>`<tr><td><b>${esc(r.item_code)}</b></td><td>${esc(clip(r.item_name))}</td><td class="num">${esc(r.available_qty)}</td><td class="num">${esc(r.incoming_qty)}</td><td class="num">${esc(r.open_po_qty)}</td></tr>`);
     const deployRows=deployable.map(r=>`<tr><td><b>${esc(r.item_code)}</b></td><td>${esc(clip(r.item_name))}</td><td>${esc(r.category)}</td><td>${esc(r.primary_location||'-')}</td><td class="num">${Number(r.available_qty||0).toLocaleString()}</td></tr>`);
-    const body=`<section class="workspace-card"><header><div><h2>How planning works here</h2></div></header></section>
+    const body=`
       <div class="workspace-kpis">${kpi('Spare Parts to Reorder',spareReorder.length)}${kpi('Motorcycles Idle',mcAvail.toLocaleString())}${kpi('Batteries Available',batAvail.toLocaleString())}${kpi('Spare-Part Units on Hand',spUnits.toLocaleString())}</div>
       <section class="workspace-card"><header><h2>Spare Parts to Reorder</h2></header>
         ${operationalTable(['Material Code','Item','Available','Incoming','Open PO'],spareRows,{emptyMessage:'No spare-part lines are out of stock.'})}</section>
@@ -6802,8 +6828,16 @@ async function renderModuleSetup(){
   content.innerHTML=workbenchShell(body,'setup');bindOperationalShell();
   $$('[data-connected-module]').forEach(button=>button.onclick=()=>openWorkspace(button.dataset.connectedModule));
   const host=$('#approvalMatrixHost');
-  if(state.session.user.role_code!=='ADMIN'){
-    host.innerHTML='';
+  /*
+   * The session payload carries `role`, never `role_code` (src/routes/session.js),
+   * so this read undefined for everybody, an admin included, and the card was
+   * blanked on every module setup screen. A titled empty box is not a
+   * permissions message, it is silence.
+   */
+  const who=String(state.session.user.role_code||state.session.user.role||'').toUpperCase();
+  if(!['ADMIN','SUPER_ADMIN','SYSTEM_ADMIN','FINANCE','CEO'].includes(who)){
+    host.innerHTML='<div class="workspace-empty"><b>Maintained by Finance</b>'
+      +'<span>The amount bands and who signs for them are set by Finance and administrators.</span></div>';
     return;
   }
   try{
@@ -8745,6 +8779,15 @@ init();
    * is measured in the render tests now, not merely counted.
    */
   .rfp-edit{display:block;margin-top:13px;padding:11px 0 0;background:transparent}
+  /*
+   * The same bug, three more times. .operational-form is display:flex with
+   * align-items:end, so any dialog that forgets to override it lays its
+   * heading, its table and its fields out as squashed bottom-aligned columns.
+   * The AR collection dialog, Edit PO and the Statement of Account were all
+   * doing exactly that.
+   */
+  .ar-collect,.po-edit,.soa{display:block}
+  .ar-collect>*,.po-edit>*,.soa>*{min-width:0}
   .rfp-edit>*{min-width:0}
   .rfp-edit .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:9px}
   .rfp-edit .form-grid label.wide{grid-column:1/-1}
