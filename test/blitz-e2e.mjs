@@ -2079,6 +2079,48 @@ await t('a redeploy does not settle anything twice or undo a correction', async(
   return {note:'no double settlement, no resurrected import, the void and its reason survive'};
 });
 
+await t('the Finance check belongs to the checker, not to the approver', async()=>{
+  /*
+   * Alexis found she could approve as head of Finance with nothing checked, and
+   * she was right: FINANCE satisfied the check as well as the approval, and the
+   * Admin override let one person sign both. The split was on the screen and
+   * not in the rules.
+   */
+  const mk=await call('POST','/api/finance/payment-requests',{
+    payeeName:'Check Vendor',department:'Operations',purpose:'Who signs the check',
+    requestType:'Payment to Vendor',grossAmount:90000,supplierInvoiceNo:'INV-CHECK-1'});
+  if(!mk.json?.ok) throw new Error(mk.json?.error);
+  const id=mk.json.id;
+  // Somebody else asked for it, or separation of duties refuses first and the
+  // test proves nothing about who may sign the check.
+  sqlite.prepare("UPDATE erp_payment_requests SET net_payable=90000,status='DEPARTMENT_APPROVED',requestor_email='ops.person@nrdev.ph' WHERE id=?").run(id);
+  const act=b=>call('POST',`/api/finance/payment-requests/${id}/action`,b);
+
+  // The head of Finance cannot sign the check.
+  sqlite.prepare("UPDATE erp_users SET role_code='FINANCE' WHERE email='mmungcal@nrdev.ph'").run();
+  const asHead=await act({action:'FINANCE_REVIEW',signature:'Alexis',signatureType:'TYPE'});
+  if(asHead.json?.ok) throw new Error('the head of Finance signed the check meant for the reviewer');
+  if(!/Finance Reviewer/i.test(asHead.json?.error||''))
+    throw new Error('refused for the wrong reason: '+asHead.json?.error);
+
+  // And cannot skip it either.
+  const skip=await act({action:'FINANCE_VALIDATE',signature:'Alexis',signatureType:'TYPE'});
+  if(skip.json?.ok) throw new Error('the head of Finance approved a request nobody had checked');
+
+  // The reviewer can.
+  sqlite.prepare("UPDATE erp_users SET role_code='FINANCE_REVIEWER' WHERE email='mmungcal@nrdev.ph'").run();
+  const asRucel=await act({action:'FINANCE_REVIEW',signature:'Rucel',signatureType:'TYPE'});
+  if(!asRucel.json?.ok) throw new Error('the reviewer was refused her own check: '+asRucel.json?.error);
+
+  /*
+   * The Admin override is deliberately not exercised here: giving this fixture
+   * an admin role changes its module permissions and the rest of the suite
+   * inherits it. It is one clause, isAdminRole(r), in the same condition.
+   */
+  sqlite.prepare("UPDATE erp_users SET role_code='FINANCE' WHERE email='mmungcal@nrdev.ph'").run();
+  return {note:'the head of Finance is refused her own check; the reviewer signs it'};
+});
+
 await t('the CEO releases a request, Finance dispatches it, and only then is it payable', async()=>{
   /*
    * The stage the old Apps Script calls MNC Dispatch. Final approval sends the
