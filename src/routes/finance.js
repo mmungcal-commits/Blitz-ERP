@@ -551,6 +551,36 @@ financeRoutes.get('/aging/:ledger', requirePermission('FINANCE', 'VIEW'), async 
        FROM erp_subledger_documents d JOIN erp_partners p ON p.id=d.partner_id
       WHERE d.document_type IN ${types} AND d.open_balance>0 AND d.document_date<=?
       ORDER BY p.name,d.due_date,d.document_date`, [asOf]);
+  /*
+   * Payables age from the register that holds them.
+   *
+   * This read erp_subledger_documents, which no route on this system ever
+   * writes: the screen showed an empty table and a total of nought while ten
+   * and a half million sat unpaid across thirty-seven requests. The payables
+   * are the RFPs, so that is what is aged - net payable less whatever has been
+   * settled against it, from the request date where nobody set a due date.
+   */
+  if (!customer && !rows.length) {
+    const rfps = await all(c.env.DB, `
+      SELECT r.request_no document_no, r.payee_name partner_name, r.department,
+             r.request_date document_date,
+             COALESCE(NULLIF(r.due_date,''),r.request_date) due_date,
+             r.status,
+             ROUND(r.net_payable - COALESCE((SELECT SUM(s.amount) FROM erp_payment_settlements s
+               WHERE s.request_no=r.request_no AND s.status<>'VOID'),0), 2) open_balance
+        FROM erp_payment_requests r
+       WHERE r.status NOT IN ('REJECTED','CANCELLED')
+         AND COALESCE(r.request_date,'') <= ?
+      ORDER BY r.payee_name, due_date, r.request_date`, [asOf]);
+    const open = rfps.filter(r => Number(r.open_balance) > 0.009)
+      .map(r => ({ ...r, aging_bucket:calculateAgingBucket(r.due_date, asOf) }));
+    const t = open.reduce((out, row) => {
+      out.total = round(out.total + Number(row.open_balance || 0));
+      out[row.aging_bucket] = round((out[row.aging_bucket] || 0) + Number(row.open_balance || 0));
+      return out;
+    }, { total:0, CURRENT:0, '1-30':0, '31-60':0, '61-90':0, OVER_90:0 });
+    return ok(c, { ledger, asOf, rows:open, totals:t, source:'PAYMENT_REQUESTS' });
+  }
   const enriched = rows.map(row => ({ ...row, aging_bucket:calculateAgingBucket(row.due_date, asOf) }));
   const totals = enriched.reduce((out, row) => {
     out.total = round(out.total + Number(row.open_balance || 0));
