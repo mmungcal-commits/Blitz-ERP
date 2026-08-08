@@ -10,6 +10,151 @@ import { saveAttachments, attachmentsFor } from '../lib/attachments.js';
 
 export const salesRoutes = new Hono();
 
+/* =====================================================================
+ * Leases, and where the units actually are
+ *
+ * A lease contract is a sales order with a term on it. What makes it
+ * different from a sale is that the units come back, and until they do
+ * they are standing in somebody else's yard - which is the answer a
+ * cycle count needs when it cannot find a serial on the shelf.
+ *
+ * erp_lease_contract_units says which units a contract covers.
+ * erp_asset_deployments says where a unit physically is. They are
+ * different questions and conflating them is how a unit ends up counted
+ * as missing and leased at the same time.
+ * ===================================================================== */
+
+salesRoutes.get('/leases', requirePermission('SALES','VIEW'), async c => {
+  const rows = await all(c.env.DB, `SELECT l.*, b.cb_code, b.batch_code, b.transaction_code,
+      b.units_r280, b.units_r280s, b.units_d400, b.charging_kits, b.batteries,
+      s.sales_order_no, p.name customer_name,
+      (SELECT COUNT(*) FROM erp_asset_deployments d
+        WHERE d.lease_contract_id=l.id AND d.returned_at IS NULL) units_out,
+      (SELECT COUNT(*) FROM erp_attachments a
+        WHERE a.record_type='SALES_ORDER' AND a.record_id=l.sales_order_id AND a.active=1) documents
+    FROM erp_lease_contracts l
+    LEFT JOIN erp_lease_contract_batches b ON b.lease_contract_id=l.id
+    LEFT JOIN erp_sales_orders s ON s.id=l.sales_order_id
+    LEFT JOIN erp_partners p ON p.id=l.customer_id
+    ORDER BY (l.status='ACTIVE') DESC, l.end_of_term DESC, l.lease_no`);
+  const totals = await first(c.env.DB, `SELECT COUNT(*) contracts,
+      COALESCE(SUM(unit_count),0) units,
+      COALESCE(SUM(CASE WHEN status='ACTIVE' THEN unit_count ELSE 0 END),0) units_on_live_contracts
+    FROM erp_lease_contracts`);
+  const deployed = await first(c.env.DB, `SELECT COUNT(*) n FROM erp_asset_deployments
+    WHERE returned_at IS NULL`);
+  return ok(c, { rows, totals: { ...totals, unitsDeployed: Number(deployed?.n || 0) } });
+});
+
+/*
+ * Tag units out to a contract.
+ *
+ * Takes serials rather than ids, because the person doing this is reading a
+ * frame number off a motorcycle or a count sheet, not an internal key. A serial
+ * already out on another contract is refused by name: silently moving it would
+ * lose the fact that the first customer still has it on their books.
+ */
+salesRoutes.post('/leases/:id/deploy', requirePermission('SALES','EDIT'), async c => {
+  const id = Number(c.req.param('id'));
+  const user = c.get('erpUser');
+  const lease = await first(c.env.DB, `SELECT l.*, p.name customer_name, b.cb_code
+    FROM erp_lease_contracts l
+    LEFT JOIN erp_partners p ON p.id=l.customer_id
+    LEFT JOIN erp_lease_contract_batches b ON b.lease_contract_id=l.id WHERE l.id=?`, [id]);
+  if (!lease) return fail(c, 'Lease contract not found.', 404);
+  const b = await jsonBody(c);
+  const serials = [...new Set((Array.isArray(b.serials) ? b.serials : String(b.serials || '').split(/[\s,]+/))
+    .map(v => normalizeSerial(v)).filter(Boolean))];
+  if (!serials.length) return fail(c, 'Scan or type at least one serial number.');
+
+  const deployed = [];
+  const refused = [];
+  for (const serial of serials) {
+    const open = await first(c.env.DB, `SELECT d.*, l.lease_no FROM erp_asset_deployments d
+      LEFT JOIN erp_lease_contracts l ON l.id=d.lease_contract_id
+      WHERE d.serial_no=? AND d.returned_at IS NULL`, [serial]);
+    if (open) {
+      refused.push({ serial, reason: open.lease_contract_id === id
+        ? 'already out on this contract'
+        : `already out with ${open.customer_name || 'another customer'} on ${open.lease_no || 'another contract'}` });
+      continue;
+    }
+    const asset = await first(c.env.DB, `SELECT id FROM erp_assets WHERE serial_no=?`, [serial]);
+    await run(c.env.DB, `INSERT INTO erp_asset_deployments(serial_no,asset_id,lease_contract_id,
+      sales_order_id,cb_code,customer_id,customer_name,deployed_by,count_sheet_id,note)
+      VALUES(?,?,?,?,?,?,?,?,?,?)`, [
+      serial, asset?.id || null, id, lease.sales_order_id || null, lease.cb_code || null,
+      lease.customer_id || null, lease.customer_name || lease.client_name,
+      user.email, b.countSheetId ? Number(b.countSheetId) : null, normalizeText(b.note) || null,
+    ]);
+    /*
+     * The unit itself says where it is. A count reads this, so leaving it
+     * behind is how a deployed unit still shows up as expected on the shelf.
+     */
+    if (asset) {
+      await run(c.env.DB, `UPDATE erp_assets SET current_status='LEASED' WHERE id=?`, [asset.id]);
+      await run(c.env.DB, `INSERT OR IGNORE INTO erp_lease_contract_units(lease_contract_id,asset_id,
+        serial_no,daily_rate_vat_ex,start_date,end_date,status)
+        VALUES(?,?,?,?,?,?,'DEPLOYED')`, [
+        id, asset.id, serial, lease.daily_rate_vat_ex || 0,
+        lease.effective_date || null, lease.end_of_term || null]);
+    }
+    deployed.push(serial);
+  }
+  await audit(c, { action: 'DEPLOY', module: 'SALES', recordType: 'LEASE_CONTRACT',
+    recordId: id, recordNo: lease.lease_no, after: { deployed, refused } });
+  return ok(c, { leaseNo: lease.lease_no, customer: lease.customer_name || lease.client_name,
+    deployed, refused });
+});
+
+// A unit that came back. Closed, never deleted: where it has been is history.
+salesRoutes.post('/leases/:id/return', requirePermission('SALES','EDIT'), async c => {
+  const id = Number(c.req.param('id'));
+  const user = c.get('erpUser');
+  const b = await jsonBody(c);
+  const serials = [...new Set((Array.isArray(b.serials) ? b.serials : String(b.serials || '').split(/[\s,]+/))
+    .map(v => normalizeSerial(v)).filter(Boolean))];
+  if (!serials.length) return fail(c, 'Scan or type at least one serial number.');
+  const reason = normalizeText(b.reason);
+  const returned = [];
+  for (const serial of serials) {
+    const open = await first(c.env.DB, `SELECT * FROM erp_asset_deployments
+      WHERE serial_no=? AND lease_contract_id=? AND returned_at IS NULL`, [serial, id]);
+    if (!open) continue;
+    await run(c.env.DB, `UPDATE erp_asset_deployments SET returned_at=datetime('now'),
+      returned_by=?, return_reason=? WHERE id=?`, [user.email, reason || null, open.id]);
+    if (open.asset_id) {
+      await run(c.env.DB, `UPDATE erp_assets SET current_status='AVAILABLE' WHERE id=?`, [open.asset_id]);
+      await run(c.env.DB, `UPDATE erp_lease_contract_units SET status='RETURNED'
+        WHERE lease_contract_id=? AND asset_id=?`, [id, open.asset_id]);
+    }
+    returned.push(serial);
+  }
+  await audit(c, { action: 'RETURN', module: 'SALES', recordType: 'LEASE_CONTRACT',
+    recordId: id, recordNo: String(id), after: { returned, reason } });
+  return ok(c, { returned });
+});
+
+/*
+ * Where is this serial?
+ *
+ * The question a count asks when a unit is not where it was expected. Answering
+ * it is the difference between a variance and a note.
+ */
+salesRoutes.get('/units/:serial/location', requirePermission('SALES','VIEW'), async c => {
+  const serial = normalizeSerial(c.req.param('serial'));
+  const out = await first(c.env.DB, `SELECT d.*, l.lease_no, l.end_of_term, s.sales_order_no
+    FROM erp_asset_deployments d
+    LEFT JOIN erp_lease_contracts l ON l.id=d.lease_contract_id
+    LEFT JOIN erp_sales_orders s ON s.id=d.sales_order_id
+    WHERE d.serial_no=? AND d.returned_at IS NULL`, [serial]);
+  const history = await all(c.env.DB, `SELECT d.customer_name, d.deployed_at, d.returned_at,
+      l.lease_no FROM erp_asset_deployments d
+    LEFT JOIN erp_lease_contracts l ON l.id=d.lease_contract_id
+    WHERE d.serial_no=? ORDER BY d.deployed_at DESC LIMIT 20`, [serial]);
+  return ok(c, { serial, deployed: out || null, history });
+});
+
 salesRoutes.get('/lookups', requirePermission('SALES','VIEW'), async c => {
   const [customers,employees,items,assets]=await Promise.all([
     all(c.env.DB,`SELECT id,partner_code,name,credit_status,overdue_balance
