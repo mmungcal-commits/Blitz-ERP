@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R50.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R53.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -173,7 +173,7 @@ function workspaceTabs(code=state.module?.code){
   if(code==='fa-receivables-payables')return [
     // Subledgers came out: everything on it was already visible on the RFP queue
     // or the ageing report, and a tab nobody opens is a tab in the way.
-    ['center','AP Center'],['approvals','RFP & Payments'],
+    ['center','Payables Center'],['approvals','RFP & Payments'],
     ['reports','Aging & Tax'],['setup','Controls'],
   ];
   if(code==='fa-fixed-assets')return [
@@ -605,10 +605,34 @@ async function renderHomeDashboard(){
         {title:'Receivables ageing',money:true,color:VIZ.status.serious,
          keyLabel:'Bucket',valueLabel:'Outstanding',labelWidth:104,
          open:'fa-receivables-management#records',openLabel:'Open the sales register'}));
+    /*
+     * The revenue picture the Receivables Center carries, on the dashboard too.
+     * A single billed total says how much; these say what the company sells,
+     * who it sells to and when - which is the question anybody opening a
+     * dashboard is actually asking.
+     */
+    if((m.byStream||[]).length)
+      cards.push(vizDonut(m.byStream.map(r=>({label:AR_STREAMS[r.label]||r.label,value:Number(r.value)||0})),
+        {title:'Revenue by stream',totalLabel:'Gross',keyLabel:'Stream',valueLabel:'Amount',
+         open:'fa-receivables-management#records',openLabel:'Open the register'}));
+    if((m.byCustomer||[]).length)
+      cards.push(vizBars(m.byCustomer.map(r=>({label:r.label||'-',value:Number(r.value)||0})),
+        {title:'Top customers',money:true,color:VIZ.series[2],keyLabel:'Customer',valueLabel:'Gross',
+         limit:8,labelWidth:130,
+         open:'fa-receivables-management#records',openLabel:'Open the register'}));
+    if((m.byMonth||[]).length)
+      cards.push(vizColumns(m.byMonth.map(r=>({label:String(r.label||'').slice(5),value:Number(r.value)||0})),
+        {title:'Sales by month',money:true,keyLabel:'Month',valueLabel:'Gross',
+         open:'fa-receivables-management#reports',openLabel:'Open the reports'}));
+
+    // Same as the class chart: an empty fleet with a count in progress is a
+    // state, not a fault, and the card should say which.
+    const fleetPending=Number((d.progress||{}).awaitingRegistration||0);
     cards.push(vizDonut([
         {label:'Available',value:m.availableUnits},{label:'Leased',value:m.leasedUnits},
         {label:'Sold',value:m.soldUnits},{label:'Deployed',value:m.deployedUnits}],
         {title:'Where the fleet is',totalLabel:'Units',keyLabel:'State',valueLabel:'Units',
+         subtitle:fleetPending?compact(fleetPending)+' counted, awaiting posting':undefined,
          open:'ip-warehouse-management#records',openLabel:'Open unit visibility'}));
 
     /*
@@ -669,15 +693,68 @@ async function renderHomeDashboard(){
        module:'ip-cycle-counting#reports'}
     ]);
     if(!tiles)tiles=invTiles;
+    /*
+     * An empty register is worth saying out loud when a count is sitting on
+     * 341 units. "0 units" alone reads as a broken screen; "0 units · 341
+     * counted and not yet posted" reads as the true state and names the act
+     * that changes it.
+     */
+    const waiting=Number((d.progress||{}).awaitingRegistration||0);
+    const pending=waiting?compact(waiting)+' counted, awaiting posting':'';
     cards.push(vizDonut((i.byClass||[]).map(r=>({label:r.label||'Unclassified',value:Number(r.value)||0})),
         {title:'Inventory by class',totalLabel:'Units',keyLabel:'Class',valueLabel:'Units',
+         subtitle:pending||undefined,
          open:'ip-warehouse-management#records',openLabel:'Open unit visibility'}));
+    /*
+     * Counting progress, measured by whichever question the count can answer.
+     *
+     * Against a register, the number that matters is how much of what was
+     * expected has been found. An opening count expects nothing - the register
+     * is what it is building - so that fraction is nought over nought, and this
+     * card read "no count in progress · 0% counted" while 341 units sat scanned
+     * on an open sheet. Where there is nothing to count against, the honest
+     * measure is how many units are on the sheet and that none of them are
+     * registered yet.
+     */
     const pg=d.progress||{};
-    cards.push(vizRing(pg.pct||0,{title:'Counting progress',
-        subtitle:pg.expected?compact(pg.counted)+' of '+compact(pg.expected)+' expected units':'no count in progress',
+    const sheets=Number(pg.sheets||0);
+    const sheetLabel=sheets?sheets+(sheets===1?' sheet open':' sheets open'):'';
+    if(Number(pg.expected||0)>0){
+      cards.push(vizRing(pg.pct||0,{title:'Counting progress',
+        subtitle:compact(pg.counted)+' of '+compact(pg.expected)+' expected units'
+          +(sheetLabel?' · '+sheetLabel:''),
         caption:'counted',tipLabel:'Counted against expected',
         open:'ip-cycle-counting#approvals',openLabel:'Open the physical count',
         tone:pg.pct==null?null:(pg.pct>=100?'good':pg.pct>=50?'warning':'serious')}));
+    }else if(Number(pg.counted||0)>0){
+      /*
+       * An opening count. Nothing was expected, so "percent of expected" is
+       * nought over nought and the card used to report a count of 341 units as
+       * "no count in progress". What can be measured is how much of what was
+       * counted is ready to be posted: a line nobody has named yet cannot
+       * register as anything, and naming it is the work that remains.
+       */
+      const todo=Number(pg.toIdentify||0);
+      /*
+       * 340 of 341 rounds to 100%, and a card reading "100% ready to post"
+       * with a unit still unnamed is the kind of thing nobody looks at twice.
+       * While anything is outstanding the figure is floored and held below the
+       * hundred, so complete means complete.
+       */
+      const ready=pg.readyPct==null?0
+        :(todo?Math.min(99,Math.floor(pg.readyPct)):pg.readyPct);
+      cards.push(vizRing(ready,{title:'Counting progress',
+        subtitle:compact(pg.counted)+' counted, none registered until the count is posted'
+          +(todo?' · '+compact(todo)+' still to identify':'')
+          +(sheetLabel?' · '+sheetLabel:''),
+        caption:'ready to post',tipLabel:'Counted units that have been identified',
+        open:'ip-cycle-counting#approvals',openLabel:'Open the physical count',
+        tone:todo?'warning':'good'}));
+    }else{
+      cards.push(vizRing(0,{title:'Counting progress',subtitle:'no count in progress',
+        caption:'counted',tipLabel:'Counted against expected',
+        open:'ip-cycle-counting#approvals',openLabel:'Open the physical count'}));
+    }
   }
   if(sec.procurement&&(sec.procurement.topVendors||[]).length)
     cards.push(vizBars(sec.procurement.topVendors.map(r=>({label:r.label||'-',value:Number(r.value)||0})),
@@ -794,8 +871,12 @@ function renderLaunchpad(){
   document.body.classList.add('launchpad-view');
   content.innerHTML=`<section class="enterprise-launchpad">
     <div class="launchpad-controls">
-      <div class="launchpad-brand"><img src="/logo-navy.png" alt="E88 Ventures Inc." class="brand-logo"><span class="brand-name">Blitz <i>-</i> ERP</span><small class="brand-sub">E88 Ventures Inc.</small></div>
-      <div><span>${esc(personName(state.session.user))}</span>${(state.scope==='ADMIN'||state.session.user.role==='ADMIN')?'<button id="launchAccess">User Access</button>':''}<button id="launchScope" class="scope-chip" title="Switch between Operations and System Administration">${state.scope==='ADMIN'?'Admin scope':'Operations scope'}</button><button id="launchRecords">Master Reference</button><button id="expandAllGroups">Expand all</button><button id="collapseAllGroups">Collapse all</button><button id="launchLogout">Sign out</button></div>
+      <button type="button" class="launchpad-brand" id="launchHomeBrand" title="Back to the dashboard"><img src="/logo-navy.png" alt="E88 Ventures Inc." class="brand-logo"><span class="brand-name">Blitz <i>-</i> ERP</span><small class="brand-sub">E88 Ventures Inc.</small></button>
+      <div>${'' /* The way back. Opening this map without picking a module used to
+             leave signing out as the only exit: the flag that brought you here
+             is only cleared from a workspace sidebar, and there is no workspace
+             yet. The dashboard is where people expect a brand mark to take
+             them too, so the logo is the same button. */}<button id="launchHome" class="home-chip">&larr; Dashboard</button><span>${esc(personName(state.session.user))}</span>${(state.scope==='ADMIN'||state.session.user.role==='ADMIN')?'<button id="launchAccess">User Access</button>':''}<button id="launchScope" class="scope-chip" title="Switch between Operations and System Administration">${state.scope==='ADMIN'?'Admin scope':'Operations scope'}</button><button id="launchRecords">Master Reference</button><button id="expandAllGroups">Expand all</button><button id="collapseAllGroups">Collapse all</button><button id="launchLogout">Sign out</button></div>
     </div>
     <div class="enterprise-map">
       <div class="enterprise-columns">${state.catalog.groups.map(group=>{
@@ -823,6 +904,9 @@ function renderLaunchpad(){
   $('#expandAllGroups').onclick=()=>{state.catalog.groups.forEach(group=>state.expandedGroups.add(group.code));persistGroups();renderLaunchpad();};
   $('#collapseAllGroups').onclick=()=>{state.expandedGroups.clear();persistGroups();renderLaunchpad();};
   $$('[data-workspace]').forEach(button=>button.onclick=()=>{const __c=button.dataset.workspace;if(__c==='addon-analytics')return renderReportsHub();return openWorkspace(__c);});
+  const backToDashboard=()=>{state.showModuleMap=false;renderLaunchpad();};
+  $('#launchHome').onclick=backToDashboard;
+  $('#launchHomeBrand').onclick=backToDashboard;
   $('#launchLogout').onclick=logout;
   if($('#launchAccess'))$('#launchAccess').onclick=renderAccessAdmin;
   if($('#launchRecords'))$('#launchRecords').onclick=()=>renderRecordConsole();
@@ -1957,7 +2041,7 @@ async function pickFiles(input,limit=5){
   return out.filter(Boolean);
 }
 
-async function openRfpPayments(id){
+async function openRfpPayments(id,opts){
   try{
     const d=await api('/finance/payment-requests/'+id,{noCache:true});
     const r=d.request||{};
@@ -2023,6 +2107,16 @@ async function openRfpPayments(id){
     if(mb.querySelector('#payClose'))mb.querySelector('#payClose').onclick=()=>closeModal();
 
     mb.querySelectorAll('[data-pay-proof]').forEach(b=>b.onclick=()=>openProofUpload(id,Number(b.dataset.payProof)));
+    /*
+     * Arriving from the "no proof" marker on the row means the person has
+     * already said what they came to do. Opening the uploader for them saves a
+     * click and, more to the point, means the marker does what it looks like it
+     * does rather than dropping them on a card to find it themselves.
+     */
+    if(opts&&opts.focusProof){
+      const first=mb.querySelector('[data-pay-proof]');
+      if(first)return openProofUpload(id,Number(first.dataset.payProof));
+    }
     mb.querySelectorAll('[data-pay-void]').forEach(b=>b.onclick=async()=>{
       const reason=prompt('Why is this payment being voided?');
       if(!reason||!reason.trim())return;
@@ -2109,7 +2203,15 @@ async function renderPaymentRequests(){
       const paidCell=settled>0
         ?`<span class="pay-settled">${money(settled)}</span>`
           +(balance>0.01?`<span class="pay-balance">${money(balance)} owed</span>`:'')
-          +(gap>0?`<span class="pay-noproof">${proofWanted?'awaiting proof':'no proof'}</span>`:'')
+          /*
+           * "no proof" was a red label and nothing else, so the sixty-eight
+           * payments carrying a reference and no bank advice had no way in from
+           * the row: the uploader was two clicks away inside the payments card,
+           * and nothing said so. The words that name the problem are now the
+           * button that fixes it.
+           */
+          +(gap>0?`<button type="button" class="pay-noproof is-action" data-rfp-proof="${row.id}"
+              title="Attach the bank advice for this payment">${proofWanted?'awaiting proof':'no proof'}</button>`:'')
         :'<span class="muted">-</span>';
       return `<tr><td><b>${esc(row.request_no)}</b></td><td>${date(row.request_date)}</td><td>${esc(row.payee_name)}</td>
         <td>${esc(row.department)}</td><td>${title}</td><td>${esc(row.purchase_order_no||'-')}</td><td class="num">${money(row.net_payable)}</td>
@@ -2134,6 +2236,9 @@ async function renderPaymentRequests(){
     window.__rfpRows={};data.rows.forEach(function(x){window.__rfpRows[x.id]=x;});
     $$('[data-rfp-edit]').forEach(b2=>b2.onclick=e=>{e.stopPropagation();openRfpEdit(Number(b2.dataset.rfpEdit),master);});
     $$('[data-rfp-pay]').forEach(b2=>b2.onclick=e=>{e.stopPropagation();openRfpPayments(Number(b2.dataset.rfpPay));});
+    // The words "no proof" open the payments card, where the uploader lives.
+    $$('[data-rfp-proof]').forEach(b2=>b2.onclick=e=>{e.stopPropagation();
+      openRfpPayments(Number(b2.dataset.rfpProof),{focusProof:true});});
     $$('[data-print-rfp]').forEach(function(b){b.onclick=function(){if(window.czPrintRfp)window.czPrintRfp(window.__rfpRows[b.dataset.printRfp]);};});
     $('#newRfp').onclick=()=>openRfpForm(data.purchaseOrders,master);
     if($('#openLiquidations'))$('#openLiquidations').onclick=renderLiquidations;
@@ -8146,7 +8251,11 @@ init();
   function applyBranding(){
     const b=S.branding||{};
     if(b.theme){document.documentElement.dataset.theme=b.theme;}
-    const title=$('.launchpad-controls div:first-child span');
+    // Selected by what it is rather than by where it sits. This read
+    // ".launchpad-controls div:first-child span", so adding the Dashboard
+    // button shifted first-child onto the controls row and the app title would
+    // have been written over the signed-in person's name.
+    const title=$('.launchpad-brand .brand-name');
     if(title&&b.appTitle)title.textContent=b.appTitle;
     if(b.appTitle)document.title=b.appTitle;
     const foot=$('.enterprise-brand-secondary');
@@ -8551,7 +8660,20 @@ init();
   .table-action.primary{border-color:#12305f;background:#12305f;color:#fff}
 
   /* Editing a draft request: the lines carry the account titles the ledger posts to. */
+  /*
+   * .operational-form is display:flex, so this form laid its header fields, the
+   * "Lines" bar, the column headings, the lines themselves and the totals side
+   * by side in one row: seven collapsed input boxes, headings floating away
+   * from the fields they name, and the whole thing scrolling sideways. Every
+   * field was present and every check on presence passed, which is why it
+   * survived - the same bug the payments form had, and the same fix. The layout
+   * is measured in the render tests now, not merely counted.
+   */
+  .rfp-edit{display:block;margin-top:13px;padding:11px 0 0;background:transparent}
+  .rfp-edit>*{min-width:0}
   .rfp-edit .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:9px}
+  .rfp-edit .form-grid label.wide{grid-column:1/-1}
+  .rfp-edit .modal-actions{margin-top:14px}
   .rfp-line-head{display:flex;align-items:center;justify-content:space-between;margin:12px 0 6px}
   .rfp-line{display:grid;grid-template-columns:1.5fr 1.6fr .9fr .8fr .8fr .7fr 30px;gap:6px;
     align-items:center;margin-bottom:5px}
@@ -8601,6 +8723,11 @@ init();
   .pay-note{margin:0 0 11px;padding:8px 11px;border-left:3px solid #e5b96a;background:#fdf7ec;
     color:#6b4d13;font-size:12px;border-radius:0 6px 6px 0}
   .pay-noproof{color:#b0442c;font-size:11px}
+  /* Now a button where a payment is missing its advice, so the browser's own
+     button chrome has to go or the cell fills with a grey box. */
+  .pay-noproof.is-action{display:block;background:none;border:0;padding:0;margin:0;font:inherit;
+    font-size:11px;color:#b0442c;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+  .pay-noproof.is-action:hover{color:#8a3421}
   .pay-proof-by{display:block;font-size:10.5px;color:#8194a6}
   .pay-void td{opacity:.55;text-decoration:line-through}
   .pay-void td:last-child{text-decoration:none}
@@ -8701,7 +8828,12 @@ init();
   .auth-submit{background:linear-gradient(135deg,var(--blitz-2),var(--blitz-3));border:0}
 
   /* ---------- Launchpad brand ---------- */
-  .launchpad-brand{display:flex;align-items:center;gap:10px}
+  /* Now a button, so the browser's own button styling has to be undone or the
+     brand mark renders as a grey chip with a border round it. */
+  .launchpad-brand{display:flex;align-items:center;gap:10px;
+    background:none;border:0;padding:0;margin:0;font:inherit;color:inherit;cursor:pointer;text-align:left}
+  .launchpad-brand:hover .brand-name{color:var(--blitz-3)}
+  .home-chip{border:1px solid var(--blitz-3)!important;color:var(--blitz-3)!important;font-weight:700}
   .launchpad-brand .brand-logo{height:36px;width:auto;background:transparent}
   .launchpad-brand .brand-name{font-weight:800;letter-spacing:1.6px;text-transform:uppercase;font-size:16px}
   .launchpad-brand .brand-name i{font-style:normal;color:var(--blitz-3)}
