@@ -26,6 +26,7 @@ import { rfpAlignmentRoutes } from './routes/rfp-alignment.js';
 import { enterpriseRoutes } from './routes/enterprise.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { poApprovalPublicRoutes } from './routes/po-approval-public.js';
+import { rfpDocumentPublicRoutes } from './routes/rfp-document-public.js';
 import { assemblyRoutes } from './routes/assemblies.js';
 import { mailRoutes } from './routes/mail.js';
 import { serviceRoutes } from './routes/service.js';
@@ -43,7 +44,7 @@ let d1Ready=false;let r2Ready=false;let r2Error='';
 try{await c.env.DB.prepare('SELECT 1 ready').first();d1Ready=true;}catch{}
 if(c.env.DOCS){try{await c.env.DOCS.list({limit:1});r2Ready=true;}catch(error){r2Error=error?.message||'R2 access failed';}}
 return ok(c,{service:'Blitz - ERP',version:'15.0.0-blitz-live',
-build:'BLITZ-ERP-20260808-R48.0',d1Bound:!!c.env.DB,d1Ready,
+build:'BLITZ-ERP-20260808-R65.0',d1Bound:!!c.env.DB,d1Ready,
 r2Bound:!!c.env.DOCS,r2Ready,r2Error,
 mailConfigured:!!(c.env.RESEND_API_KEY||(c.env.MAIL_WEBHOOK_URL&&c.env.MAIL_WEBHOOK_SECRET)),
 mailTransport:c.env.RESEND_API_KEY?'resend':((c.env.MAIL_WEBHOOK_URL&&c.env.MAIL_WEBHOOK_SECRET)?'apps-script':'none'),
@@ -52,6 +53,9 @@ environment:c.env.ENVIRONMENT||'unknown',time:new Date().toISOString()});
 });
 app.route('/api/auth',authRoutes);
 app.route('/api/po-approve',poApprovalPublicRoutes);
+// Read-only, token-gated, and mounted here on purpose: Monde Nissin open the
+// signed RFP E88 sent them without a Blitz login. See routes/rfp-document-public.js.
+app.route('/api/rfp-document',rfpDocumentPublicRoutes);
 app.use('/api/*', requireUser);
 app.route('/api/session',sessionRoutes);
 app.route('/api/dashboard',dashboardRoutes);
