@@ -696,6 +696,43 @@ await t('a request nobody has approved cannot be paid or proved', async()=>{
   return {note:'draft refused by name, approved accepted; the screen is told before the click'};
 });
 
+await t('the date range drives the cards, and the default reaches the data', async()=>{
+  /*
+   * Two halves of the same requirement. Every card answers for a range, so
+   * moving the range has to move the figures - a filter the cards ignore is a
+   * control that lies. And the range you arrive on has to reach the register,
+   * because month-to-date opened on an August holding 448 pesos and reported
+   * nought raised while fifty-three million sat on the books.
+   */
+  const wide=await call('GET','/api/dashboard/home');
+  if(!wide.json?.ok) throw new Error(wide.json?.error);
+  const w=wide.json.sections?.management||{};
+  const book=sqlite.prepare(`SELECT COALESCE(SUM(net_payable),0) v FROM erp_payment_requests
+                   WHERE status NOT IN ('REJECTED','CANCELLED')`).get().v;
+  if(Number(book)>0&&!(Number(w.payableRaised)>0))
+    throw new Error(`the default range reports ${w.payableRaised} raised while the register holds ${book}`);
+  const earliest=sqlite.prepare(`SELECT MIN(NULLIF(request_date,'')) d FROM erp_payment_requests`).get().d;
+  if(earliest&&wide.json.period.from>earliest)
+    throw new Error(`the default starts ${wide.json.period.from}, after the earliest record ${earliest}`);
+
+  // A window with nothing in it reports nothing, and that is correct.
+  const empty=await call('GET','/api/dashboard/home?from=1998-01-01&to=1998-01-31');
+  const e=empty.json.sections?.management||{};
+  if(Number(e.payableRaised||0)!==0)
+    throw new Error('a range with no activity still reported '+e.payableRaised+' raised');
+  if(empty.json.period.from!=='1998-01-01'||empty.json.period.to!=='1998-01-31')
+    throw new Error('the range asked for was not the range answered: '+JSON.stringify(empty.json.period));
+
+  // And a narrow window around real activity reports less than the whole book.
+  if(earliest){
+    const narrow=await call('GET',`/api/dashboard/home?from=${earliest}&to=${earliest}`);
+    const n=narrow.json.sections?.management||{};
+    if(Number(n.payableRaised||0)>Number(w.payableRaised||0)+0.01)
+      throw new Error('one day reported more than the whole span');
+  }
+  return {note:`default ${wide.json.period.from} to ${wide.json.period.to}; an empty window reports nothing`};
+});
+
 await t('payables ageing reports the payables, not an empty subledger', async()=>{
   /*
    * The screen read erp_subledger_documents, which no route on this system ever
