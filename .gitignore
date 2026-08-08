@@ -11,3 +11,4 @@ __pycache__/
 
 # Screenshots written by the browser render harnesses
 test/__screens__/
+test/__screens__/audit/
