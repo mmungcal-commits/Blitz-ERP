@@ -41,7 +41,15 @@ export const STAGE_LABEL = {
 // Manager standing in for the Department Head is normal practice here.
 export const STAGE_ROLE_ALIASES = {
   DEPARTMENT: ['DEPTHEAD', 'DEPT_HEAD', 'DEPT_MANAGER', 'DEPARTMENT_HEAD', 'DEPARTMENT_MANAGER', 'SCM_HEAD', 'SCM_MANAGER'],
-  FINANCE_REVIEW: ['FINANCE_REVIEWER', 'FINANCE', 'FINANCE_MANAGER', 'ACCOUNTING'],
+  /*
+   * The check is Rucel's, and only Rucel's.
+   *
+   * FINANCE used to be listed here, which made the split decorative: the head
+   * of Finance could sign the check and then sign her own approval on the same
+   * request. An Admin override still exists so a payment is never stuck while
+   * she is on leave, and every override is written to the approval trail.
+   */
+  FINANCE_REVIEW: ['FINANCE_REVIEWER'],
   FINANCE: ['FINANCE', 'FINANCE_MANAGER', 'ACCOUNTING', 'CONTROLLER'],
   MANCOM: ['MANCOM', 'MANCOM_MEMBER', 'MANAGEMENT_COMMITTEE'],
   FINAL: ['CEO', 'PRESIDENT', 'CHIEF_EXECUTIVE'],
