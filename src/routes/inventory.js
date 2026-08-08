@@ -3,7 +3,7 @@ import { all, first, run } from '../lib/db.js';
 import { ok, fail, jsonBody, pageParams, numberValue } from '../lib/http.js';
 import { requirePermission } from '../lib/auth.js';
 import { audit } from '../lib/audit.js';
-import { normalizeSerial, normalizeText, ensureLocation, nextCode } from '../lib/codes.js';
+import { normalizeSerial, normalizeText, ensureLocation, nextCode, categoryCode } from '../lib/codes.js';
 import { postMovement, createAssetFromReceipt } from '../lib/inventory.js';
 import { captureFinanceEvent } from '../lib/finance.js';
 import { inventoryAccountForCategory } from '../lib/transaction-rules.js';
@@ -516,7 +516,12 @@ inventoryRoutes.get('/cycle-counts/:id', requirePermission('INVENTORY','VIEW'), 
       COALESCE(NULLIF(i.item_name,''),NULLIF(nu.item_name,''),NULLIF(ni.item_name,'')) item_name,
       a.current_status,COALESCE(a.condition_code,nu.condition_code) condition_code,
       al.code actual_location_code,al.name actual_location_name,
-      COALESCE(NULLIF(nu.category,''),ni.category) new_category,
+      -- The class the unit will actually register as, not the word the counter
+      -- typed. Showing the typed word is how 340 batteries read on screen as
+      -- 229 "OTH" and 112 "BATTERY" while every one of them was going to
+      -- register as BAT. The master leads here for the same reason it leads on
+      -- posting: for a known item code it is the authority.
+      COALESCE(ni.category,NULLIF(nu.category,'')) new_category,
       nu.serial_type new_serial_type,nu.motor_no new_motor_no,
       nu.secondary_serial new_secondary_serial,
       COALESCE(NULLIF(nu.unit_cost,0),ni.standard_cost) new_unit_cost,
@@ -1050,25 +1055,51 @@ inventoryRoutes.post('/cycle-counts/:id/post-adjustments', requirePermission('IN
     if(!asset&&line.actual_serial_no&&line.variance_type==='UNKNOWN_SERIAL'){
       const detail=await first(c.env.DB,`SELECT * FROM erp_cycle_count_new_units WHERE line_id=?`,[line.id])||{};
       const itemRow=detail.item_code
-        ? await first(c.env.DB,`SELECT id,item_name,category FROM erp_items WHERE item_code=?`,[detail.item_code])
+        ? await first(c.env.DB,`SELECT id,item_name,category,standard_cost FROM erp_items WHERE item_code=?`,[detail.item_code])
         : null;
+      /*
+       * The item master decides what class a known item belongs to.
+       *
+       * A counter types what is in front of them - "BATTERY", or nothing at
+       * all - and that word was overriding the master. ESP00263 is BAT in the
+       * master; counted as "BATTERY" it stored the literal word, counted blank
+       * it stored OTH, and neither is a class the register groups by. Three
+       * hundred and forty Ampace batteries would have registered as nought
+       * batteries: some under a class that does not exist and the rest under
+       * "Other".
+       *
+       * So the master wins where the item is known, and where it is not, the
+       * typed word is normalised the same way every other route normalises one
+       * rather than being written down verbatim.
+       */
+      const category=itemRow?.category
+        || categoryCode(detail.category||detail.item_name||count.category||'')
+        || 'OTH';
+      /*
+       * A unit registering at no value is incomplete master data, exactly like
+       * one arriving with no item code, and it has to be as visible. Otherwise
+       * the register reads 340 batteries worth nothing and says CLEAR about it.
+       */
+      const unitCost=Number(detail.unit_cost||0)>0
+        ? Number(detail.unit_cost) : Number(itemRow?.standard_cost||0);
       const outcome=await createAssetFromReceipt(c.env.DB,{
         serialNo:line.actual_serial_no,
         serialType:detail.serial_type||'SERIAL',
         itemId:itemRow?.id||null,
         itemCode:detail.item_code||'',
         itemName:detail.item_name||itemRow?.item_name||'',
-        category:detail.category||itemRow?.category||count.category||'OTH',
+        category,
         secondarySerial:detail.secondary_serial||'',
         motorNo:detail.motor_no||'',
         locationId:count.location_id,
         locationCode:count.location_code,
         status:detail.status||'AVAILABLE',
-        unitCost:Number(detail.unit_cost||0),
+        unitCost,
         conditionCode:detail.condition_code||'GOOD',
-        // Anything counted without an item code is real stock with incomplete
-        // master data: it must be visible for cleanup, not quietly "CLEAR".
-        reconciliationStatus:detail.item_code?'CLEAR':'FOR_REVIEW',
+        // Anything counted without an item code, or with no cost anywhere to
+        // value it by, is real stock with incomplete master data: it must be
+        // visible for cleanup, not quietly "CLEAR".
+        reconciliationStatus:(detail.item_code&&unitCost>0)?'CLEAR':'FOR_REVIEW',
         sourceSystem:'PHYSICAL_COUNT',
         sourceKey:count.count_no,
       });
