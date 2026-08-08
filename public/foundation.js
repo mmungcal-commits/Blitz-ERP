@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R53.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R55.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -617,8 +617,8 @@ async function renderHomeDashboard(){
          open:'fa-receivables-management#records',openLabel:'Open the register'}));
     if((m.byCustomer||[]).length)
       cards.push(vizBars(m.byCustomer.map(r=>({label:r.label||'-',value:Number(r.value)||0})),
-        {title:'Top customers',money:true,color:VIZ.series[2],keyLabel:'Customer',valueLabel:'Gross',
-         limit:8,labelWidth:130,
+        {title:'Top leasing customers',money:true,color:VIZ.series[2],keyLabel:'Customer',
+         valueLabel:'Leased',limit:8,labelWidth:130,
          open:'fa-receivables-management#records',openLabel:'Open the register'}));
     if((m.byMonth||[]).length)
       cards.push(vizColumns(m.byMonth.map(r=>({label:String(r.label||'').slice(5),value:Number(r.value)||0})),
