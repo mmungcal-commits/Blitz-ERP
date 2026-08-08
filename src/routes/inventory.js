@@ -521,7 +521,20 @@ inventoryRoutes.get('/cycle-counts/:id', requirePermission('INVENTORY','VIEW'), 
       -- 229 "OTH" and 112 "BATTERY" while every one of them was going to
       -- register as BAT. The master leads here for the same reason it leads on
       -- posting: for a known item code it is the authority.
-      COALESCE(ni.category,NULLIF(nu.category,'')) new_category,
+      -- Normalised here too, by the same rules and in the same order as
+      -- categoryCode(). A sheet that shows "BATTERY" while posting writes BAT
+      -- is a screen nobody can check the count against.
+      (SELECT CASE
+         WHEN k LIKE '%MOTOR%' OR k='MC' THEN 'MC'
+         -- Station before battery, or "battery swapping station" reads BAT.
+         WHEN k LIKE '%LOCKER%' OR k LIKE '%STATION%' OR k LIKE '%BSS%'
+              OR k LIKE '%SPACEPORT%' THEN 'BSS'
+         WHEN k LIKE '%BAT%' THEN 'BAT'
+         WHEN k LIKE '%SPARE%' OR k LIKE '%PART%' THEN 'SP'
+         WHEN k LIKE '%CHARG%' THEN 'CHG'
+         ELSE 'OTH' END
+       FROM (SELECT UPPER(TRIM(COALESCE(NULLIF(ni.category,''),
+               NULLIF(nu.category,''),''))) k)) new_category,
       nu.serial_type new_serial_type,nu.motor_no new_motor_no,
       nu.secondary_serial new_secondary_serial,
       COALESCE(NULLIF(nu.unit_cost,0),ni.standard_cost) new_unit_cost,
@@ -1061,20 +1074,21 @@ inventoryRoutes.post('/cycle-counts/:id/post-adjustments', requirePermission('IN
        * The item master decides what class a known item belongs to.
        *
        * A counter types what is in front of them - "BATTERY", or nothing at
-       * all - and that word was overriding the master. ESP00263 is BAT in the
-       * master; counted as "BATTERY" it stored the literal word, counted blank
-       * it stored OTH, and neither is a class the register groups by. Three
-       * hundred and forty Ampace batteries would have registered as nought
-       * batteries: some under a class that does not exist and the rest under
-       * "Other".
+       * all - and that word was overriding the master. Counted as "BATTERY" it
+       * stored the literal word, counted blank it stored OTH, and neither is a
+       * class the register groups by. Three hundred and forty Ampace batteries
+       * would have registered as nought batteries: some under a class that does
+       * not exist and the rest under "Other".
        *
-       * So the master wins where the item is known, and where it is not, the
-       * typed word is normalised the same way every other route normalises one
-       * rather than being written down verbatim.
+       * So the master leads where the item is known. But the master is not
+       * above suspicion either - the live row for ESP00263 says "BATTERY", the
+       * same loose word, because the seed that meant to set BAT was an
+       * INSERT OR IGNORE against a row auto-created earlier. So whatever the
+       * answer comes from, it is normalised the same way every other route
+       * normalises one, rather than written down verbatim.
        */
-      const category=itemRow?.category
-        || categoryCode(detail.category||detail.item_name||count.category||'')
-        || 'OTH';
+      const category=categoryCode(itemRow?.category
+        || detail.category || detail.item_name || count.category || '');
       /*
        * A unit registering at no value is incomplete master data, exactly like
        * one arriving with no item code, and it has to be as visible. Otherwise

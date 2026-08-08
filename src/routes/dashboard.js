@@ -162,7 +162,8 @@ dashboardRoutes.get('/home', async (c) => {
    * billed anybody yet, and counting it would understate collection.
    */
   if (can.FINANCE) await attempt('management', async () => {
-    const [units, billed, collected, overdue, aging] = await Promise.all([
+    const [units, billed, collected, overdue, aging,
+           byStream, byCustomer, byMonth] = await Promise.all([
       first(db, `SELECT
           COUNT(CASE WHEN current_status IN ('AVAILABLE','IN_STOCK','AVAILABLE_FOR_SALE','AVAILABLE_FOR_LEASE') THEN 1 END) available,
           COUNT(CASE WHEN current_status IN ('LEASED','ON_LEASE') THEN 1 END) leased,
@@ -197,6 +198,28 @@ dashboardRoutes.get('/home', async (c) => {
             WHERE r.collection_id=c.id AND r.status='ACTIVE'),0) bal
           FROM erp_ar_collections c WHERE c.status='POSTED'
         ) WHERE bal > 0 GROUP BY label`),
+      /*
+       * What the revenue is made of, who it came from, and when.
+       *
+       * These three are the shape of the Receivables Center, and they belong on
+       * the dashboard for the same reason they belong there: "7.4M" tells you
+       * nothing a total could not, while "7.4M sold, 3.6M leased, 462K swapping"
+       * tells you what business the company is in this month.
+       *
+       * Whole book rather than the selected period, matching the centre - a
+       * customer does not stop being the largest because the window moved.
+       */
+      all(db, `SELECT COALESCE(NULLIF(sales_type,''),'OTHER') label,
+          COALESCE(SUM(gross_amount),0) value
+        FROM erp_ar_collections WHERE status='POSTED'
+        GROUP BY 1 HAVING value>0 ORDER BY value DESC`),
+      all(db, `SELECT COALESCE(NULLIF(customer_name,''),'Unnamed') label,
+          COALESCE(SUM(gross_amount),0) value
+        FROM erp_ar_collections WHERE status='POSTED'
+        GROUP BY 1 HAVING value>0 ORDER BY value DESC LIMIT 8`),
+      all(db, `SELECT substr(txn_date,1,7) label, COALESCE(SUM(gross_amount),0) value
+        FROM erp_ar_collections WHERE status='POSTED' AND COALESCE(txn_date,'')<>''
+        GROUP BY 1 ORDER BY 1`),
     ]);
     /*
      * "Pending approval" means an RFP sitting in the chain - submitted, not yet
@@ -278,6 +301,7 @@ dashboardRoutes.get('/home', async (c) => {
       receivablesPct: billedV > 0 ? (openV / billedV) * 100 : null,
       overdue: Number(overdue?.v || 0), overdueCount: Number(overdue?.n || 0),
       aging: aging || [],
+      byStream: byStream || [], byCustomer: byCustomer || [], byMonth: byMonth || [],
 
       // The payable side of the same question: what was asked for, what went out.
       payableRaised: raisedV, payableRaisedCount: Number(rfpRaised?.n || 0),
@@ -435,12 +459,51 @@ dashboardRoutes.get('/home', async (c) => {
       finance: withDelta(shape('FINANCE')), procurement: withDelta(shape('PROCUREMENT')) };
   });
 
-  // Completion of the counts actually in progress - a real percentage, not a score.
+  /*
+   * Completion of the counts actually in progress - a real percentage, not a
+   * score.
+   *
+   * "Percent of expected" is the wrong question for an opening count. The first
+   * count of a warehouse the system has never seen expects nothing, so the
+   * denominator is nought: three hundred and forty-one units scanned reported
+   * as "no count in progress, 0% counted" while the team was in the middle of
+   * counting them. What is true in that case is the number of units on the
+   * sheet and the fact that none of them are registered yet, so both are
+   * carried and the screen picks the measure that fits.
+   */
   const progress = await attempt('progress', async () => {
-    const r = await first(db, `SELECT COALESCE(SUM(counted_units),0) counted, COALESCE(SUM(expected_units),0) expected
+    const r = await first(db, `SELECT COALESCE(SUM(counted_units),0) counted,
+        COALESCE(SUM(expected_units),0) expected,
+        COUNT(*) sheets,
+        COALESCE(SUM(CASE WHEN status='OPEN' THEN 1 ELSE 0 END),0) open_sheets,
+        COALESCE(SUM(CASE WHEN status='SUBMITTED' THEN 1 ELSE 0 END),0) submitted_sheets
       FROM erp_cycle_counts WHERE status IN ('OPEN','SUBMITTED')`);
+    /*
+     * Counted on the floor and not yet in inventory. It becomes stock when the
+     * count is posted; until then it is neither missing nor on the books. A
+     * line nobody has named yet cannot be posted as anything, so how many are
+     * named is the real measure of how close an opening count is to done.
+     */
+    const pending = await first(db, `SELECT
+        COUNT(*) n,
+        COALESCE(SUM(CASE WHEN COALESCE(nu.item_code,'')<>'' THEN 1 ELSE 0 END),0) identified
+      FROM erp_cycle_count_lines l
+      JOIN erp_cycle_counts cc ON cc.id=l.cycle_count_id
+      LEFT JOIN erp_cycle_count_new_units nu ON nu.line_id=l.id
+      WHERE cc.status IN ('OPEN','SUBMITTED')
+        AND l.variance_type='UNKNOWN_SERIAL' AND l.actual_serial_no IS NOT NULL`);
     const expected = Number(r?.expected||0), counted = Number(r?.counted||0);
-    return { counted, expected, pct: expected ? Math.min(100,(counted/expected)*100) : null };
+    const awaiting = Number(pending?.n||0), identified = Number(pending?.identified||0);
+    return { counted, expected,
+      sheets: Number(r?.sheets||0),
+      openSheets: Number(r?.open_sheets||0),
+      submittedSheets: Number(r?.submitted_sheets||0),
+      awaitingRegistration: awaiting,
+      identified,
+      toIdentify: Math.max(0, awaiting - identified),
+      // Ready to post, for a count with nothing to count against.
+      readyPct: awaiting ? Math.min(100,(identified/awaiting)*100) : null,
+      pct: expected ? Math.min(100,(counted/expected)*100) : null };
   });
 
   return ok(c, { user:{ name:user.display_name||user.email, role, email:user.email },

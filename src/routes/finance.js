@@ -756,7 +756,7 @@ financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), 
     FROM erp_bank_accounts WHERE active=1 ORDER BY bank_name`);
   return ok(c,{request:row,attachments,lines,byAccount,liquidation:liquidation||null,signatures,workflow,
     encoder:encoder||null,
-    settlement:{...settlement,banks,canSettle:canSettle(c.get('erpUser')),
+    settlement:{...settlement,banks,canSettle:canSettle(c.get('erpUser'))&&!settlementStage(row),
       evidenceFrom:await evidenceFrom(c.env.DB),
       // A request raised on or after the cutoff is not called paid until the
       // bank advice is on the record, whatever the settlements add up to.
@@ -942,6 +942,29 @@ function canSettle(user){
 }
 
 /*
+ * Money only follows approval.
+ *
+ * canSettle asked who you are and never what the request is, so Finance could
+ * record a payment - and upload a bank advice for it - against a request still
+ * sitting in DRAFT, which nobody has approved and no bank has been told to pay.
+ * The chain exists to stop exactly that, and a settlement recorded before it
+ * runs makes the whole strip decorative.
+ *
+ * A request may be paid once the CEO has released it, and remains payable while
+ * it is part paid or being proved. Everything earlier is still being decided;
+ * everything else is closed.
+ */
+const SETTLEABLE_STATUSES=['APPROVED','PAYMENT_PREPARED','PARTIALLY_PAID','PAID_UNPROVEN','PAID'];
+function settlementStage(row){
+  const status=String(row?.status||'').toUpperCase();
+  if(SETTLEABLE_STATUSES.includes(status))return null;
+  if(['REJECTED','CANCELLED'].includes(status))
+    return `${row.request_no} is ${status.toLowerCase()} and cannot be paid.`;
+  return `${row.request_no} is ${status.replace(/_/g,' ').toLowerCase()} and has not been approved for `
+    +'payment yet. It has to clear the approval chain before a payment can be recorded against it.';
+}
+
+/*
  * Putting the filing straight is the checker's job, and she commits nothing by
  * doing it: a department is not a figure. Rucel checks every request, so she is
  * the one who sees that a station rent came in under Admin.
@@ -1030,7 +1053,8 @@ financeRoutes.get('/payment-requests/:id/settlements', requirePermission('FINANC
   if(!row)return fail(c,'Payment request not found.',404);
   const summary=await settlementSummary(c.env.DB,row.request_no,row.net_payable);
   return ok(c,{request:{id:row.id,requestNo:row.request_no,netPayable:row.net_payable,status:row.status},
-    ...summary,canSettle:canSettle(c.get('erpUser')),
+    ...summary,canSettle:canSettle(c.get('erpUser'))&&!settlementStage(row),
+    settlementBlockedBecause:settlementStage(row),
     evidenceFrom:await evidenceFrom(c.env.DB)});
 });
 
@@ -1047,8 +1071,8 @@ financeRoutes.post('/payment-requests/:id/settlements', requirePermission('FINAN
   if(!canSettle(user))return fail(c,'Only Finance records a payment against a request.',403);
   const row=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
   if(!row)return fail(c,'Payment request not found.',404);
-  if(['REJECTED','CANCELLED'].includes(String(row.status||'').toUpperCase()))
-    return fail(c,`${row.request_no} is ${String(row.status).toLowerCase()} and cannot be paid.`,409);
+  const stageBlock=settlementStage(row);
+  if(stageBlock)return fail(c,stageBlock,409);
   const b=await jsonBody(c);
   const amount=round2(numberValue(b.amount));
   if(!(amount>0))return fail(c,'Enter the amount that was paid.');
@@ -1124,6 +1148,10 @@ financeRoutes.post('/payment-requests/:id/settlements/:settlementId/proof',
   const settlement=await first(c.env.DB,`SELECT * FROM erp_payment_settlements WHERE id=? AND request_no=?`,
     [settlementId,row.request_no]);
   if(!settlement)return fail(c,'That payment is not on this request.',404);
+  // Proving a payment on a request that was never approved is the same act as
+  // making one, so it meets the same gate.
+  const proofBlock=settlementStage(row);
+  if(proofBlock)return fail(c,proofBlock,409);
   if(String(settlement.status||'').toUpperCase()==='VOID')
     return fail(c,'That payment was voided. Record it again rather than proving a reversal.',409);
   const b=await jsonBody(c);
