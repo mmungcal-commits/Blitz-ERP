@@ -2142,7 +2142,35 @@ await t('the CEO releases a request, Finance dispatches it, and only then is it 
 
   const detail=await call('GET','/api/finance/payment-requests/'+id);
   if(!detail.json?.workflow?.dispatch?.sent) throw new Error('the RFP card does not show the dispatch');
-  return {note:`${rfp}: refused before dispatch, sent to ap@mondenissin.example with cc, then paid`};
+
+  /*
+   * The signed form itself. Attachments carry the invoices; none of them is the
+   * RFP with the four signatures on it, and MNC have no Blitz login, so the
+   * dispatch has to carry a link they can actually open.
+   */
+  const url=detail.json.workflow.dispatch.documentUrl;
+  if(!url) throw new Error('the dispatch carries no link to the signed form');
+  const token=url.split('t=')[1];
+  const pub=await call('GET','/api/rfp-document/'+token);
+  if(!pub.json?.ok) throw new Error('the signed form link does not open: '+pub.json?.error);
+  if(pub.json.request.request_no!==rfp) throw new Error('the link opened the wrong request');
+  if(!pub.json.request.payee_name) throw new Error('the form carries no payee');
+  // Read only, and only the fields the form prints.
+  for(const leak of ['id','entity_id','payee_partner_id','bank_account_id','supplier_bill_id',
+                     'payment_document_id','requestor_id']){
+    if(leak in pub.json.request) throw new Error('the public form leaks '+leak);
+  }
+  const wrongToken=await call('GET','/api/rfp-document/'+token+'x');
+  if(wrongToken.json?.ok) throw new Error('a wrong token opened a request for payment');
+  const short=await call('GET','/api/rfp-document/abc');
+  if(short.json?.ok) throw new Error('a short token opened a request for payment');
+  // Every open is counted, so Finance can tell whether MNC ever looked.
+  await call('GET','/api/rfp-document/'+token);
+  const seen=await call('GET','/api/finance/payment-requests/'+id);
+  if(Number(seen.json.workflow.dispatch.documentViews||0)<2)
+    throw new Error('opening the form was not counted');
+
+  return {note:`${rfp}: refused before dispatch, sent with a link to the signed form, opened twice, then paid`};
 });
 
 await t('a deleted receivable stays deleted through a redeploy', async()=>{

@@ -249,6 +249,61 @@ check('a draft statement can be issued', await page.locator('#soaIssue').count()
 await page.screenshot({ path:SHOTS+'ar-statement.png', fullPage:true });
 await page.locator('#soaClose').click();
 
+/* ------------------------------------------------- a narrower window --------
+ *
+ * Alexis dragged the window in and the screen came apart: the status filter ran
+ * off the left edge, the register was cut down the middle, and half the page
+ * was empty white with a scrollbar under it. A laptop beside a spreadsheet is a
+ * normal way to work, so the register has to survive it.
+ */
+for (const width of [1180, 1024, 900]) {
+  await page.setViewportSize({ width, height:960 });
+  await page.waitForTimeout(350);
+  const m = await page.evaluate(() => {
+    const bar = document.querySelector('.workspace-filters, .filter-bar, select');
+    const r = bar ? bar.getBoundingClientRect() : null;
+    const wrap = document.querySelector('.record-table-wrap');
+    return { scrollW: document.documentElement.scrollWidth,
+      clientW: document.documentElement.clientWidth,
+      barLeft: r ? Math.round(r.left) : null,
+      wrapOverflow: wrap ? getComputedStyle(wrap).overflowX : null,
+      wrapRight: wrap ? Math.round(wrap.getBoundingClientRect().right) : null };
+  });
+  check(`at ${width}px the page does not scroll sideways`,
+    m.scrollW <= m.clientW + 2, `${m.scrollW} wide in ${m.clientW}`);
+  check(`at ${width}px the filters stay on the page`,
+    m.barLeft === null || m.barLeft >= -1, `left edge at ${m.barLeft}px`);
+  /*
+   * The rule itself, not just its effect. A register that happens to fit on
+   * this fixture would pass the scroll check while the real one, with real
+   * customer names in it, still pushed the page sideways.
+   */
+  /*
+   * The condition Alexis was actually in. Column widths are saved to
+   * localStorage in pixels when somebody drags a column, and restored whatever
+   * the window is: widths set on a wide monitor come back on a narrow one and
+   * the register becomes wider than the page. Simulated here by pinning the
+   * columns, because a fixture with short mock values fits when the real
+   * register does not.
+   */
+  await page.evaluate(() => document.querySelectorAll('.record-table thead th')
+    .forEach(th => { th.style.width = '260px'; }));
+  await page.waitForTimeout(120);
+  const pinned = await page.evaluate(() => ({
+    scrollW: document.documentElement.scrollWidth,
+    clientW: document.documentElement.clientWidth }));
+  check(`at ${width}px restored column widths do not push the page sideways`,
+    pinned.scrollW <= pinned.clientW + 2, `${pinned.scrollW} wide in ${pinned.clientW}`);
+  await page.evaluate(() => document.querySelectorAll('.record-table thead th')
+    .forEach(th => { th.style.width = ''; }));
+  check(`at ${width}px a wide register scrolls inside its card`,
+    m.wrapOverflow === 'auto' || m.wrapOverflow === 'scroll', String(m.wrapOverflow));
+  check(`at ${width}px the register stays inside the window`,
+    m.wrapRight === null || m.wrapRight <= m.clientW + 2, `right edge at ${m.wrapRight} of ${m.clientW}`);
+}
+await page.setViewportSize({ width:1440, height:960 });
+await page.waitForTimeout(250);
+
 check('no script errors', errors.length === 0, errors.slice(0,3).join(' | ') || 'clean');
 
 await browser.close();
