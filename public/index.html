@@ -7,18 +7,24 @@
   <title>Blitz - ERP</title>
   <link rel="icon" href="/logo.png">
   <meta name="e88-build" content="BLITZ-ERP-20260808-R37.0">
-  <link rel="stylesheet" href="/foundation.css?v=20260808-r55">
+  <link rel="stylesheet" href="/foundation.css?v=20260808-r56">
 </head>
 <body>
   <div id="loading" class="loading-screen">
-    <img src="/logo-navy.png" alt="E88 Ventures Inc.">
+    <!-- Dark background, so the wordmark has to be the white cut. The navy one
+         disappears into the gradient and leaves only the coloured slashes. -->
+    <img src="/logo-white.png" alt="E88 Ventures Inc.">
     <div><strong>Blitz - ERP</strong><span>Loading</span></div>
   </div>
 
   <div id="login" class="auth-shell hidden">
     <section class="auth-card" aria-live="polite">
       <div class="auth-brand">
-        <img src="/logo-navy.png" alt="E88 Ventures Inc.">
+        <!-- The card reads as white in the base stylesheet but paints
+             transparent over the shell's dark gradient in the live theme, so
+             this sits on dark like the other two. Checked by measuring the
+             background rather than by reading the CSS. -->
+        <img src="/logo-white.png" alt="E88 Ventures Inc.">
         <div><strong>Blitz - ERP</strong><span>Authorized users only</span></div>
       </div>
       <div id="authContent"></div>
@@ -29,7 +35,7 @@
   <div id="app" class="app-shell hidden">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-        <img src="/logo-navy.png" alt="E88 Ventures Inc.">
+        <img src="/logo-white.png" alt="E88 Ventures Inc.">
         <div><b>Blitz - ERP</b><span>E88 Ventures Inc.</span></div>
       </div>
       <nav id="nav"></nav>
@@ -65,6 +71,6 @@
       <div id="modalBody" class="modal-body"></div>
     </div>
   </div>
-  <script type="module" src="/foundation.js?v=20260808-r55"></script>
+  <script type="module" src="/foundation.js?v=20260808-r56"></script>
 </body>
 </html>
