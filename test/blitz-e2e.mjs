@@ -1795,6 +1795,56 @@ await t('a cost filed under the wrong department can be corrected', async()=>{
   return {note:'moved at PAID, both spellings together, figures untouched, trail kept'};
 });
 
+await t('the sales register carries the money that came in', async()=>{
+  /*
+   * The register held the billing side and not the collecting side, so the
+   * collection rate read zero against three and a half million pesos. Every
+   * row of the monitoring sheet carries a deposit date, a method and a bank:
+   * the customers had paid, and the register should say so.
+   */
+  const posted=sqlite.prepare(`SELECT stream, COUNT(*) n, ROUND(SUM(gross_amount),2) v
+    FROM erp_ar_collections WHERE status='POSTED' GROUP BY stream ORDER BY stream`).all();
+  const streams=posted.map(p=>p.stream);
+  for(const want of ['AFTERSALES','MC_SOLD'])
+    if(!streams.includes(want)) throw new Error(want+' was never posted');
+  // The two Alexis said she would review stay as drafts. Scoped to the import:
+  // a lease somebody posts by hand in the app is their decision, not ours.
+  const drafted=sqlite.prepare(`SELECT DISTINCT stream FROM erp_ar_collections
+    WHERE status='POSTED' AND source_system='SALES_MONITORING_2026'
+      AND stream IN ('MC_LEASED','BATTERY_SWAP')`).all();
+  if(drafted.length) throw new Error('imported and posted without being asked: '
+    +drafted.map(d=>d.stream).join(', '));
+
+  // Every posted entry the sheet says was settled has its receipt.
+  const missing=sqlite.prepare(`SELECT COUNT(*) n FROM erp_ar_collections c
+    WHERE c.status='POSTED' AND COALESCE(c.settlement_date,'')<>'' AND c.gross_amount>0
+      AND NOT EXISTS(SELECT 1 FROM erp_ar_receipts r WHERE r.collection_id=c.id AND r.status<>'VOID')`).get().n;
+  if(missing) throw new Error(missing+' settled entries have no receipt against them');
+
+  // And none of them is collected for more than it was billed.
+  const over=sqlite.prepare(`SELECT COUNT(*) n FROM (
+      SELECT c.id FROM erp_ar_collections c
+      JOIN erp_ar_receipts r ON r.collection_id=c.id AND r.status<>'VOID'
+      GROUP BY c.id HAVING SUM(r.amount) > c.gross_amount + 0.01)`).get().n;
+  if(over) throw new Error(over+' entries are collected beyond what was billed');
+
+  // The rate that reads zero when nothing is recorded now reads what happened.
+  const billed=sqlite.prepare(`SELECT COALESCE(SUM(gross_amount),0) v FROM erp_ar_collections
+    WHERE status='POSTED'`).get().v;
+  const got=sqlite.prepare(`SELECT COALESCE(SUM(r.amount),0) v FROM erp_ar_receipts r
+    JOIN erp_ar_collections c ON c.id=r.collection_id
+    WHERE r.status<>'VOID' AND c.status='POSTED'`).get().v;
+  if(!(billed>0)) throw new Error('nothing is posted at all');
+  const pct=(got/billed)*100;
+  if(!(pct>50)) throw new Error(`collection still reads ${pct.toFixed(1)}% of ${billed}`);
+
+  // A row loaded twice is a sale counted twice.
+  const dup=sqlite.prepare(`SELECT COUNT(*) n FROM (SELECT source_key FROM erp_ar_collections
+    WHERE source_key IS NOT NULL GROUP BY source_key HAVING COUNT(*)>1)`).get().n;
+  if(dup) throw new Error(dup+' sheet rows were loaded more than once');
+  return {note:`${Math.round(pct)}% collected: ${got.toLocaleString()} of ${billed.toLocaleString()} posted`};
+});
+
 console.log('\n=== Blitz - ERP end-to-end ===');
 for (const [s, n, note] of results) console.log(`${s}  ${n}${note ? '  ·  ' + note : ''}`);
 const failed = results.filter(r => r[0] === 'FAIL').length;
