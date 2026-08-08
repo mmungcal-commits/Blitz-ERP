@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R48.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R49.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -229,7 +229,11 @@ function workspaceTabs(code=state.module?.code){
     'sd-demand-planning':[['center','Demand Center'],['records','Forecasts'],['approvals','Baseline & Approval'],['reports','Forecast Analytics'],['setup','Planning Controls']],
     // Order Approval and Order Controls are not used - sales approval lives in
     // the outbound requisition chain, so both tabs are off the rail.
-    'sd-order-management':[['center','Order Center'],['records','Sales Orders'],['reports','Order Analytics']],
+    // Lease contracts sit here rather than in a module of their own, because a
+    // lease is a sales order with a term on it and the signed contract is
+    // uploaded against the order. One place for the customer, one for the paper.
+    'sd-order-management':[['center','Order Center'],['records','Sales Orders'],
+      ['leases','Lease Contracts'],['reports','Order Analytics']],
     'sd-lease-contract-management':[['center','Lease Center'],['records','Lease Contracts'],['approvals','Contract Approval'],['reports','Lease Analytics'],['setup','Lease Controls']],
     'sd-warranty-management':[['center','Warranty Center'],['records','Claims & Registrations'],['approvals','Claim Approval'],['reports','Warranty Analytics'],['setup','Warranty Rules']],
     'sd-service-management':[['center','Service Center'],['records','Service Jobs'],['approvals','Work Approval'],['reports','Service Analytics'],['setup','Service Controls']],
@@ -835,8 +839,14 @@ function renderLaunchpad(){
 
 function renderSidebar(){
   const module=state.module;
-  const icons={center:'▦',records:'☷',approvals:'✓',reports:'▥',setup:'⚙'};
-  const items=workspaceTabs(module.code).map(([section,label])=>[section,label,icons[section]]);
+  /*
+   * A tab whose key is not in this map printed the word "undefined" in front of
+   * its own label. It had been doing that on Collections and Statements since
+   * those tabs were added, so the fallback matters more than any one glyph.
+   */
+  const icons={center:'▦',records:'☷',approvals:'✓',reports:'▥',setup:'⚙',
+    collections:'₱',statements:'▤',leases:'⌸'};
+  const items=workspaceTabs(module.code).map(([section,label])=>[section,label,icons[section]||'›']);
   $('#nav').innerHTML=`<button class="nav-home" id="moduleHome">&larr; Blitz - ERP</button>
     <div class="nav-group">${esc(module.groupTitle)}</div>
     ${items.map(([section,label,icon])=>`<button class="nav-item ${state.section===section?'active':''}" data-section="${section}"><span class="nav-icon">${icon}</span>${label}</button>`).join('')}
@@ -5827,11 +5837,19 @@ async function renderPhysicalCount(countId=state.cycleCount){
     const editable=data?.header?.status==='OPEN';
     const rows=(data?.lines||[]).map(row=>{
       const unidentified=row.is_new_unit&&!row.item_code;
-      return `<tr${unidentified?' class="row-needs-item"':''}>
+      /*
+       * A serial nobody could find is not a loss if it is standing in a
+       * customer's yard. Saying who has it, on the line itself, is what stops
+       * the counter walking the aisle again looking for a unit that left weeks
+       * ago - and what stops Finance writing its cost off.
+       */
+      const away=row.variance_type==='MISSING'&&row.deployed_customer;
+      return `<tr${away?' class="row-with-customer"':(unidentified?' class="row-needs-item"':'')}>
       <td>${row.item_code?esc(row.item_code):(row.is_new_unit?'<span class="needs-item">Identify this unit</span>':'-')}</td>
       <td>${esc(row.item_name||'-')}</td>
       <td>${esc(row.expected_serial_no||'-')}</td><td>${esc(row.actual_serial_no||'-')}</td><td>${statusBadge(row.count_status)}</td>
-      <td>${row.variance_type?statusBadge(row.variance_type):'-'}</td><td>${esc(row.actual_location_code||'-')}</td>
+      <td>${away?'<span class="with-customer">With a customer</span>':(row.variance_type?statusBadge(row.variance_type):'-')}</td>
+      <td>${away?`<span class="with-customer">${esc(row.deployed_customer)}</span>${row.deployed_lease_no?' · '+esc(row.deployed_lease_no):''}`:esc(row.actual_location_code||'-')}</td>
       <td>${editable&&row.actual_serial_no?`<button class="table-action" data-edit-line="${row.id}">Edit</button>
         <button class="table-action danger" data-drop-line="${row.id}">${row.expected_serial_no?'Undo scan':'Remove'}</button>`:'-'}</td></tr>`;});
     const body=`<div class="workspace-commandbar"><label class="inline-control"><span>Count Plan</span><select id="physicalCountSelect"><option value="">Select count…</option>${register.rows.map(row=>`<option value="${row.id}" ${row.id===id?'selected':''}>${esc(row.count_no)} · ${esc(row.location_code)} · ${esc(row.status)}</option>`).join('')}</select></label>
@@ -5842,7 +5860,7 @@ async function renderPhysicalCount(countId=state.cycleCount){
           <button class="command" id="countCamera">Scan QR</button><button class="command" id="countMobile">Mobile count</button>
           <button class="command" id="countUpload">Upload count sheet</button></div>
         <div class="scan-summary">${kpi('Expected',data.summary.expected)}${kpi('Scanned',data.summary.counted)}${kpi('Variances',data.summary.variances)}
-          ${kpi('Missing',data.summary.missing)}${kpi('Location Mismatch',data.summary.locationMismatch)}</div>
+          ${kpi('Missing',data.summary.missing)}${kpi('With a customer',data.summary.withCustomer||0)}${kpi('Location Mismatch',data.summary.locationMismatch)}</div>
         ${operationalTable(['Item','Description','Expected Serial','Actual Serial','Count Status','Variance','Actual Location',''],rows)}
       </section></div></div>`:operationalEmpty('Create or select a cycle count plan.')}`;
     content.innerHTML=workbenchShell(body,'approvals');bindOperationalShell();
@@ -6587,6 +6605,7 @@ async function renderModuleSetup(){
 
 async function renderSalesOrderWorkspace(section){
   if(section==='setup')return renderModuleSetup();
+  if(section==='leases')return renderLeaseContracts();
   content.innerHTML='<div class="workspace-loading">Loading connected sales orders…</div>';
   try{
     const [orders,lookups]=await Promise.all([api('/sales?size=300'),api('/sales/lookups')]);
@@ -6669,6 +6688,326 @@ async function renderSalesOrderWorkspace(section){
       if(code===state.module.code&&s2)return openSection(s2);openWorkspace(code);});
     bindSalesOrderRows();
   }catch(error){showWorkspaceError(error);}
+}
+
+/* =====================================================================
+ * Lease Contracts
+ *
+ * The contract says how many units the customer is entitled to. The
+ * deployment says which units they actually have. Those are two numbers and
+ * the gap between them is the whole point of this screen: a contract for
+ * twenty units with eleven tagged out is not a contract for eleven units, it
+ * is nine units the company thinks are on a shelf somewhere.
+ * ===================================================================== */
+/*
+ * What a contract is worth: rate x units x days of term.
+ *
+ * The same arithmetic the loader used and the same the API re-derives on save,
+ * kept in one place here so a figure typed on the screen and a figure stored on
+ * the order can never disagree.
+ */
+function leaseValue(row){
+  const rate=Number(row.daily_rate_vat_ex||0);
+  const units=Math.max(Number(row.unit_count||0),1);
+  const start=Date.parse(row.effective_date||'');
+  const end=Date.parse(row.end_of_term||'');
+  if(!(rate>0)||!Number.isFinite(start)||!Number.isFinite(end)||end<=start)return 0;
+  const days=Math.round((end-start)/86400000);
+  return Math.round(rate*units*days*100)/100;
+}
+
+async function renderLeaseContracts(){
+  content.innerHTML='<div class="workspace-loading">Loading lease contracts…</div>';
+  try{
+    const data=await api('/sales/leases');
+    const rows=data.rows||[];
+    const totals=data.totals||{};
+    const live=rows.filter(r=>String(r.status).toUpperCase()==='ACTIVE');
+    const onContract=Number(totals.units||0);
+    const out=Number(totals.unitsDeployed||0);
+    const liveUnits=Number(totals.units_on_live_contracts||0);
+    // Tagged against live contracts, not against every contract ever signed:
+    // units on a finished contract are meant to be back.
+    const taggedPct=liveUnits>0?Math.min(100,(out/liveUnits)*100):null;
+    const noDoc=rows.filter(r=>!Number(r.documents||0)).length;
+    // The lease sheet arrived with the rate cell blank on most contracts, so
+    // their order values at zero. That is a gap to be filled in, not a price.
+    const noRate=rows.filter(r=>!(Number(r.daily_rate_vat_ex||0)>0)).length;
+    const contracted=rows.reduce((s,r)=>s+leaseValue(r),0);
+
+    const byCustomer={};rows.forEach(r=>{const k=r.customer_name||r.client_name||'Unnamed';
+      byCustomer[k]=(byCustomer[k]||0)+Number(r.unit_count||0);});
+    const byStatus={};rows.forEach(r=>{const k=String(r.status||'UNKNOWN').replace(/_/g,' ');
+      byStatus[k]=(byStatus[k]||0)+1;});
+    const byEnd={};live.forEach(r=>{const k=String(r.end_of_term||'').slice(0,7);
+      if(k)byEnd[k]=(byEnd[k]||0)+Number(r.unit_count||0);});
+
+    const tiles=vizTiles([
+      {label:'Contracts',value:rows.length,sub:live.length+' live'},
+      {label:'Units on contract',value:onContract,sub:liveUnits+' on live contracts'},
+      {label:'Tagged to customers',value:out,tone:out?'good':'warning',sub:'out right now'},
+      {label:'Not yet tagged',value:Math.max(0,liveUnits-out),
+        tone:(liveUnits-out)>0?'warning':'good',sub:'live contract units'},
+      {label:'No daily rate',value:noRate,tone:noRate?'warning':'good',sub:'valuing at zero'},
+      {label:'Contract value',value:contracted,sub:'rate × units × term'},
+      {label:'No contract on file',value:noDoc,tone:noDoc?'warning':'good',sub:'nothing uploaded'},
+    ]);
+    const charts='<div class="viz-grid">'
+      +vizRing(taggedPct==null?0:taggedPct,{title:'Units tagged to a customer',
+        subtitle:liveUnits>0?out+' of '+liveUnits+' units on live contracts':'no live contracts',
+        caption:'tagged',valueLabel:taggedPct==null?'0%':undefined,
+        tipLabel:'Units tagged out against units on live contracts',
+        tone:taggedPct==null?null:(taggedPct>=90?'good':taggedPct>=50?'warning':'serious')})
+      +vizDonut(Object.keys(byStatus).map(l=>({label:l,value:byStatus[l]})),
+        {title:'Contracts by status',totalLabel:'Contracts',keyLabel:'Status',valueLabel:'Contracts'})
+      +vizBars(Object.keys(byCustomer).map(l=>({label:l,value:byCustomer[l]})).sort((x,y)=>y.value-x.value),
+        {title:'Units by customer',color:VIZ.series[1],keyLabel:'Customer',valueLabel:'Units',
+         limit:8,labelWidth:150})
+      +vizColumns(Object.keys(byEnd).sort().map(k=>({label:k,value:byEnd[k]})),
+        {title:'Units coming off contract',keyLabel:'End of term',valueLabel:'Units'})
+      +'</div>';
+
+    const tableRows=rows.map(r=>{
+      const units=Number(r.unit_count||0);
+      const tagged=Number(r.units_out||0);
+      const gap=units-tagged;
+      const docs=Number(r.documents||0);
+      const rate=Number(r.daily_rate_vat_ex||0);
+      const value=leaseValue(r);
+      return `<tr data-lease="${r.id}">
+        <td><b>${esc(r.lease_no)}</b></td>
+        <td>${esc(r.cb_code||'-')}</td>
+        <td>${esc(r.customer_name||r.client_name||'-')}</td>
+        <td>${date(r.effective_date)}</td>
+        <td>${date(r.end_of_term)}</td>
+        <td class="num">${units}</td>
+        <td class="num">${tagged}</td>
+        <td class="num">${gap>0?`<span class="needs-item">${gap}</span>`:'0'}</td>
+        <td class="num">${rate>0?money(rate):'<span class="needs-item">not set</span>'}</td>
+        <td class="num">${rate>0?money(value):'-'}</td>
+        <td>${docs?docs+' file'+(docs===1?'':'s'):'<span class="needs-item">none</span>'}</td>
+        <td>${statusBadge(r.status)}</td>
+        <td>${can('SALES','EDIT')?`<button class="table-action" data-rate-lease="${r.id}">Rate</button>
+          <button class="table-action" data-tag-lease="${r.id}">Tag units</button>`:'-'}</td></tr>`;});
+
+    const body=`${tiles}${charts}
+      <div class="workspace-commandbar"><span class="command-spacer"></span>
+        <span class="workspace-mode">LEASE CONTRACTS &amp; DEPLOYED UNITS</span></div>
+      ${noRate?`<div class="workspace-notice"><b>${noRate} contract${noRate===1?'':'s'} carry no daily rate.</b>
+        The lease sheet came in with the rate cell blank, so the order behind the contract values at zero.
+        Open <b>Rate</b> on the row and type it in: the order value follows from the rate, the units and the term.</div>`:''}
+      <section class="workspace-card"><header><div><h2>Lease Contracts</h2>
+        <span>${rows.length} contracts · ${onContract} units contracted · ${out} tagged to a customer</span></div></header>
+        ${operationalTable(['Contract','CB Code','Customer','Start','End of term','Units','Tagged out','Untagged','Rate / day','Contract value','Contract file','Status',''],
+          tableRows,{emptyMessage:'No lease contracts loaded yet.'})}</section>`;
+    content.innerHTML=workbenchShell(body,'leases');bindOperationalShell();
+    bindViz(content,sec=>openSection(sec));
+    $$('[data-tag-lease]').forEach(button=>button.onclick=event=>{
+      event.stopPropagation();
+      const row=rows.find(r=>String(r.id)===button.dataset.tagLease);
+      openLeaseDeployForm(row);
+    });
+    $$('[data-rate-lease]').forEach(button=>button.onclick=event=>{
+      event.stopPropagation();
+      const row=rows.find(r=>String(r.id)===button.dataset.rateLease);
+      openLeaseRateForm(row);
+    });
+    $$('[data-lease]').forEach(row=>row.onclick=()=>openLeaseContract(Number(row.dataset.lease)));
+  }catch(error){showWorkspaceError(error);}
+}
+
+async function openLeaseContract(id){
+  try{
+    const data=await api('/sales/leases/'+id);
+    const h=data.header;
+    const open=(data.units||[]).filter(u=>!u.returned_at);
+    const back=(data.units||[]).filter(u=>u.returned_at);
+    const unitRows=(data.units||[]).map(u=>`<tr>
+      <td><b>${esc(u.serial_no)}</b></td><td>${esc(u.item_name||u.category||'-')}</td>
+      <td>${date(u.deployed_at)}</td><td>${esc(u.deployed_by||'-')}</td>
+      <td>${u.returned_at?date(u.returned_at):statusBadge('DEPLOYED')}</td>
+      <td>${esc(u.return_reason||'-')}</td>
+      <td>${!u.returned_at&&can('SALES','EDIT')?`<button class="table-action danger" data-return-unit="${esc(u.serial_no)}">Return</button>`:'-'}</td></tr>`);
+    const docRows=(data.documents||[]).map(d=>`<tr><td>${esc(d.file_name)}</td>
+      <td>${esc(d.uploaded_by||'-')}</td><td>${date(d.uploaded_at)}</td>
+      <td>${d.file_url?`<a href="${esc(d.file_url)}" target="_blank" rel="noopener">Open</a>`:'-'}</td></tr>`);
+    const gap=Number(h.unit_count||0)-open.length;
+    modal(`${h.lease_no} · ${h.customer_name||h.client_name}`,
+      `<div class="workspace-kpis">
+        ${kpi('Units contracted',h.unit_count)}${kpi('Tagged out now',open.length)}
+        ${kpi('Returned',back.length)}${kpi('Daily rate',Number(h.daily_rate_vat_ex||0)>0?money(h.daily_rate_vat_ex):'Not set')}
+        ${kpi('Contract value',leaseValue(h)>0?money(leaseValue(h)):'-')}
+        ${kpi('Term',(h.contract_term_months||0)+' months')}${kpi('Status',h.status)}</div>
+      ${gap>0?`<p class="modal-note"><b>${gap}</b> contracted unit${gap===1?'':'s'} not yet tagged to this customer.</p>`:''}
+      ${Number(h.daily_rate_vat_ex||0)>0?'':'<p class="modal-note"><span class="needs-item">No daily rate on this contract, so the order behind it values at zero.</span> Open the terms and type the rate from the signed contract.</p>'}
+      <div class="modal-actions">
+        ${can('SALES','EDIT')?'<button type="button" class="command primary" id="leaseTag">Tag units out</button>':''}
+        ${can('SALES','EDIT')?'<button type="button" class="command" id="leaseRate">Edit terms &amp; rate</button>':''}
+        ${can('SALES','EDIT')?'<button type="button" class="command" id="leaseDoc">Upload contract</button>':''}</div>
+      <h3 class="modal-subhead">Units</h3>
+      ${operationalTable(['Serial','Item','Tagged out','By','Returned','Reason',''],unitRows,
+        {emptyMessage:'No units tagged to this contract yet.'})}
+      <h3 class="modal-subhead">Contract documents</h3>
+      ${operationalTable(['File','Uploaded by','When',''],docRows,{emptyMessage:'No contract uploaded yet.'})}`,
+      `${h.cb_code||''} · ${date(h.effective_date)} to ${date(h.end_of_term)}`);
+    const mb=$('#modalBody');
+    if(mb.querySelector('#leaseTag'))mb.querySelector('#leaseTag').onclick=()=>openLeaseDeployForm(h);
+    if(mb.querySelector('#leaseRate'))mb.querySelector('#leaseRate').onclick=()=>openLeaseRateForm(h);
+    if(mb.querySelector('#leaseDoc'))mb.querySelector('#leaseDoc').onclick=()=>openLeaseDocumentForm(h);
+    mb.querySelectorAll('[data-return-unit]').forEach(b=>b.onclick=()=>openLeaseReturnForm(h,b.dataset.returnUnit));
+  }catch(error){toast(error.message,'error');}
+}
+
+/*
+ * Tagging takes serials as typed or scanned text rather than a picklist,
+ * because the person doing it is reading a frame number off a motorcycle.
+ * A serial already out elsewhere comes back refused by name: moving it
+ * silently would lose the fact that the first customer still holds it.
+ */
+function openLeaseDeployForm(lease){
+  modal('Tag units to '+(lease.lease_no||''),`<form id="leaseDeployForm" class="operational-form pay-form">
+    <p class="modal-note">Customer: <b>${esc(lease.customer_name||lease.client_name||'-')}</b>${lease.cb_code?' · '+esc(lease.cb_code):''}</p>
+    <label class="wide"><span>Serial numbers</span>
+      <textarea name="serials" rows="6" placeholder="One serial per line, or separated by spaces or commas" required></textarea></label>
+    <label class="wide"><span>Note (optional)</span><input name="note" placeholder="Where they went, who received them"></label>
+    <div class="modal-actions wide"><button type="submit" class="command primary">Tag these units out</button>
+      <button type="button" class="command" id="leaseDeployCancel">Cancel</button></div>
+  </form>`,'A serial already out on another contract will be refused, not moved');
+  const mb=$('#modalBody');
+  mb.querySelector('#leaseDeployCancel').onclick=()=>closeModal();
+  mb.querySelector('#leaseDeployForm').onsubmit=async event=>{
+    event.preventDefault();
+    const form=formDataObject(event.currentTarget);
+    const serials=String(form.serials||'').split(/[\s,]+/).filter(Boolean);
+    if(!serials.length)return toast('Scan or type at least one serial.','error');
+    try{
+      const result=await api('/sales/leases/'+lease.id+'/deploy',
+        {method:'POST',body:JSON.stringify({serials,note:form.note||''})});
+      closeModal();
+      const okCount=(result.deployed||[]).length;
+      const refused=result.refused||[];
+      toast(okCount+' unit'+(okCount===1?'':'s')+' tagged to '+(result.customer||lease.lease_no),okCount?'success':'error');
+      // Refusals are named rather than counted: "3 refused" is not something
+      // anyone can act on, and the whole reason to refuse is so somebody looks.
+      if(refused.length){
+        modal('Some serials were not tagged',`<div class="operational-form">
+          <p>${okCount} tagged. These were left alone:</p>
+          ${operationalTable(['Serial','Why'],refused.map(r=>`<tr><td><b>${esc(r.serial)}</b></td><td>${esc(r.reason)}</td></tr>`))}
+          <div class="modal-actions"><button type="button" class="command primary" id="refusedOk">Close</button></div></div>`);
+        $('#modalBody').querySelector('#refusedOk').onclick=()=>{closeModal();renderLeaseContracts();};
+      }else await renderLeaseContracts();
+    }catch(error){toast(error.message,'error');}
+  };
+}
+
+/*
+ * The rate, and the value that follows from it.
+ *
+ * The value is shown live as the rate is typed rather than being a second field
+ * to fill in, because a value typed beside a rate is the same fact recorded
+ * twice and one of the two will be wrong within a month. Only the rate, the
+ * units and the term are entered; the money is arithmetic.
+ */
+function openLeaseRateForm(lease){
+  modal('Contract terms · '+(lease.lease_no||''),`<form id="leaseRateForm" class="operational-form pay-form">
+    <p class="modal-note">${esc(lease.customer_name||lease.client_name||'-')}${lease.cb_code?' · '+esc(lease.cb_code):''}</p>
+    <div class="form-grid">
+      <label><span>Daily rate (VAT ex)</span><input name="dailyRateVatEx" type="number" min="0" step="0.01"
+        value="${Number(lease.daily_rate_vat_ex||0)||''}" placeholder="0.00" required></label>
+      <label><span>Units on contract</span><input name="unitCount" type="number" min="0" step="1"
+        value="${Number(lease.unit_count||0)}"></label>
+      <label><span>Contract start</span><input name="effectiveDate" type="date"
+        value="${esc((lease.effective_date||'').slice(0,10))}"></label>
+      <label><span>End of term</span><input name="endOfTerm" type="date"
+        value="${esc((lease.end_of_term||'').slice(0,10))}"></label>
+      <label><span>Deposit held</span><input name="depositAmount" type="number" min="0" step="0.01"
+        value="${Number(lease.deposit_amount||0)}"></label>
+      <label><span>Billing</span><input name="billingFrequency" value="${esc(lease.billing_frequency||'')}" placeholder="Monthly"></label>
+    </div>
+    <p class="modal-note" id="leaseRateValue"></p>
+    <div class="modal-actions wide"><button type="submit" class="command primary">Save the terms</button>
+      <button type="button" class="command" id="leaseRateCancel">Cancel</button></div>
+  </form>`,'The contract value is worked out from the rate, the units and the term');
+  const mb=$('#modalBody');
+  const form=mb.querySelector('#leaseRateForm');
+  const out=mb.querySelector('#leaseRateValue');
+  const preview=()=>{
+    const f=formDataObject(form);
+    const v=leaseValue({daily_rate_vat_ex:f.dailyRateVatEx,unit_count:f.unitCount,
+      effective_date:f.effectiveDate,end_of_term:f.endOfTerm});
+    out.innerHTML=v>0?`Contract value <b>${money(v)}</b> over the term.`
+      :'<span class="needs-item">No value yet: a rate, a start and an end of term are all needed.</span>';
+  };
+  form.oninput=preview;preview();
+  mb.querySelector('#leaseRateCancel').onclick=()=>closeModal();
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    const f=formDataObject(event.currentTarget);
+    if(!(Number(f.dailyRateVatEx)>0))return toast('Type the daily rate from the contract.','error');
+    try{
+      const r=await api('/sales/leases/'+lease.id,{method:'PATCH',body:JSON.stringify(f)});
+      closeModal();
+      toast(lease.lease_no+' now values at '+money(r.orderValue||0));
+      await renderLeaseContracts();
+    }catch(error){toast(error.message,'error');}
+  };
+}
+
+function openLeaseReturnForm(lease,serial){
+  modal('Return '+serial,`<form id="leaseReturnForm" class="operational-form pay-form">
+    <p class="modal-note">Coming back from <b>${esc(lease.customer_name||lease.client_name||'-')}</b> on ${esc(lease.lease_no)}.</p>
+    <label class="wide"><span>Reason / condition</span><input name="reason" placeholder="End of term, swap, damage" required></label>
+    <div class="modal-actions wide"><button type="submit" class="command primary">Record the return</button>
+      <button type="button" class="command" id="leaseReturnCancel">Cancel</button></div>
+  </form>`,'The deployment is closed, not deleted: where the unit has been stays on record');
+  const mb=$('#modalBody');
+  mb.querySelector('#leaseReturnCancel').onclick=()=>closeModal();
+  mb.querySelector('#leaseReturnForm').onsubmit=async event=>{
+    event.preventDefault();
+    const form=formDataObject(event.currentTarget);
+    try{
+      const result=await api('/sales/leases/'+lease.id+'/return',
+        {method:'POST',body:JSON.stringify({serials:[serial],reason:form.reason})});
+      closeModal();
+      toast((result.returned||[]).length?serial+' returned':'Nothing to return for '+serial,
+        (result.returned||[]).length?'success':'error');
+      await renderLeaseContracts();
+    }catch(error){toast(error.message,'error');}
+  };
+}
+
+function openLeaseDocumentForm(lease){
+  const files=[];
+  modal('Upload contract for '+(lease.lease_no||''),`<form id="leaseDocForm" class="operational-form pay-form">
+    <label class="wide"><span>Signed contract or addendum</span><input id="leaseDocFiles" type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.docx"></label>
+    <div id="leaseDocList" class="po-doc-list"></div>
+    <div class="modal-actions wide"><button type="submit" class="command primary">Upload</button>
+      <button type="button" class="command" id="leaseDocCancel">Cancel</button></div>
+  </form>`,'Up to 6 files, 5 MB each');
+  const mb=$('#modalBody');
+  const list=mb.querySelector('#leaseDocList');
+  const draw=()=>{list.innerHTML=files.length
+    ?files.map((f,i)=>`<span class="po-doc-chip">${esc(f.name)} <button type="button" data-drop-doc="${i}">&times;</button></span>`).join('')
+    :'<span class="po-doc-empty">No file chosen yet</span>';
+    list.querySelectorAll('[data-drop-doc]').forEach(b=>b.onclick=()=>{files.splice(Number(b.dataset.dropDoc),1);draw();});};
+  draw();
+  mb.querySelector('#leaseDocCancel').onclick=()=>closeModal();
+  mb.querySelector('#leaseDocFiles').onchange=event=>{
+    [...event.target.files].forEach(f=>{if(f.size<=5*1024*1024&&files.length<6)files.push(f);});
+    event.target.value='';draw();};
+  mb.querySelector('#leaseDocForm').onsubmit=async event=>{
+    event.preventDefault();
+    if(!files.length)return toast('Choose the contract file first.','error');
+    const attachments=await Promise.all(files.map(file=>new Promise(resolve=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,data:String(reader.result||'').split(',')[1]||''});
+      reader.onerror=()=>resolve({fileName:file.name,contentType:file.type||'',size:file.size,data:''});
+      reader.readAsDataURL(file);})));
+    try{
+      await api('/sales/leases/'+lease.id+'/documents',{method:'POST',body:JSON.stringify({attachments})});
+      closeModal();toast('Contract uploaded');await renderLeaseContracts();
+    }catch(error){toast(error.message,'error');}
+  };
 }
 
 function bindSalesOrderRows(){
@@ -8346,6 +8685,14 @@ init();
   @media (min-width:721px){.mtile-wrap,.mtile-back{display:none}}
   .row-needs-item{background:#fffaf0}
   .needs-item{color:#b06f00;font-weight:600;font-size:11.5px}
+  /* A unit that is out with a customer is accounted for, not lost: it reads
+     calm rather than as a warning, or every count looks like a disaster. */
+  .row-with-customer{background:#f3f8f3}
+  .with-customer{color:#2f6b3a;font-weight:600;font-size:11.5px}
+  .modal-note{margin:0 0 10px;font-size:12px;color:#41556b}
+  .workspace-notice{margin:0 0 12px;padding:10px 13px;border-radius:8px;font-size:12px;
+    background:#fff8ea;border:1px solid #f0dcb0;color:#5b4520;line-height:1.55}
+  .modal-subhead{margin:16px 0 6px;font-size:12.5px;color:#0a2239}
   .table-action.danger{color:#a4282b;border-color:#e7c3c4}
   .table-action.danger:hover{background:#fdf2f2}
   .mr-status.warn{background:#fff6e5;color:#7a5300}
