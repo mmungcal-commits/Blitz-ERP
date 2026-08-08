@@ -1845,6 +1845,225 @@ await t('the sales register carries the money that came in', async()=>{
   return {note:`${Math.round(pct)}% collected: ${got.toLocaleString()} of ${billed.toLocaleString()} posted`};
 });
 
+await t('nothing is on the record twice', async()=>{
+  /*
+   * Every register in this system was loaded from a spreadsheet, most of them
+   * more than once while the import was being got right, and the migrations
+   * re-run on every deploy. A duplicate is not a cosmetic problem here: it is
+   * a sale counted twice, a supplier paid twice on paper, or a document that
+   * makes a reader ask which copy is the real one.
+   *
+   * So this asserts the absence of duplicates across the lot, keyed on what
+   * actually identifies each thing rather than on a loose resemblance. Three
+   * R280s sold to the same customer on the same day for the same price are
+   * three sales; they are told apart by their receipt numbers.
+   */
+  const checks=[
+    ['payment requests', `SELECT request_no k FROM erp_payment_requests GROUP BY request_no HAVING COUNT(*)>1`],
+    ['payment request lines', `SELECT rfp_ref k FROM erp_payment_request_lines GROUP BY rfp_ref,line_no HAVING COUNT(*)>1`],
+    ['settlements', `SELECT natural_key k FROM erp_payment_settlements
+       WHERE COALESCE(natural_key,'')<>'' GROUP BY natural_key HAVING COUNT(*)>1`],
+    ['a request settled beyond its net payable', `SELECT r.request_no k FROM erp_payment_requests r
+       JOIN erp_payment_settlements s ON s.request_no=r.request_no AND s.status<>'VOID'
+       GROUP BY r.request_no HAVING SUM(s.amount)>r.net_payable+0.01`],
+    ['attachments', `SELECT record_no k FROM erp_attachments WHERE active=1
+       GROUP BY record_type,COALESCE(record_no,''),COALESCE(file_url,''),file_name HAVING COUNT(*)>1`],
+    ['collections by number', `SELECT entry_no k FROM erp_ar_collections GROUP BY entry_no HAVING COUNT(*)>1`],
+    ['collections by sheet row', `SELECT source_key k FROM erp_ar_collections
+       WHERE COALESCE(source_key,'')<>'' GROUP BY source_key HAVING COUNT(*)>1`],
+    ['the same sale on the same document', `SELECT entry_no k FROM erp_ar_collections
+       GROUP BY stream,txn_date,customer_name,gross_amount,COALESCE(document_no,'') HAVING COUNT(*)>1`],
+    ['receipts', `SELECT receipt_no k FROM erp_ar_receipts GROUP BY receipt_no HAVING COUNT(*)>1`],
+    ['a collection receipted beyond what was billed', `SELECT c.entry_no k FROM erp_ar_collections c
+       JOIN erp_ar_receipts r ON r.collection_id=c.id AND r.status<>'VOID'
+       GROUP BY c.id HAVING SUM(r.amount)>c.gross_amount+0.01`],
+    ['customers by name', `SELECT name k FROM erp_partners WHERE partner_type='CUSTOMER'
+       GROUP BY UPPER(TRIM(name)) HAVING COUNT(*)>1`],
+    ['partner codes', `SELECT partner_code k FROM erp_partners GROUP BY partner_code HAVING COUNT(*)>1`],
+    // COALESCE, not IS NOT NULL: an order raised in the app carries an empty
+    // source key, and two of those are two orders, not a duplicated import.
+    ['sales orders by sheet row', `SELECT source_key k FROM erp_sales_orders
+       WHERE COALESCE(source_key,'')<>'' GROUP BY source_key HAVING COUNT(*)>1`],
+    ['lease contracts', `SELECT lease_no k FROM erp_lease_contracts GROUP BY lease_no HAVING COUNT(*)>1`],
+    ['a unit out on two contracts at once', `SELECT serial_no k FROM erp_asset_deployments
+       WHERE returned_at IS NULL GROUP BY serial_no HAVING COUNT(*)>1`],
+    ['serialised units', `SELECT serial_no k FROM erp_assets WHERE COALESCE(serial_no,'')<>''
+       GROUP BY serial_no HAVING COUNT(*)>1`],
+    ['business line rules', `SELECT match_value k FROM erp_business_line_rules
+       GROUP BY match_type,match_value HAVING COUNT(*)>1`],
+  ];
+  const found=[];
+  for(const [what,q] of checks){
+    let rows;
+    try{ rows=sqlite.prepare(q).all(); }
+    catch(e){ throw new Error(`the check for ${what} does not run: ${e.message}`); }
+    if(rows.length) found.push(`${what}: ${rows.length} (${rows.slice(0,3).map(r=>r.k).join(', ')})`);
+  }
+  if(found.length) throw new Error('duplicates -> '+found.join(' | '));
+
+  // And the totals footer of a sheet is not a customer. Importing it created
+  // thirteen contracts for clients called "3" and "14".
+  const junk=sqlite.prepare(`SELECT COUNT(*) n FROM erp_partners
+    WHERE partner_type='CUSTOMER' AND (name GLOB '[0-9]*' OR UPPER(name) LIKE 'TOTAL%')`).get().n;
+  if(junk) throw new Error(junk+' customers came from a totals row rather than a contract');
+  return {note:checks.length+' registers checked, nothing on the record twice'};
+});
+
+await t('a unit out with a customer is deployed, not missing', async()=>{
+  const lease=sqlite.prepare(`SELECT id,lease_no FROM erp_lease_contracts WHERE status='ACTIVE'
+    ORDER BY id LIMIT 1`).get();
+  if(!lease) throw new Error('no running contract to deploy against');
+  const other=sqlite.prepare(`SELECT id,lease_no FROM erp_lease_contracts WHERE id<>? ORDER BY id LIMIT 1`)
+    .get(lease.id);
+
+  // The serialised unit the suite seeds lives in the warehouse.
+  const before=sqlite.prepare(`SELECT current_status FROM erp_assets WHERE serial_no='TESTVIN0001'`).get();
+  if(!before) throw new Error('the seeded unit is gone');
+
+  const out=await call('POST',`/api/sales/leases/${lease.id}/deploy`,{serials:['TESTVIN0001']});
+  if(!out.json?.ok) throw new Error(out.json?.error);
+  if(!out.json.deployed.includes('TESTVIN0001')) throw new Error('the unit was not deployed');
+
+  // The unit says where it is, so a count reads it off the register.
+  const after=sqlite.prepare(`SELECT current_status FROM erp_assets WHERE serial_no='TESTVIN0001'`).get();
+  if(after.current_status!=='LEASED') throw new Error('the unit still reads '+after.current_status);
+
+  // And the question a count asks has an answer.
+  const where=await call('GET','/api/sales/units/TESTVIN0001/location');
+  if(!where.json?.ok) throw new Error(where.json?.error);
+  if(!where.json.deployed) throw new Error('the unit is deployed but the register cannot say where');
+
+  // One unit, one contract. Sending it out again elsewhere is refused by name
+  // rather than silently moved, or the first customer loses it off their books.
+  if(other){
+    const twice=await call('POST',`/api/sales/leases/${other.id}/deploy`,{serials:['TESTVIN0001']});
+    if(!twice.json?.ok) throw new Error(twice.json?.error);
+    if(twice.json.deployed.length) throw new Error('a unit was sent out on two contracts at once');
+    if(!/already out/.test((twice.json.refused[0]||{}).reason||''))
+      throw new Error('the refusal does not say why: '+JSON.stringify(twice.json.refused));
+  }
+
+  // Coming back closes the row rather than deleting it.
+  const back=await call('POST',`/api/sales/leases/${lease.id}/return`,
+    {serials:['TESTVIN0001'],reason:'End of term'});
+  if(!back.json?.ok) throw new Error(back.json?.error);
+  const home=sqlite.prepare(`SELECT current_status FROM erp_assets WHERE serial_no='TESTVIN0001'`).get();
+  if(home.current_status!=='AVAILABLE') throw new Error('the returned unit reads '+home.current_status);
+  const hist=sqlite.prepare(`SELECT COUNT(*) n FROM erp_asset_deployments WHERE serial_no='TESTVIN0001'`).get().n;
+  if(!hist) throw new Error('the deployment history was deleted rather than closed');
+  return {note:'deployed to '+lease.lease_no+', refused a second contract, returned and back on the shelf'};
+});
+
+await t('a lease contract is a sales order, and its units are deployed', async()=>{
+  const c=sqlite.prepare(`SELECT COUNT(*) n, SUM(unit_count) u FROM erp_lease_contracts`).get();
+  if(!(c.n>0)) throw new Error('no lease contract was loaded');
+  // Every contract hangs off an order and a customer, or it is not reachable
+  // from either the sales register or the customer.
+  const loose=sqlite.prepare(`SELECT COUNT(*) n FROM erp_lease_contracts
+    WHERE sales_order_id IS NULL OR customer_id IS NULL`).get().n;
+  if(loose) throw new Error(loose+' contracts have no order or no customer behind them');
+  const orders=sqlite.prepare(`SELECT COUNT(*) n FROM erp_sales_orders WHERE transaction_type='LEASE'`).get().n;
+  if(orders<c.n) throw new Error(`${c.n} contracts but only ${orders} lease orders`);
+  // The batch code the SOA bills on is on the record.
+  const nobatch=sqlite.prepare(`SELECT COUNT(*) n FROM erp_lease_contracts c
+    WHERE NOT EXISTS(SELECT 1 FROM erp_lease_contract_batches b WHERE b.lease_contract_id=c.id)`).get().n;
+  if(nobatch) throw new Error(nobatch+' contracts carry no batch code');
+  // Running contracts are the ones whose units are out with customers now.
+  const live=sqlite.prepare(`SELECT COUNT(*) n, SUM(unit_count) u FROM erp_lease_contracts
+    WHERE status='ACTIVE'`).get();
+  if(!(live.u>0)) throw new Error('no units are out on a running contract');
+  return {note:`${c.n} contracts, ${c.u} units, ${live.n} running with ${live.u} units out`};
+});
+
+await t('every figure on the dashboard reconciles to its register', async()=>{
+  /*
+   * A card that is merely plausible is worse than a blank one: somebody acts
+   * on it. So each figure is recomputed here straight from the tables and
+   * compared with what the dashboard says, over a range wide enough to cover
+   * everything that was ever loaded.
+   */
+  const from='2025-01-01', to='2026-12-31';
+  const r=await call('GET',`/api/dashboard/home?from=${from}&to=${to}`);
+  if(!r.json?.ok) throw new Error(r.json?.error);
+  const m=r.json.sections?.management||{};
+  const near=(a,b,what)=>{
+    if(Math.abs(Number(a||0)-Number(b||0))>0.02)
+      throw new Error(`${what}: the card says ${Number(a||0).toFixed(2)}, the register says ${Number(b||0).toFixed(2)}`);
+  };
+  const one=q=>sqlite.prepare(q).get();
+
+  // Billed is what was posted in the period, and nothing else.
+  const billed=one(`SELECT COALESCE(SUM(gross_amount),0) v, COUNT(*) n FROM erp_ar_collections
+    WHERE status='POSTED' AND txn_date BETWEEN '${from}' AND '${to}'`);
+  near(m.billed, billed.v, 'billed');
+  near(m.invoices, billed.n, 'invoice count');
+
+  // Collected can never exceed billed: a rate over 100% is always a bug.
+  const got=one(`SELECT COALESCE(SUM(r.amount),0) v FROM erp_ar_receipts r
+    JOIN erp_ar_collections c ON c.id=r.collection_id
+    WHERE r.status<>'VOID' AND c.status='POSTED' AND c.txn_date BETWEEN '${from}' AND '${to}'`);
+  near(m.collected, Math.min(billed.v, got.v), 'collected');
+  if(m.collectionPct!=null&&m.collectionPct>100.01)
+    throw new Error('collection reads '+m.collectionPct+'%');
+  near(m.outstanding, Math.max(0, Math.round((billed.v-Math.min(billed.v,got.v))*100)/100), 'outstanding');
+
+  // Payable: what was asked for, and what actually left the bank.
+  const raised=one(`SELECT COALESCE(SUM(net_payable),0) v, COUNT(*) n FROM erp_payment_requests
+    WHERE status NOT IN ('REJECTED','CANCELLED') AND request_date BETWEEN '${from}' AND '${to}'`);
+  near(m.payableRaised, raised.v, 'payable raised');
+  const paid=one(`SELECT COALESCE(SUM(s.amount),0) v FROM erp_payment_settlements s
+    JOIN erp_payment_requests r ON r.request_no=s.request_no
+    WHERE s.status<>'VOID' AND r.status NOT IN ('REJECTED','CANCELLED')
+      AND r.request_date BETWEEN '${from}' AND '${to}'`);
+  near(m.payablePaid, paid.v, 'payable paid');
+  if(m.payablePct!=null&&m.payablePct>100.01) throw new Error('payable reads '+m.payablePct+'%');
+  near(m.payableOutstanding, Math.max(0, Math.round((raised.v-paid.v)*100)/100), 'payable outstanding');
+
+  // The service level is a count of payments, not of requests.
+  if(m.slaMeasured!=null){
+    /*
+     * A payment dated before the request it settles cannot be measured against
+     * a service level - there is no elapsed time to measure - so those drop
+     * out. Counting them would flatter the figure with zero-day payments.
+     */
+    const measured=one(`SELECT COUNT(*) n FROM erp_payment_settlements s
+      JOIN erp_payment_requests r ON r.request_no=s.request_no
+      WHERE s.status<>'VOID' AND COALESCE(s.paid_date,'')<>''
+        AND substr(s.paid_date,1,10) >= substr(r.request_date,1,10)
+        AND r.request_date BETWEEN '${from}' AND '${to}'`);
+    near(m.slaMeasured, measured.n, 'payments measured for the service level');
+    if(m.slaWithin>m.slaMeasured) throw new Error('more payments on time than were measured');
+  }
+
+  // Pending approvals must not include anything already settled.
+  const settledPending=one(`SELECT COUNT(*) n FROM erp_payment_requests r
+    WHERE r.status IN ('SUBMITTED','DEPARTMENT_APPROVED','FINANCE_REVIEWED','FINANCE_VALIDATED',
+      'MANCOM_APPROVED','APPROVED','FOR_APPROVAL')
+      AND EXISTS(SELECT 1 FROM erp_payment_settlements s
+                  WHERE s.request_no=r.request_no AND s.status<>'VOID')`);
+  if(settledPending.n) throw new Error(settledPending.n+' requests are awaiting approval with money already against them');
+
+  // The fleet tiles add up to the register, and a leased unit is one that is
+  // actually out with somebody.
+  const units=one(`SELECT
+      SUM(CASE WHEN current_status='AVAILABLE' THEN 1 ELSE 0 END) avail,
+      SUM(CASE WHEN current_status='LEASED' THEN 1 ELSE 0 END) leased,
+      SUM(CASE WHEN current_status='SOLD' THEN 1 ELSE 0 END) sold FROM erp_assets WHERE active=1`);
+  near(m.availableUnits, units.avail||0, 'available units');
+  near(m.soldUnits, units.sold||0, 'sold units');
+
+  // The business lines add up to the payables, or one of them is missing.
+  const lines=r.json.sections?.businessLines||[];
+  if(lines.length){
+    const sum=lines.reduce((t,l)=>t+Number(l.raised||0),0);
+    near(sum, raised.v, 'the business lines against total payables');
+  }
+  if((r.json.failures||[]).length)
+    throw new Error('the dashboard could not build: '+JSON.stringify(r.json.failures));
+  return {note:`billed ${Number(billed.v).toLocaleString()}, collected ${Number(m.collected).toLocaleString()}, `
+    +`raised ${Number(raised.v).toLocaleString()}, paid ${Number(paid.v).toLocaleString()} — all reconciled`};
+});
+
 console.log('\n=== Blitz - ERP end-to-end ===');
 for (const [s, n, note] of results) console.log(`${s}  ${n}${note ? '  ·  ' + note : ''}`);
 const failed = results.filter(r => r[0] === 'FAIL').length;
