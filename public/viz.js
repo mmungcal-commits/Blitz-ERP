@@ -186,8 +186,25 @@ export function vizBars(rows, opts){
     const x = LABEL;
     const d = 'M'+x+' '+y+'h'+(w-R)+'a'+R+' '+R+' 0 0 1 '+R+' '+R
       +'v'+(BAR-2*R)+'a'+R+' '+R+' 0 0 1 '+(-R)+' '+R+'h'+(-(w-R))+'z';
+    /*
+     * The label has to fit the room it was given. A company name written in
+     * full - "ALFAMART TRADING PHILIPPINES, INC." - is wider than the label
+     * column, and an SVG text anchored at the end simply runs off the left of
+     * the card and is cut in half by its own border. So it is clipped to what
+     * fits, with the full name still on the hover and in the table behind the
+     * Table button, where nothing is lost.
+     *
+     * ~5.6px per character at the 10px the category labels are set in.
+     */
+    const room = Math.max(6, Math.floor((LABEL - 12) / 5.6));
+    const label = String(row.label==null?'':row.label);
+    const shown = label.length > room ? label.slice(0, room - 1).trimEnd() + '\u2026' : label;
     return '<g class="viz-bar" tabindex="0" data-viz-tip="'+esc(row.label)+': '+esc(fmt(v))+'">'
-      + '<text x="'+(LABEL-8)+'" y="'+(y+BAR/2+4)+'" class="viz-cat" text-anchor="end">'+esc(row.label)+'</text>'
+      // The full name lives on the group's tooltip and in the table behind the
+      // Table button. It must not go in a <title> child here: that becomes part
+      // of the text node's content and anything reading the label gets it twice.
+      + '<text x="'+(LABEL-8)+'" y="'+(y+BAR/2+4)+'" class="viz-cat" text-anchor="end">'
+      + esc(shown)+'</text>'
       + (w>0?'<path d="'+d+'" fill="'+color+'"/>':'')
       + '<text x="'+(LABEL+w+7)+'" y="'+(y+BAR/2+4)+'" class="viz-val">'+esc(fmt(v))+'</text>'
       + '</g>';

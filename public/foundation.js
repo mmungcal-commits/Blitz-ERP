@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R44.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R45.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -1664,10 +1664,69 @@ async function renderReceivablesPayables(section){
   if(section==='records')return renderPaymentRequests();
   if(section==='approvals')return renderPaymentRequests();
   if(section==='reports')return renderAgingTax();
-  return renderFinanceControlNotes('AP Controls','fa-receivables-payables',[
-    ['Three-way match','Supplier bills should reference the approved PO and actual goods receipt.'],
-    ['Payments','RFP follows requester, department approval, finance validation, final approval and payment.'],
-  ]);
+  // Controls is where the business lines are set, not a page of advice.
+  return renderBusinessLines();
+}
+
+/*
+ * Which vendors host a battery swapping station.
+ *
+ * The system used to guess this by looking for a host's name in a line
+ * description, and it read wrong: Meralco, a construction firm and a member of
+ * staff all turned up in a chart headed "station site costs by host". A vendor
+ * either has a station standing in its premises or does not, and Finance is the
+ * one who knows. So this is a list to tick, with what each vendor has billed in
+ * rent, lease and power beside its name, because that is what makes the answer
+ * obvious.
+ */
+async function renderBusinessLines(){
+  content.innerHTML='<div class="workspace-loading">Loading business lines…</div>';
+  try{
+    const d=await api('/finance/business-lines',{noCache:true});
+    const hosts=d.hosts||[];
+    const chosen=hosts.filter(h=>h.chosen).length;
+    const lineCards=(d.lines||[]).map(l=>`<div class="bl-card">
+      <b>${esc(l.name)}</b><span>${esc(l.description||'')}</span>
+      <small>${(d.rules||[]).filter(r=>r.line_code===l.line_code).length} rule(s)</small></div>`).join('');
+    const row=h=>`<tr>
+      <td><label class="bl-pick"><input type="checkbox" data-host="${esc(h.payee_key)}" ${h.chosen?'checked':''}>
+        <span>${esc(h.payee_name)}</span></label></td>
+      <td>${esc(h.department||'-')}</td>
+      <td class="num">${h.requests}</td>
+      <td class="num">${money(h.amount)}</td>
+      <td class="num">${money(h.average)}</td></tr>`;
+    const body=`<div class="workspace-commandbar">
+      <button class="command primary" id="saveHosts" ${d.canEdit?'':'disabled'}>Save host vendors</button>
+      <span class="command-spacer"></span>
+      <span class="workspace-mode" id="hostCount">${chosen} of ${hosts.length} chosen</span></div>
+      <section class="workspace-card"><header><h2>Business lines</h2>
+        <span>Spend is read into a line by these rules</span></header>
+        <div class="bl-grid">${lineCards}</div></section>
+      <section class="workspace-card"><header><h2>Battery swapping station hosts</h2>
+        <span>Vendors billing rent, lease or power</span></header>
+        <p class="bl-note">A station stands inside somebody else's premises, and what the company pays
+          them is rent and the electricity the station draws. Tick the vendors that actually host a
+          station. Everything else stays out of the station running costs, however its line is titled.
+          ${d.canEdit?'':'<b>Only Finance can change this.</b>'}</p>
+        ${financeTable(['Vendor','Department','Requests','Rent, lease and power','Average a line'],
+          hosts.map(row),'No vendor bills rent, lease or power yet')}</section>`;
+    content.innerHTML=workbenchShell(body,'setup');bindWorkbench();
+    const count=()=>{
+      const n=$$('[data-host]').filter(x=>x.checked).length;
+      $('#hostCount').textContent=n+' of '+hosts.length+' chosen';
+    };
+    $$('[data-host]').forEach(x=>{x.onchange=count;if(!d.canEdit)x.disabled=true;});
+    if($('#saveHosts'))$('#saveHosts').onclick=async()=>{
+      const picked=$$('[data-host]').filter(x=>x.checked).map(x=>x.dataset.host);
+      try{
+        await api('/finance/business-lines/BSS/hosts',{method:'PUT',
+          body:JSON.stringify({hosts:picked})});
+        toast(picked.length+' host vendor'+(picked.length===1?'':'s')+' saved');
+        state.apiCache.clear();
+        await renderBusinessLines();
+      }catch(error){toast(error.message,'error');}
+    };
+  }catch(error){showWorkspaceError(error);}
 }
 
 async function renderSubledger(){
@@ -8126,6 +8185,17 @@ init();
     padding-top:9px;border-top:1px solid #e2e9f0;color:#657586;font-size:12px}
   .rfp-total b{font-size:15px;color:#0a2239;font-variant-numeric:tabular-nums}
   @media (max-width:900px){.rfp-line{grid-template-columns:1fr 1fr;grid-auto-rows:auto}}
+
+  /* Which vendors host a station. */
+  .bl-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:9px;padding:11px 13px}
+  .bl-card{padding:10px 12px;border:1px solid #e2e9f0;border-radius:8px;background:#f8fbfd}
+  .bl-card>b{display:block;font-size:12.5px;color:#0a2239;margin-bottom:3px}
+  .bl-card>span{display:block;font-size:11.5px;color:#657586;line-height:1.4}
+  .bl-card>small{display:block;margin-top:5px;font-size:10.5px;color:#8194a6}
+  .bl-note{margin:0;padding:9px 13px;font-size:12px;color:#657586;line-height:1.5;
+    border-bottom:1px solid #e2e9f0}
+  .bl-pick{display:flex;align-items:center;gap:7px;cursor:pointer}
+  .bl-pick input{width:15px;height:15px;flex:none}
 
   /* A dashboard the person arranges. */
   .home-grid-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
