@@ -1,7 +1,7 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
-  from './viz.js?v=20260808-r67';
-import { rfpDocumentHtml } from './rfp-doc.js?v=20260808-r67';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R67.0';
+  from './viz.js?v=20260808-r68';
+import { rfpDocumentHtml } from './rfp-doc.js?v=20260808-r68';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R68.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -5542,20 +5542,34 @@ async function renderArCollectionBook(state2){
           :(r.posting_status==='REVERSED'?'-':`<button class="table-action primary" data-rc-post="${r.id}">Post</button>`)}</td>
       </tr>`;});
 
+    /*
+     * Three figures, and each one opens the entries behind it.
+     *
+     * The bank tiles that used to sit here (BDO, Cash on hand, GCash, Maya) came
+     * from the bank registry rather than from these collections, so on a screen
+     * filtered to a date range they read a flat zero beside eleven million
+     * collected. A card that says 0 next to a card that says 11M is not a
+     * detail, it is a contradiction. The banks belong on the bank registry,
+     * where the figures are the whole registry and mean what they say.
+     *
+     * data-viz-match carries the State this tile stands for; the click sets the
+     * filter and re-applies it, so whatever dates are in the From/To boxes are
+     * kept rather than reset.
+     */
     const tiles=vizTiles([
-      {label:'Collected',value:Number(t.total||0),sub:Number(t.n||0)+' collections'},
+      {label:'Collected',value:Number(t.total||0),sub:Number(t.n||0)+' collections',
+       match:'ALL'},
       {label:'Awaiting posting',value:Number(t.recorded||0),
-       tone:Number(t.recordedCount)?'warning':'good',sub:Number(t.recordedCount||0)+' recorded',section:'collections'},
-      {label:'In the bank',value:Number(t.posted||0),tone:'good',sub:'posted to the registry'},
-    ].concat((reg.accounts||[]).slice(0,4).map(a=>(
-      {label:a.bank_name||a.bank_account_code,value:Number(a.balance||0),
-       sub:Number(a.movements||0)+' movements'}))));
+       tone:Number(t.recordedCount)?'warning':'good',
+       sub:Number(t.recordedCount||0)+' recorded',match:'RECORDED'},
+      {label:'In the bank',value:Number(t.posted||0),
+       tone:Number(t.posted)?'good':'neutral',
+       sub:Number(t.postedCount||0)+' posted to the registry',match:'POSTED'},
+    ]);
 
     const charts='<div class="viz-grid">'
       +vizDonut((d.byMethod||[]).map(r=>({label:r.label,value:Number(r.value)||0})),
         {title:'How the money came in',totalLabel:'Collected',keyLabel:'Method',valueLabel:'Collected'})
-      +vizDonut((d.byBank||[]).map(r=>({label:r.label,value:Number(r.value)||0})),
-        {title:'Which bank it landed in',totalLabel:'Collected',keyLabel:'Bank',valueLabel:'Collected'})
       +'</div>';
 
     const bankRows=(reg.accounts||[]).map(a=>`<tr><td><b>${esc(a.bank_account_code)}</b></td>
@@ -5588,6 +5602,18 @@ async function renderArCollectionBook(state2){
     const apply=()=>{f.state=$('#rcState').value;f.from=$('#rcFrom').value;f.to=$('#rcTo').value;
       f.q=$('#rcQ').value;renderArCollectionBook();};
     $('#rcApply').onclick=apply;
+    /*
+     * Each figure opens the entries behind it, without losing the date range.
+     * A card a finance user cannot click is a card that makes her retype the
+     * filter she is already looking at.
+     */
+    $$('.viz-tile[data-viz-match]').forEach(tile=>{ tile.onclick=event=>{
+      event.preventDefault(); event.stopPropagation();
+      const want=tile.dataset.vizMatch==='ALL'?'':tile.dataset.vizMatch;
+      const state=$('#rcState'); if(state) state.value=want;
+      apply();
+      const list=$('.record-table-wrap'); if(list) list.scrollIntoView({behavior:'smooth',block:'start'});
+    };});
     $('#rcQ').onkeydown=e=>{if(e.key==='Enter')apply();};
     $$('[data-rc-post]').forEach(b=>b.onclick=()=>arPostReceipts([Number(b.dataset.rcPost)]));
     $$('[data-rc-unpost]').forEach(b=>b.onclick=()=>arUnpostReceipt(Number(b.dataset.rcUnpost)));
