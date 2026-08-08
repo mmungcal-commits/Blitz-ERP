@@ -355,7 +355,10 @@ receivableRoutes.get('/receipts', requirePermission('RECEIVABLES','VIEW'), async
       COALESCE(SUM(r.amount),0) total,
       COALESCE(SUM(CASE WHEN p.receipt_id IS NULL THEN r.amount END),0) recorded,
       COALESCE(SUM(CASE WHEN p.status='POSTED' THEN r.amount END),0) posted,
-      COUNT(CASE WHEN p.receipt_id IS NULL THEN 1 END) recordedCount
+      COUNT(CASE WHEN p.receipt_id IS NULL THEN 1 END) recordedCount,
+      /* The count behind "in the bank", so the card can say how many rather
+         than repeat a phrase that is the same whether it is one receipt or none. */
+      COUNT(CASE WHEN p.status='POSTED' THEN 1 END) postedCount
     ${FROM} ${where}`, args);
   const byMethod = await all(c.env.DB, `SELECT COALESCE(NULLIF(r.payment_method,''),'Unspecified') label,
       COALESCE(SUM(r.amount),0) value ${FROM} ${where} GROUP BY label ORDER BY value DESC`, args);
