@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r60';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R61.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R62.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -8023,7 +8023,16 @@ function closeMobile(){
 }
 
 $('#modalClose').onclick=closeModal;
-$('#modal').onclick=event=>{if(event.target===$('#modal'))closeModal();};
+/*
+ * A modal closes on the cross and on nothing else.
+ *
+ * Clicking the dark surround used to dismiss it, which is fine over a message
+ * and destructive over a form: a mis-aimed click beside a half-filled contract
+ * threw the typing away with no warning and no undo. Every dialog on this
+ * system carries a cross, and several carry a Cancel as well, so there is
+ * always a deliberate way out and no need for an accidental one.
+ */
+$('#modal').onclick=event=>{ /* backdrop clicks are ignored on purpose */ };
 $('#refreshBtn').onclick=()=>state.section==='admin'?renderAccessAdmin():(state.module?openSection(state.section):renderLaunchpad());
 $('#modulesBtn').onclick=renderLaunchpad;
 $('#accessBtn').onclick=renderAccessAdmin;
