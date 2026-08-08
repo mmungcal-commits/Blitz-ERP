@@ -1152,6 +1152,75 @@ financeRoutes.post('/payment-requests/:id/settlements/:settlementId/void',
   return ok(c,{request:after,...await settlementSummary(c.env.DB,row.request_no,row.net_payable)});
 });
 
+/* =====================================================================
+ * Business lines, and who hosts a station
+ *
+ * Where a cost belongs is a judgement Finance makes, so it is held as
+ * data and edited here rather than written into a query. The host list
+ * is the sharp end of that: a vendor either has a station standing in
+ * its premises or does not, and no amount of reading spreadsheet
+ * descriptions will tell you which.
+ * ===================================================================== */
+
+/** One spelling of a name, so a vendor cannot appear twice in its own chart. */
+const payeeKey = v => String(v||'').toUpperCase().replace(/[.,]/g,'').replace(/\s+/g,' ').trim();
+
+financeRoutes.get('/business-lines', requirePermission('FINANCE','VIEW'), async c=>{
+  const lines=await all(c.env.DB,`SELECT * FROM erp_business_lines WHERE active=1 ORDER BY sort_order,line_code`);
+  const rules=await all(c.env.DB,`SELECT * FROM erp_business_line_rules ORDER BY line_code,priority,match_type,match_value`);
+  /*
+   * Every vendor that bills rent, a lease or a utility, with what it has cost
+   * and how many requests it came on. This is the list Finance ticks: it is
+   * the population a station host can possibly be drawn from, and the spend
+   * beside each name is what makes the choice obvious.
+   */
+  const candidates=await all(c.env.DB,`SELECT
+      TRIM(REPLACE(REPLACE(REPLACE(UPPER(TRIM(COALESCE(r.payee_name,''))),'.',''),',',''),'  ',' ')) payee_key,
+      MIN(r.payee_name) payee_name,
+      COUNT(DISTINCT r.request_no) requests,
+      ROUND(SUM(l.gross_amount),2) amount,
+      ROUND(AVG(l.gross_amount),2) average,
+      MIN(r.department) department
+    FROM erp_payment_request_lines l
+    JOIN erp_payment_requests r ON r.request_no=l.rfp_ref
+    WHERE r.status NOT IN ('REJECTED','CANCELLED')
+      AND (UPPER(COALESCE(l.account_title,'')) LIKE '%RENT%'
+        OR UPPER(COALESCE(l.account_title,'')) LIKE '%LEASE%'
+        OR UPPER(COALESCE(l.account_title,'')) LIKE '%UTILIT%')
+      AND COALESCE(r.payee_name,'')<>''
+    GROUP BY payee_key ORDER BY amount DESC`);
+  const chosen=new Set(rules.filter(r=>r.match_type==='PAYEE'&&r.line_code==='BSS')
+    .map(r=>payeeKey(r.match_value)));
+  return ok(c,{lines,rules,
+    hosts:candidates.map(v=>({...v,chosen:chosen.has(v.payee_key)})),
+    canEdit:canSettle(c.get('erpUser'))});
+});
+
+/*
+ * Replace the host list wholesale. Wholesale because a half-applied edit is
+ * how a vendor ends up counted in one screen and not the other, and because
+ * "these are the hosts" is one decision rather than a series of them.
+ */
+financeRoutes.put('/business-lines/BSS/hosts', requirePermission('FINANCE','EDIT'), async c=>{
+  const user=c.get('erpUser');
+  if(!canSettle(user))return fail(c,'Only Finance decides which vendors host a station.',403);
+  const b=await jsonBody(c);
+  const wanted=[...new Set((Array.isArray(b.hosts)?b.hosts:[])
+    .map(v=>payeeKey(typeof v==='string'?v:(v&&(v.payee_key||v.payee_name))))
+    .filter(Boolean))];
+  const before=await all(c.env.DB,`SELECT match_value FROM erp_business_line_rules
+    WHERE line_code='BSS' AND match_type='PAYEE'`);
+  await run(c.env.DB,`DELETE FROM erp_business_line_rules WHERE line_code='BSS' AND match_type='PAYEE'`);
+  for(const v of wanted){
+    await run(c.env.DB,`INSERT OR REPLACE INTO erp_business_line_rules
+      (line_code,match_type,match_value,priority,note) VALUES('BSS','PAYEE',?,15,?)`,
+      [v,`Chosen by ${user.email}.`]);
+  }
+  await audit(c,{action:'EDIT',module:'FINANCE',recordType:'BUSINESS_LINE',recordNo:'BSS',
+    before:{hosts:before.map(r=>r.match_value)},after:{hosts:wanted}});
+  return ok(c,{hosts:wanted});
+});
+
 // Who to email at each stage. Roles are resolved from erp_users so no addresses
 // are hard-coded; APP_ADMIN_EMAIL is the safety net.
 async function roleEmails(db,env,roles,department){
