@@ -662,7 +662,12 @@ financeRoutes.get('/payment-requests', requirePermission('FINANCE', 'VIEW'), asy
       WHERE s.request_no=r.request_no AND s.status<>'VOID') settlement_count,
     (SELECT COUNT(*) FROM erp_payment_settlements s
       WHERE s.request_no=r.request_no AND s.status<>'VOID'
-        AND s.proof_attachment_id IS NULL AND COALESCE(s.proof_reference,'')='') settlements_without_proof
+        AND s.proof_attachment_id IS NULL AND COALESCE(s.proof_reference,'')='') settlements_without_proof,
+    -- Sent to Monde Nissin, or still sitting fully signed on somebody's desk.
+    (SELECT d.dispatched_at FROM erp_rfp_dispatches d
+      WHERE d.rfp_ref=r.request_no AND d.status='SENT' ORDER BY d.id DESC LIMIT 1) dispatched_at,
+    (SELECT d.dispatched_to FROM erp_rfp_dispatches d
+      WHERE d.rfp_ref=r.request_no AND d.status='SENT' ORDER BY d.id DESC LIMIT 1) dispatched_to
     FROM erp_payment_requests r JOIN erp_legal_entities e ON e.id=r.entity_id
     LEFT JOIN erp_partners p ON p.id=r.payee_partner_id
     LEFT JOIN erp_purchase_orders po ON po.id=r.purchase_order_id
@@ -674,9 +679,22 @@ financeRoutes.get('/payment-requests', requirePermission('FINANCE', 'VIEW'), asy
     ORDER BY p.order_date DESC,p.id DESC LIMIT 1000`);
   // The screen needs the MANCOM threshold to know which requests get the extra tier.
   const min=await mancomMin(c.env.DB);
+  /*
+   * The queue this whole stage exists to produce: fully signed, nothing paid,
+   * nothing sent. Counted here rather than derived on the screen so the list
+   * and the badge cannot disagree.
+   */
+  const awaitingDispatch=rows.filter(r=>String(r.status||'').toUpperCase()==='APPROVED'
+    && !r.dispatched_at && !Number(r.settlement_count||0));
   return ok(c,{rows,purchaseOrders,visibility:vis.level,
     mancomEnabled:Number.isFinite(min),mancomMin:Number.isFinite(min)?min:null,
     financeReview:await financeReviewOn(c.env.DB),
+    dispatch:{required:await rfpFlag(c.env.DB,'rfp_require_dispatch','1'),
+      defaultTo:await rfpSetting(c.env.DB,'mnc_dispatch_to',''),
+      defaultCc:await rfpSetting(c.env.DB,'mnc_dispatch_cc',''),
+      awaiting:awaitingDispatch.length,
+      awaitingValue:Math.round(awaitingDispatch.reduce((t,r)=>t+Number(r.net_payable||0),0)*100)/100,
+      awaitingRefs:awaitingDispatch.slice(0,50).map(r=>r.request_no)},
     roleGate:await rfpFlag(c.env.DB,'rfp_role_gate','0')});
 });
 
@@ -779,6 +797,20 @@ financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), 
     stages:requiredStages(row.net_payable,min,review),
     nextStage:nextStage(row.net_payable,min,signatures,review),
     attachmentsEditable:['DRAFT','RETURNED'].includes(String(row.status||'').toUpperCase())};
+  /*
+   * Where this request stands with Monde Nissin. "due" is the screen's cue to
+   * offer the dispatch button: fully approved, nothing sent, nothing paid.
+   */
+  const dispatches=await all(c.env.DB,`SELECT id,dispatched_to,dispatched_cc,subject,message,
+      attachment_count,dispatched_by,dispatched_at,status,void_reason
+    FROM erp_rfp_dispatches WHERE rfp_ref=? ORDER BY id DESC`,[row.request_no]).catch(()=>[]);
+  const sentDispatch=dispatches.find(d=>String(d.status)==='SENT')||null;
+  workflow.dispatch={required:await rfpFlag(c.env.DB,'rfp_require_dispatch','1'),
+    sent:sentDispatch,history:dispatches,
+    due:String(row.status||'').toUpperCase()==='APPROVED'&&!sentDispatch,
+    canDispatch:canSettle(c.get('erpUser'))&&String(row.status||'').toUpperCase()==='APPROVED',
+    defaultTo:await rfpSetting(c.env.DB,'mnc_dispatch_to',''),
+    defaultCc:await rfpSetting(c.env.DB,'mnc_dispatch_cc','')};
   const encoder=await first(c.env.DB,`SELECT * FROM erp_rfp_encoders WHERE request_no=?`,[row.request_no])
     .catch(()=>null);
   const settlement=await settlementSummary(c.env.DB,row.request_no,row.net_payable);
@@ -786,7 +818,8 @@ financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), 
     FROM erp_bank_accounts WHERE active=1 ORDER BY bank_name`);
   return ok(c,{request:row,attachments,lines,byAccount,liquidation:liquidation||null,signatures,workflow,
     encoder:encoder||null,
-    settlement:{...settlement,banks,canSettle:canSettle(c.get('erpUser'))&&!settlementStage(row),
+    settlement:{...settlement,banks,canSettle:canSettle(c.get('erpUser'))&&!(await paymentBlockedBecause(c.env.DB,row)),
+      blockedBecause:await paymentBlockedBecause(c.env.DB,row),
       evidenceFrom:await evidenceFrom(c.env.DB),
       // A request raised on or after the cutoff is not called paid until the
       // bank advice is on the record, whatever the settlements add up to.
@@ -1001,6 +1034,56 @@ function settlementStage(row){
  */
 const canReclassify = canSettle;
 
+/* ------------------------------------------------------------------ MNC dispatch
+ *
+ * The CEO's signature releases the request, not the money. On the Apps Script
+ * that E88 run, final approval routes the request back to Finance at a stage
+ * called MNC Dispatch, where Finance emails the signed RFP and its attachments
+ * to Monde Nissin. Payment follows the dispatch, never precedes it.
+ *
+ * The state is the latest dispatch that was not voided. Kept as a row rather
+ * than a status so a re-send is a second attempt with its own date and
+ * recipient, and so the 252 requests imported already paid are left alone.
+ */
+async function latestDispatch(db,requestNo){
+  try{
+    return await first(db,`SELECT * FROM erp_rfp_dispatches
+       WHERE rfp_ref=? AND status='SENT' ORDER BY id DESC LIMIT 1`,[requestNo]);
+  }catch(e){ return null; }   // table not migrated yet
+}
+
+/**
+ * Why this request may not be paid yet, or null if it may.
+ *
+ * Two reasons, in the order they bite: it has not cleared the chain, or it has
+ * cleared the chain but has not been sent to MNC. The second is skipped for a
+ * request that already carries a payment, because a request imported as paid
+ * was dispatched on paper years before this table existed and blocking it now
+ * would be the ERP inventing a rule about the past.
+ */
+async function paymentBlockedBecause(db,row){
+  const stage=settlementStage(row);
+  if(stage)return stage;
+  if(!(await rfpFlag(db,'rfp_require_dispatch','1')))return null;
+  if(String(row?.status||'').toUpperCase()!=='APPROVED')return null;  // already in payment
+  /*
+   * Any payment history at all, voided included. Money has been recorded against
+   * this request before, which for an imported one means it was dispatched on
+   * paper long before this table existed. Counting only live settlements made a
+   * void look like a request that had never been paid, so voiding an import to
+   * record the real figure demanded a dispatch for something already sent.
+   *
+   * This opens no hole for a new request: without a dispatch it can never take
+   * its first settlement, so a settlement row is itself proof of a dispatch.
+   */
+  const settled=await first(db,`SELECT COUNT(*) n FROM erp_payment_settlements
+     WHERE request_no=?`,[row.request_no]).catch(()=>null);
+  if(Number(settled?.n||0)>0)return null;
+  if(await latestDispatch(db,row.request_no))return null;
+  return `${row.request_no} has been approved but not yet dispatched to Monde Nissin. `
+    +'Send the signed RFP and its attachments first, then record the payment.';
+}
+
 const round2=v=>Math.round(Number(v||0)*100)/100;
 
 /**
@@ -1083,8 +1166,8 @@ financeRoutes.get('/payment-requests/:id/settlements', requirePermission('FINANC
   if(!row)return fail(c,'Payment request not found.',404);
   const summary=await settlementSummary(c.env.DB,row.request_no,row.net_payable);
   return ok(c,{request:{id:row.id,requestNo:row.request_no,netPayable:row.net_payable,status:row.status},
-    ...summary,canSettle:canSettle(c.get('erpUser'))&&!settlementStage(row),
-    settlementBlockedBecause:settlementStage(row),
+    ...summary,canSettle:canSettle(c.get('erpUser'))&&!(await paymentBlockedBecause(c.env.DB,row)),
+    settlementBlockedBecause:await paymentBlockedBecause(c.env.DB,row),
     evidenceFrom:await evidenceFrom(c.env.DB)});
 });
 
@@ -1101,7 +1184,7 @@ financeRoutes.post('/payment-requests/:id/settlements', requirePermission('FINAN
   if(!canSettle(user))return fail(c,'Only Finance records a payment against a request.',403);
   const row=await first(c.env.DB,`SELECT * FROM erp_payment_requests WHERE id=?`,[id]);
   if(!row)return fail(c,'Payment request not found.',404);
-  const stageBlock=settlementStage(row);
+  const stageBlock=await paymentBlockedBecause(c.env.DB,row);
   if(stageBlock)return fail(c,stageBlock,409);
   const b=await jsonBody(c);
   const amount=round2(numberValue(b.amount));
@@ -1180,7 +1263,7 @@ financeRoutes.post('/payment-requests/:id/settlements/:settlementId/proof',
   if(!settlement)return fail(c,'That payment is not on this request.',404);
   // Proving a payment on a request that was never approved is the same act as
   // making one, so it meets the same gate.
-  const proofBlock=settlementStage(row);
+  const proofBlock=await paymentBlockedBecause(c.env.DB,row);
   if(proofBlock)return fail(c,proofBlock,409);
   if(String(settlement.status||'').toUpperCase()==='VOID')
     return fail(c,'That payment was voided. Record it again rather than proving a reversal.',409);
@@ -1570,12 +1653,78 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
       await run(c.env.DB,`UPDATE erp_payment_requests SET status='APPROVED',
         final_approved_by=?,final_approved_at=datetime('now'),supplier_bill_id=?,
         updated_at=datetime('now') WHERE id=?`,[user,billId||null,id]);
+    }else if(action==='DISPATCH_MNC'){
+      /*
+       * Finance sends the fully signed RFP to Monde Nissin.
+       *
+       * This is the stage the old system calls MNC Dispatch, and it sits where
+       * the old system puts it: after the CEO releases the request and before
+       * anybody records a payment. Composing the mail is Finance's job, so the
+       * gate is canSettle rather than can_approve - the CEO has already signed
+       * and is not being asked to sign again.
+       */
+      if(!canSettle(c.get('erpUser')))throw new Error('Only Finance dispatches a request to Monde Nissin.');
+      if(request.status!=='APPROVED')
+        throw new Error('Only a fully approved request is dispatched. This one is '
+          +String(request.status||'').replace(/_/g,' ').toLowerCase()+'.');
+      const to=normalizeText(b.dispatchTo)||await rfpSetting(c.env.DB,'mnc_dispatch_to','');
+      if(!to)throw new Error('Enter the Monde Nissin address to send this to. It is remembered for next time.');
+      const cc=normalizeText(b.dispatchCc)||await rfpSetting(c.env.DB,'mnc_dispatch_cc','');
+      const toList=to.split(/[,;]/).map(s=>s.trim()).filter(Boolean);
+      const ccList=cc.split(/[,;]/).map(s=>s.trim()).filter(Boolean);
+      const bad=toList.concat(ccList).find(a=>!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(a));
+      if(bad)throw new Error(`"${bad}" is not a valid email address.`);
+      const files=await attachmentsFor(c.env.DB,'PAYMENT_REQUEST',id,request.request_no);
+      /*
+       * A dispatch with nothing attached is an email saying a payment was
+       * approved, which is not what MNC are being sent. The signed RFP and its
+       * supporting documents are the point of the stage.
+       */
+      if(!files.length&&!b.force)
+        throw new Error('This request has no documents attached, so there is nothing to dispatch. '
+          +'Attach the signed RFP and its supporting papers first.');
+      const note=normalizeText(b.message);
+      const subject=`[E88] Dispatch to MNC: ${request.request_no} (${request.payee_name||'payee'}) `
+        +`- fully approved`;
+      const mail=await notifyRfp(c,request,{to:toList,cc:ccList,
+        title:'Fully approved request for payment',
+        subject,
+        intro:`This request has cleared the E88 approval chain and is released for payment. `
+          +`The signed request for payment and its supporting documents are linked below.`
+          +(note?`<br><br>${note.replace(/[<>]/g,'')}`:''),
+        extraFacts:[['Approved by',request.final_approved_by||''],
+          ['Approved on',String(request.final_approved_at||'').slice(0,10)]],
+        footer:'Dispatched from Blitz - ERP by '+user});
+      await run(c.env.DB,`INSERT INTO erp_rfp_dispatches
+        (rfp_ref,payment_request_id,dispatched_to,dispatched_cc,subject,message,
+         attachment_count,amount,dispatched_by,status,mail_result)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)`,[
+        request.request_no,id,toList.join(', '),ccList.join(', ')||null,subject,note||null,
+        files.length,request.net_payable,user,
+        (mail&&mail.ok===false&&!mail.skipped)?'FAILED':'SENT',
+        JSON.stringify(mail||{}).slice(0,1000)]);
+      // Remembered, so the next dispatch does not ask again. Same as setMncEmail().
+      await run(c.env.DB,`INSERT INTO erp_rfp_settings(key,value) VALUES('mnc_dispatch_to',?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value`,[toList.join(', ')]);
+      if(ccList.length){
+        await run(c.env.DB,`INSERT INTO erp_rfp_settings(key,value) VALUES('mnc_dispatch_cc',?)
+          ON CONFLICT(key) DO UPDATE SET value=excluded.value`,[ccList.join(', ')]);
+      }
+      await run(c.env.DB,`INSERT INTO erp_rfp_approvals(rfp_ref,stage,decision,actor,actor_name,reason,amount)
+        VALUES(?,?,?,?,?,?,?)`,[request.request_no,'MNC_DISPATCH','DISPATCHED',user,
+        c.get('erpUser').display_name||user,`Sent to ${toList.join(', ')}`,request.net_payable]);
+      request.__dispatchedTo=toList.join(', ');
+      request.__dispatchFiles=files.length;
     }else if(action==='MARK_PAID'){
       // Instructing the bank is a Finance act. FINANCE/EDIT alone is held by
       // department heads and by the requestor on their own request, which is
       // not who should be moving money.
       if(!canSettle(c.get('erpUser')))throw new Error('Only Finance prepares a payment.');
       if(request.status!=='APPROVED')throw new Error('Only an approved request can be paid.');
+      // The old system has no payment stage before MNC Dispatch, so neither does
+      // this one. Switch it off with rfp_require_dispatch if it ever gets in the way.
+      const undispatched=await paymentBlockedBecause(c.env.DB,request);
+      if(undispatched)throw new Error(undispatched);
       if(!b.bankAccountId||!normalizeText(b.paymentReference))throw new Error('Bank account and payment reference are required.');
       if(!request.payee_partner_id)throw new Error('A supplier master record is required before payment.');
       const supplierBill = request.supplier_bill_id ? await first(c.env.DB,
@@ -1742,9 +1891,9 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
           intro:`MANCOM approved this request. It now needs final CEO approval.`});
       }else if(action==='FINAL_APPROVE'){
         notified=await notifyRfp(c,after,{to:finance,cc:[...requestor,...deptHeads],
-          title:'CEO approved - ready for payment',
-          subject:`Approved for payment: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
-          intro:`The CEO gave final approval with all documents signed. Finance can now instruct the disbursing bank and upload the proof of payment.`});
+          title:'CEO approved - dispatch to Monde Nissin',
+          subject:`Approved, awaiting dispatch: ${after.request_no} · ${rfpMoney(after.net_payable)}`,
+          intro:`The CEO gave final approval with all documents signed. Finance: please dispatch the signed request and its attachments to Monde Nissin, then record the payment and upload the proof.`});
       }else if(action==='MARK_PAID'&&normalizeText(b.bankInstructionEmail)){
         notified=await notifyRfp(c,after,{to:[normalizeText(b.bankInstructionEmail)],cc:finance,
           title:'Payment instruction',
