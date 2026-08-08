@@ -7,7 +7,7 @@ import { saveAttachments, attachmentsFor } from '../lib/attachments.js';
 import { sendMailQuiet, mailLayout, mailFacts, mailAttachments } from '../lib/mailer.js';
 import { nextCode, normalizeText } from '../lib/codes.js';
 import {
-  ACTION_STAGE, STAGE_ROLE, STAGE_ROLE_ALIASES, checkApproval, mancomMin, rfpFlag, rfpSetting,
+  ACTION_STAGE, STAGE_ROLE, STAGE_ROLE_ALIASES, checkApproval, isAdminRole, mancomMin, rfpFlag, rfpSetting,
   requiredStages, nextStage,
 } from '../lib/rfp-rules.js';
 
@@ -1590,6 +1590,27 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
       // Finance checks the requestor's paperwork and the department head's
       // approval, then passes it to the head of Finance. A check, not an approval.
       if(!(await financeReviewOn(c.env.DB)))throw new Error('The Finance review step is switched off.');
+      /*
+       * The check is the checker's.
+       *
+       * Without this, the head of Finance could sign the check and then sign her
+       * own approval on the same request, because FINANCE satisfied both stages
+       * and the separation-of-duties rule lets an Admin sign twice. The split
+       * was on the screen and not in the rules.
+       *
+       * Enforced here rather than through the global role gate on purpose: that
+       * gate covers every stage, and switching it on locks out any department
+       * head who is neither appointed nor holding an alias role.
+       *
+       * The Admin override survives, so a payment is never stuck while Rucel is
+       * on leave, and it is written to the trail like any other signature.
+       */
+      if(await rfpFlag(c.env.DB,'rfp_review_role_only','1')){
+        const r=String(c.get('erpUser').role_code||'').toUpperCase();
+        if(!['FINANCE_REVIEWER'].includes(r)&&!isAdminRole(r))
+          throw new Error('The Finance check belongs to the Finance Reviewer. '
+            +'It has to be signed by whoever checks the paperwork, not by the approver.');
+      }
       if(request.status!=='DEPARTMENT_APPROVED')throw new Error('Department approval is required first.');
       await run(c.env.DB,`UPDATE erp_payment_requests SET status='FINANCE_REVIEWED',updated_at=datetime('now') WHERE id=?`,[id]);
     }else if(action==='FINANCE_VALIDATE'){
