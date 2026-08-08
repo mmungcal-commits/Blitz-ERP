@@ -301,6 +301,23 @@ check('the rate is sent, and the value is not sent alongside it',
   && String(ratePosted.unitCount) === '20' && ratePosted.orderValue === undefined,
   JSON.stringify(ratePosted));
 
+/* ------------------------------------------- a dialog closes on the cross */
+/*
+ * Clicking the dark surround used to dismiss the dialog. Over a message that is
+ * harmless; over a half-filled contract form it threw the typing away with no
+ * warning and no undo. The cross and the Cancel are the ways out.
+ */
+await page.locator('tr:has-text("LSE-0001") td').first().click();
+await page.waitForSelector('#modalBody .workspace-kpis', { timeout:5000 });
+await page.locator('#modal').click({ position:{ x:8, y:8 } });   // the backdrop
+await page.waitForTimeout(350);
+check('clicking the surround does not close the dialog',
+  await page.locator('#modal:not(.hidden)').count() === 1);
+await page.locator('#modalClose').click();
+await page.waitForTimeout(350);
+check('the cross does close it',
+  await page.locator('#modal.hidden').count() === 1);
+
 check('no script errors', errors.length === 0, errors.slice(0,3).join(' | ') || 'clean');
 
 await browser.close();

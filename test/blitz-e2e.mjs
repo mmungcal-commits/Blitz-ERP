@@ -733,6 +733,90 @@ await t('the date range drives the cards, and the default reaches the data', asy
   return {note:`default ${wide.json.period.from} to ${wide.json.period.to}; an empty window reports nothing`};
 });
 
+await t('the signed lease contracts are on the record', async()=>{
+  /*
+   * The register showed "none" under Contract file against all twenty-two, and
+   * the uploader built in R49 sat unused. The paper was never missing: the
+   * client name in column B of the lease sheet is a link to the signed
+   * contract, the same way the bank advices were hyperlinked in the
+   * procurement sheet.
+   */
+  const n=sqlite.prepare(`SELECT COUNT(*) n FROM erp_attachments
+    WHERE record_type='LEASE_CONTRACT' AND active=1`).get().n;
+  if(!(n>0)) throw new Error('no lease carries its signed contract');
+
+  // Each one has to sit on a real contract, and carry a link somebody can open.
+  const orphan=sqlite.prepare(`SELECT COUNT(*) n FROM erp_attachments a
+    WHERE a.record_type='LEASE_CONTRACT' AND a.active=1
+      AND NOT EXISTS(SELECT 1 FROM erp_lease_contracts l WHERE l.id=a.record_id)`).get().n;
+  if(orphan) throw new Error(orphan+' contract files hang off no lease at all');
+  const blank=sqlite.prepare(`SELECT COUNT(*) n FROM erp_attachments
+    WHERE record_type='LEASE_CONTRACT' AND active=1 AND COALESCE(file_url,'')=''`).get().n;
+  if(blank) throw new Error(blank+' contract files carry no link');
+
+  // One contract per lease, not the same paper stapled on twice by a redeploy.
+  const dupe=sqlite.prepare(`SELECT COUNT(*) n FROM (
+      SELECT record_id,file_url FROM erp_attachments
+       WHERE record_type='LEASE_CONTRACT' AND active=1
+       GROUP BY record_id,file_url HAVING COUNT(*)>1)`).get().n;
+  if(dupe) throw new Error(dupe+' contracts are attached to the same lease twice');
+
+  // And the register reads it back, which is the column that said "none".
+  const withFile=sqlite.prepare(`SELECT COUNT(*) n FROM erp_lease_contracts l
+    WHERE EXISTS(SELECT 1 FROM erp_attachments a WHERE a.record_type='LEASE_CONTRACT'
+      AND a.record_id=l.id AND a.active=1)`).get().n;
+  if(!(withFile>0)) throw new Error('no contract reads as having its file');
+  return {note:`${n} signed contracts on ${withFile} leases, none duplicated`};
+});
+
+await t('only a receivable that is actually paid reads as cleared', async()=>{
+  /*
+   * The register showed PENDING against entries collected in full and posted.
+   * cleared_status is only written when a collection goes through the collect
+   * endpoint, and the 2026 sheet was posted with its receipts in one go, so
+   * nothing came back afterwards to say the money had landed.
+   *
+   * The correction must not go further than that. "Cleared" means the money
+   * reached the bank. On the live register 20 posted entries worth 1.45M have
+   * collected nothing at all, and sweeping those into CLEARED would empty the
+   * ageing report and flatter the collection rate.
+   */
+  const paid=sqlite.prepare(`SELECT id,gross_amount FROM erp_ar_collections
+    WHERE status='POSTED' AND gross_amount>0 LIMIT 1`).get();
+  if(!paid) throw new Error('no posted entry to test against');
+  sqlite.prepare(`UPDATE erp_ar_collections SET cleared_status='PENDING' WHERE id=?`).run(paid.id);
+
+  // One fully receipted, one with nothing against it at all.
+  const owing=sqlite.prepare(`SELECT c.id FROM erp_ar_collections c
+    WHERE c.status='POSTED' AND c.gross_amount>0 AND c.id<>?
+      AND NOT EXISTS(SELECT 1 FROM erp_ar_receipts r WHERE r.collection_id=c.id AND r.status='ACTIVE')
+    LIMIT 1`).get(paid.id);
+
+  const sql=readFileSync(join(ROOT,'migrations','0063_clear_settled_receivables.sql'),'utf8');
+  sqlite.exec(sql); sqlite.exec(sql);   // a redeploy must not change the answer
+
+  const got=sqlite.prepare('SELECT cleared_status FROM erp_ar_collections WHERE id=?').get(paid.id);
+  const receipted=sqlite.prepare(`SELECT COALESCE(SUM(amount),0) v FROM erp_ar_receipts
+    WHERE collection_id=? AND status='ACTIVE'`).get(paid.id).v;
+  if(Number(receipted)+0.01>=Number(paid.gross_amount)){
+    if(got.cleared_status!=='CLEARED')
+      throw new Error('a fully receipted entry still reads '+got.cleared_status);
+  }
+  if(owing){
+    const o=sqlite.prepare('SELECT cleared_status FROM erp_ar_collections WHERE id=?').get(owing.id);
+    if(o.cleared_status==='CLEARED')
+      throw new Error('an entry with no receipts at all was marked cleared');
+  }
+  // Nothing anywhere may be cleared without the receipts to justify it.
+  const wrong=sqlite.prepare(`SELECT COUNT(*) n FROM erp_ar_collections c
+    WHERE c.cleared_status='CLEARED' AND c.gross_amount>0
+      AND ROUND(COALESCE((SELECT SUM(r.amount) FROM erp_ar_receipts r
+        WHERE r.collection_id=c.id AND r.status='ACTIVE'),0),2) < ROUND(c.gross_amount,2)-0.01
+      AND c.status='POSTED'`).get().n;
+  if(wrong) throw new Error(wrong+' posted entries read as cleared without the receipts to show for it');
+  return {note:'paid entries clear, unpaid ones stay pending, twice-run is stable'};
+});
+
 await t('payables ageing reports the payables, not an empty subledger', async()=>{
   /*
    * The screen read erp_subledger_documents, which no route on this system ever
