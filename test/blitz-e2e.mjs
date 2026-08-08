@@ -696,6 +696,42 @@ await t('a request nobody has approved cannot be paid or proved', async()=>{
   return {note:'draft refused by name, approved accepted; the screen is told before the click'};
 });
 
+await t('payables ageing reports the payables, not an empty subledger', async()=>{
+  /*
+   * The screen read erp_subledger_documents, which no route on this system ever
+   * writes. It showed an empty table and a total of nought while ten and a half
+   * million sat unpaid across thirty-seven requests. The payables are the RFPs.
+   */
+  const owed=sqlite.prepare(`SELECT COUNT(*) n, ROUND(SUM(bal),2) v FROM (
+      SELECT ROUND(r.net_payable - COALESCE((SELECT SUM(s.amount) FROM erp_payment_settlements s
+        WHERE s.request_no=r.request_no AND s.status<>'VOID'),0),2) bal
+      FROM erp_payment_requests r WHERE r.status NOT IN ('REJECTED','CANCELLED')
+    ) WHERE bal > 0.009`).get();
+  if(!(owed.n>0)) throw new Error('this test needs something outstanding to age');
+
+  const r=await call('GET','/api/finance/aging/AP');
+  if(!r.json?.ok) throw new Error(r.json?.error);
+  if(!(r.json.rows||[]).length)
+    throw new Error(`the ageing is empty while ${owed.n} requests owe ${owed.v}`);
+  if(Math.abs(Number(r.json.totals.total)-Number(owed.v))>0.01)
+    throw new Error(`ageing totals ${r.json.totals.total} against ${owed.v} actually owed`);
+
+  // The buckets have to add up to the total, or the report says two things.
+  const B=['CURRENT','1-30','31-60','61-90','OVER_90'];
+  const sum=B.reduce((t,b)=>t+Number(r.json.totals[b]||0),0);
+  if(Math.abs(sum-Number(r.json.totals.total))>0.01)
+    throw new Error(`buckets sum to ${sum}, total says ${r.json.totals.total}`);
+  for(const row of r.json.rows){
+    if(!B.includes(row.aging_bucket)) throw new Error('unknown bucket '+row.aging_bucket);
+    if(!(Number(row.open_balance)>0)) throw new Error(row.document_no+' is aged at nothing owed');
+  }
+  // A request that is fully settled is not a payable.
+  const paid=sqlite.prepare(`SELECT request_no FROM erp_payment_requests WHERE status='PAID' LIMIT 1`).get();
+  if(paid&&r.json.rows.some(x=>x.document_no===paid.request_no))
+    throw new Error(paid.request_no+' is settled but still on the ageing');
+  return {note:`${r.json.rows.length} open, ${Number(r.json.totals.total).toLocaleString()} owed, buckets reconcile`};
+});
+
 await t('a count in progress shows on the dashboard even with nothing expected', async()=>{
   /*
    * The live opening count found this too. Three hundred and forty-one units
