@@ -209,16 +209,31 @@ dashboardRoutes.get('/home', async (c) => {
        * Whole book rather than the selected period, matching the centre - a
        * customer does not stop being the largest because the window moved.
        */
-      all(db, `SELECT COALESCE(NULLIF(sales_type,''),'OTHER') label,
+      /*
+       * Grouped on `stream` and scoped to everything not voided, which is what
+       * the Receivables Center does. Getting either wrong makes the same card
+       * on two screens disagree: `sales_type` is empty on the whole register,
+       * so grouping by it collapsed twelve million into one slice labelled
+       * OTHER, and POSTED-only would drop the drafts the centre counts.
+       */
+      all(db, `SELECT COALESCE(NULLIF(stream,''),'OTHER') label,
           COALESCE(SUM(gross_amount),0) value
-        FROM erp_ar_collections WHERE status='POSTED'
+        FROM erp_ar_collections WHERE status<>'VOID'
         GROUP BY 1 HAVING value>0 ORDER BY value DESC`),
+      /*
+       * Leasing customers only.
+       *
+       * Across every stream this chart was a list of one: a six-million-peso
+       * motorcycle sale to Autoitalia dwarfed everyone and told you nothing
+       * about the business that recurs. Leasing is the relationship the company
+       * actually runs on, so that is what the chart ranks.
+       */
       all(db, `SELECT COALESCE(NULLIF(customer_name,''),'Unnamed') label,
           COALESCE(SUM(gross_amount),0) value
-        FROM erp_ar_collections WHERE status='POSTED'
+        FROM erp_ar_collections WHERE status<>'VOID' AND stream='MC_LEASED'
         GROUP BY 1 HAVING value>0 ORDER BY value DESC LIMIT 8`),
       all(db, `SELECT substr(txn_date,1,7) label, COALESCE(SUM(gross_amount),0) value
-        FROM erp_ar_collections WHERE status='POSTED' AND COALESCE(txn_date,'')<>''
+        FROM erp_ar_collections WHERE status<>'VOID' AND COALESCE(txn_date,'')<>''
         GROUP BY 1 ORDER BY 1`),
     ]);
     /*
