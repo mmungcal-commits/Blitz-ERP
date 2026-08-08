@@ -2488,6 +2488,33 @@ await t('every figure on the dashboard reconciles to its register', async()=>{
   }
   if((r.json.failures||[]).length)
     throw new Error('the dashboard could not build: '+JSON.stringify(r.json.failures));
+
+  /*
+   * A card with a register behind it has to carry a figure.
+   *
+   * The money cards were scoped to month-to-date. On a quiet month that meant
+   * Payable rate and Payment SLA drew nothing at all while fifty-three million
+   * sat raised and forty-five million paid on the register underneath - a card
+   * reading blank because of its date filter is indistinguishable from one that
+   * is broken. Every figure the dashboard shows now covers the same book as the
+   * register it links to.
+   */
+  for(const [what,card,register] of [
+    ['billed', m.billed, one(`SELECT COALESCE(SUM(gross_amount),0) v FROM erp_ar_collections WHERE status='POSTED'`).v],
+    ['collected', m.collected, null],
+    ['payables raised', m.payableRaised,
+      one(`SELECT COALESCE(SUM(net_payable),0) v FROM erp_payment_requests
+             WHERE status NOT IN ('REJECTED','CANCELLED')`).v],
+    ['payables paid', m.payablePaid,
+      one(`SELECT COALESCE(SUM(amount),0) v FROM erp_payment_settlements WHERE status<>'VOID'`).v],
+  ]){
+    if(register!=null&&Number(register)>0&&!(Number(card)>0))
+      throw new Error(`the ${what} card reads ${card} while its register holds ${register}`);
+  }
+  if(!(Number(m.payablePct)>0))
+    throw new Error('the payable rate card has no figure though payments exist');
+  if(m.slaPct==null&&Number(m.payablePaidCount||0)>0)
+    throw new Error('the payment SLA card has no figure though payments exist');
   return {note:`billed ${Number(billed.v).toLocaleString()}, collected ${Number(m.collected).toLocaleString()}, `
     +`raised ${Number(raised.v).toLocaleString()}, paid ${Number(paid.v).toLocaleString()} — all reconciled`};
 });
