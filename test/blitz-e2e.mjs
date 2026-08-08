@@ -61,6 +61,22 @@ async function call(method, path, body) {
   let json = null; try { json = await res.json(); } catch {}
   return { status: res.status, json };
 }
+/*
+ * A fully approved request is not payable until Finance has sent it to Monde
+ * Nissin, which is where the old Apps Script puts the stage and where this one
+ * puts it too. Tests that need a paid request go through the real endpoint
+ * rather than writing the row, so the gate is proved by every one of them.
+ *
+ * force:true because these fixtures carry no attachments. That the refusal
+ * exists at all is proved on its own, in the MNC dispatch test.
+ */
+async function dispatchToMnc(id, opts) {
+  const r = await call('POST', `/api/finance/payment-requests/${id}/action`,
+    { action:'DISPATCH_MNC', dispatchTo:'ap@mondenissin.example', force:true, ...(opts||{}) });
+  if (!r.json?.ok) throw new Error('dispatch to MNC refused: ' + (r.json?.error || r.status));
+  return r;
+}
+
 const results = [];
 const R = results;
 const t = async (name, fn) => { try { const r = await fn(); results.push([r === false ? 'FAIL' : 'PASS', name, (r && r.note) || '']); } catch (e) { results.push(['FAIL', name, e.message]); } };
@@ -690,6 +706,7 @@ await t('a request nobody has approved cannot be paid or proved', async()=>{
    * about the stage, not about forbidding payment.
    */
   sqlite.prepare(`UPDATE erp_payment_requests SET status='APPROVED' WHERE id=?`).run(id);
+  await dispatchToMnc(id);
   const ok2=await call('POST',`/api/finance/payment-requests/${id}/settlements`,
     {amount:5000,paymentReference:'BT-YES'});
   if(!ok2.json?.ok) throw new Error('an approved request refused its payment: '+ok2.json?.error);
@@ -1797,6 +1814,7 @@ await t('a request can be part paid, and the balance stays owed', async()=>{
   // Raised in March, so it is settled on the register's own terms rather than
   // held back by the evidence cutoff - that rule has its own test below.
   sqlite.prepare("UPDATE erp_payment_requests SET net_payable=1000000,gross_amount=1000000,request_date='2026-03-02',status='APPROVED' WHERE id=?").run(id);
+  await dispatchToMnc(id);
   // Released by the CEO: a draft is not payable, and that has its own test.
 
   const down=await call('POST','/api/finance/payment-requests/'+id+'/settlements',
@@ -1840,6 +1858,7 @@ await t('nothing raised from the cutoff is called paid without proof', async()=>
   if(!mk.json?.ok) throw new Error(mk.json?.error);
   const id=mk.json.id;
   sqlite.prepare("UPDATE erp_payment_requests SET net_payable=5000,gross_amount=5000,request_date='2026-08-03',status='APPROVED' WHERE id=?").run(id);
+  await dispatchToMnc(id);
 
   // Settled in full, but nobody has shown the bank advice.
   const s1=await call('POST','/api/finance/payment-requests/'+id+'/settlements',
@@ -2019,6 +2038,7 @@ await t('a redeploy does not settle anything twice or undo a correction', async(
   if(!mk.json?.ok) throw new Error(mk.json?.error);
   const id=mk.json.id, rfp=mk.json.requestNo;
   sqlite.prepare("UPDATE erp_payment_requests SET net_payable=250000,request_date='2026-02-02',status='APPROVED' WHERE id=?").run(id);
+  await dispatchToMnc(id);
   const s1=await call('POST','/api/finance/payment-requests/'+id+'/settlements',
     {amount:250000,paidDate:'2026-02-10',paymentReference:'BT-REDEPLOY-1'});
   if(!s1.json?.ok) throw new Error(s1.json?.error);
@@ -2057,6 +2077,72 @@ await t('a redeploy does not settle anything twice or undo a correction', async(
     if(st!=='PARTIALLY_PAID') throw new Error('the redeploy put the corrected request back to '+st);
   }
   return {note:'no double settlement, no resurrected import, the void and its reason survive'};
+});
+
+await t('the CEO releases a request, Finance dispatches it, and only then is it payable', async()=>{
+  /*
+   * The stage the old Apps Script calls MNC Dispatch. Final approval sends the
+   * request back to Finance to email the signed RFP and its attachments to
+   * Monde Nissin; payment follows the dispatch and never precedes it.
+   */
+  const mk=await call('POST','/api/finance/payment-requests',{
+    payeeName:'Dispatch Vendor',department:'Operations',purpose:'Send it to MNC first',
+    requestType:'Payment to Vendor',grossAmount:400000,supplierInvoiceNo:'INV-DISPATCH-1'});
+  if(!mk.json?.ok) throw new Error(mk.json?.error);
+  const id=mk.json.id, rfp=mk.json.requestNo;
+  const act=(body)=>call('POST',`/api/finance/payment-requests/${id}/action`,body);
+
+  // Not yet approved: nothing to dispatch.
+  sqlite.prepare("UPDATE erp_payment_requests SET net_payable=400000,request_date='2026-04-04',status='FINANCE_VALIDATED' WHERE id=?").run(id);
+  const early=await act({action:'DISPATCH_MNC',dispatchTo:'ap@mondenissin.example',force:true});
+  if(early.json?.ok) throw new Error('an unapproved request was dispatched to MNC');
+
+  sqlite.prepare("UPDATE erp_payment_requests SET status='APPROVED',final_approved_by='ceo@nrdev.ph',final_approved_at='2026-04-05' WHERE id=?").run(id);
+
+  // Approved but not dispatched: the money is held.
+  const early2=await call('POST',`/api/finance/payment-requests/${id}/settlements`,
+    {amount:400000,paidDate:'2026-04-06',paymentReference:'BT-TOO-SOON'});
+  if(early2.json?.ok) throw new Error('a fully approved request was paid before it reached MNC');
+  if(!/dispatch/i.test(early2.json?.error||'')) throw new Error('refused for the wrong reason: '+early2.json?.error);
+
+  // It shows on the queue Finance works from.
+  const queue=await call('GET','/api/finance/payment-requests?status=APPROVED');
+  if(!queue.json?.dispatch) throw new Error('the payables list carries no dispatch queue');
+  if(!queue.json.dispatch.awaitingRefs.includes(rfp))
+    throw new Error(rfp+' is approved and unsent but not on the awaiting-dispatch queue');
+
+  // Nothing attached is nothing to send.
+  const bare=await act({action:'DISPATCH_MNC',dispatchTo:'ap@mondenissin.example'});
+  if(bare.json?.ok) throw new Error('a request with no documents was dispatched');
+  const bad=await act({action:'DISPATCH_MNC',dispatchTo:'not-an-address',force:true});
+  if(bad.json?.ok) throw new Error('a malformed address was accepted');
+
+  const sent=await act({action:'DISPATCH_MNC',dispatchTo:'ap@mondenissin.example',
+    dispatchCc:'finance@nrdev.ph',message:'Cleared by the CEO on 05 April.',force:true});
+  if(!sent.json?.ok) throw new Error(sent.json?.error);
+
+  const row=sqlite.prepare("SELECT * FROM erp_rfp_dispatches WHERE rfp_ref=? AND status='SENT'").get(rfp);
+  if(!row) throw new Error('the dispatch left no record');
+  if(row.dispatched_to!=='ap@mondenissin.example') throw new Error('recipient recorded as '+row.dispatched_to);
+  const sig=sqlite.prepare("SELECT COUNT(*) n FROM erp_rfp_approvals WHERE rfp_ref=? AND stage='MNC_DISPATCH'").get(rfp).n;
+  if(sig!==1) throw new Error('the dispatch is not on the approval trail');
+
+  // Remembered for next time, the way setMncEmail() does on the old system.
+  const remembered=sqlite.prepare("SELECT value FROM erp_rfp_settings WHERE key='mnc_dispatch_to'").get();
+  if(remembered?.value!=='ap@mondenissin.example') throw new Error('the MNC address was not remembered');
+
+  // And now the money may move.
+  const paid=await call('POST',`/api/finance/payment-requests/${id}/settlements`,
+    {amount:400000,paidDate:'2026-04-07',paymentReference:'BT-DISPATCH-1'});
+  if(!paid.json?.ok) throw new Error('a dispatched request was still refused: '+paid.json?.error);
+
+  const gone=await call('GET','/api/finance/payment-requests?status=APPROVED');
+  if(gone.json.dispatch.awaitingRefs.includes(rfp))
+    throw new Error(rfp+' is still on the awaiting-dispatch queue after being sent');
+
+  const detail=await call('GET','/api/finance/payment-requests/'+id);
+  if(!detail.json?.workflow?.dispatch?.sent) throw new Error('the RFP card does not show the dispatch');
+  return {note:`${rfp}: refused before dispatch, sent to ap@mondenissin.example with cc, then paid`};
 });
 
 await t('a deleted receivable stays deleted through a redeploy', async()=>{

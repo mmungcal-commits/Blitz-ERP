@@ -52,6 +52,21 @@ const ROWS = [
   { id:104, request_no:'RFP-OPS2026-0100', request_date:'2026-07-31', payee_name:'Judy Joy Rosare',
     department:'Operations', account_title:'Transportation', account_count:1, purchase_order_no:'',
     net_payable:1050, status:'DRAFT', settled_amount:0, settlement_count:0, settlements_without_proof:0 },
+  /*
+   * Fully signed by the CEO and never sent to Monde Nissin. The old system has
+   * a stage for this; the row has to offer the dispatch rather than the payment,
+   * or Finance will pay something MNC have never seen.
+   */
+  { id:105, request_no:'RFP-OPS2026-0111', request_date:'2026-08-01', payee_name:'TAIZHOU OKLA AUTOMOBILE',
+    department:'Operations', account_title:'Inventory Purchase', account_count:1, purchase_order_no:'',
+    net_payable:640000, status:'APPROVED', settled_amount:0, settlement_count:0,
+    settlements_without_proof:0, attachment_count:3, dispatched_at:null, dispatched_to:null },
+  // The same request one step on: sent, so now it is the payment that is offered.
+  { id:106, request_no:'RFP-OPS2026-0112', request_date:'2026-08-01', payee_name:'SHEILA VINUYA',
+    department:'Operations', account_title:'Freight', account_count:1, purchase_order_no:'',
+    net_payable:132452.18, status:'APPROVED', settled_amount:0, settlement_count:0,
+    settlements_without_proof:0, attachment_count:2,
+    dispatched_at:'2026-08-04 09:12:00', dispatched_to:'ap@mondenissin.example' },
 ];
 
 const DETAIL = {
@@ -89,7 +104,9 @@ const server = createServer(async (req,res)=>{
     if (path === '/api/session') return res.end(JSON.stringify(SESSION));
     if (path === '/api/finance/payment-requests')
       return res.end(JSON.stringify({ ok:true, rows:ROWS, purchaseOrders:[], visibility:'ALL',
-        mancomEnabled:false, mancomMin:null, financeReview:true, roleGate:false }));
+        mancomEnabled:false, mancomMin:null, financeReview:true, roleGate:false,
+        dispatch:{ required:true, defaultTo:'ap@mondenissin.example', defaultCc:'',
+          awaiting:1, awaitingValue:640000, awaitingRefs:['RFP-OPS2026-0111'] } }));
     if (path === '/api/finance/master-data')
       return res.end(JSON.stringify({ ok:true, accounts:[{ account_name:'Inventory Purchase' }] }));
     if (/\/settlements\/\d+\/proof$/.test(path)){
@@ -156,6 +173,39 @@ check('a fully evidenced payment says nothing about proof',
 const unpaid = await rowText(3);
 check('a request with no payment shows a dash, not a zero',
   !unpaid.includes('0.00 owed'), unpaid);
+
+/* ------------------------------------------------- dispatch to Monde Nissin */
+/*
+ * The stage the CEO's signature hands over to. Approved and unsent must offer
+ * the dispatch and not the payment; approved and sent must offer the payment.
+ * Getting these the wrong way round pays an invoice MNC have never seen.
+ */
+const undispatched = await rowText(4);
+check('a fully approved request that has not been sent offers the dispatch',
+  undispatched.includes('Dispatch to MNC'), undispatched);
+check('and does not offer the payment first',
+  !undispatched.includes('Prepare Payment'), undispatched);
+const dispatched = await rowText(5);
+check('once sent, the same request offers the payment',
+  dispatched.includes('Prepare Payment') && !dispatched.includes('Dispatch to MNC'), dispatched);
+
+const header = await page.locator('.workspace-card header span').first().innerText();
+check('the worklist counts what is waiting to go to MNC',
+  /awaiting dispatch to MNC/i.test(header), header);
+const strip = await page.locator('.process-strip').first().innerText().catch(()=>'');
+check('the workflow strip names the dispatch stage',
+  /Dispatch to MNC/i.test(strip), strip.replace(/\n/g,' ').slice(0,120));
+
+await page.locator('[data-rfp-action="DISPATCH_MNC"]').first().click();
+await page.waitForSelector('#rfpDispatchForm', { timeout:8000 });
+const prefill = await page.locator('#rfpDispatchForm input[name="dispatchTo"]').inputValue();
+check('the dispatch form remembers the MNC address',
+  prefill === 'ap@mondenissin.example', prefill);
+const modalText = (await page.locator('#modalBody').innerText()).replace(/\n/g,' ');
+check('the dispatch form says what is going with the email',
+  /3 documents will be linked/i.test(modalText), modalText.slice(0,140));
+await page.locator('#rfpDispatchCancel').click();
+await page.waitForTimeout(300);
 
 /*
  * Part paid must not wear the green a settled request wears. It is the one

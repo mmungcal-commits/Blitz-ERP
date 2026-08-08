@@ -220,6 +220,17 @@ const billState = await postJournalFor(afterCeo.supplier_bill_id, 'supplier bill
 log('mmungcal@nrdev.ph', 'Approve and post the supplier-bill journal', billState);
 if (!String(billState).includes('POSTED')) failed += 1;
 
+// -------------------------------------------------- 4b. dispatch it to MNC
+/*
+ * The CEO's signature releases the request; it does not pay it. Finance sends
+ * the signed RFP and its attachments to Monde Nissin, and only then is a
+ * payment possible. Same order as the Apps Script the business runs today.
+ */
+const dispatch = await as('mmungcal@nrdev.ph', 'POST', `/api/finance/payment-requests/${id}/action`,
+  { action: 'DISPATCH_MNC', dispatchTo: 'ap@mondenissin.example', force: true });
+if (!dispatch?.ok) boom('dispatch to MNC', dispatch?.error);
+else log('mmungcal@nrdev.ph', 'Dispatch the signed RFP to Monde Nissin', 'sent to ap@mondenissin.example');
+
 // ---------------------------------------------------------------- 5. pay it
 const bank = bankSeed;
 if (!bank) {
