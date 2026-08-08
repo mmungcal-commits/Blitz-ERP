@@ -70,8 +70,26 @@ dashboardRoutes.get('/home', async (c) => {
    * is the question somebody actually opens this with; ?from=&to= overrides it.
    */
   const today = new Date().toISOString().slice(0,10);
-  const monthStart = today.slice(0,8) + '01';
-  const from = /^\d{4}-\d{2}-\d{2}$/.test(c.req.query('from')||'') ? c.req.query('from') : monthStart;
+  /*
+   * Every card on this screen answers for a date range, and the range is the
+   * one the person picked. What it must not default to is a window the data
+   * does not reach: month-to-date opened on an August with 448 pesos of billing
+   * and nothing raised at all, so Payable rate and Payment SLA drew blank while
+   * fifty-three million sat on the register. A card reading nothing because of
+   * its date filter is indistinguishable from a card that is broken.
+   *
+   * So the default spans the register itself - earliest transaction to today -
+   * and narrowing it is a deliberate act rather than the state you arrive in.
+   */
+  const span = await (async () => {
+    try {
+      const r = await first(db, `SELECT MIN(d) d FROM (
+          SELECT MIN(NULLIF(txn_date,'')) d FROM erp_ar_collections
+          UNION ALL SELECT MIN(NULLIF(request_date,'')) FROM erp_payment_requests)`);
+      return /^\d{4}-\d{2}-\d{2}$/.test(String(r?.d||'')) ? r.d : today.slice(0,8) + '01';
+    } catch { return today.slice(0,8) + '01'; }
+  })();
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(c.req.query('from')||'') ? c.req.query('from') : span;
   const to   = /^\d{4}-\d{2}-\d{2}$/.test(c.req.query('to')||'')   ? c.req.query('to')   : today;
 
   /*
@@ -171,10 +189,10 @@ dashboardRoutes.get('/home', async (c) => {
           COUNT(CASE WHEN current_status IN ('DEMO','PILOT_TEST','ASSIGNED','EMPLOYEE_ASSIGNED','INTERNAL_ASSIGNED') THEN 1 END) deployed
         FROM erp_assets WHERE active=1`),
       first(db, `SELECT COALESCE(SUM(gross_amount),0) v, COUNT(*) n FROM erp_ar_collections
-        WHERE status='POSTED'`),
+        WHERE status='POSTED' AND txn_date BETWEEN ? AND ?`, [from, to]),
       first(db, `SELECT COALESCE(SUM(r.amount),0) v FROM erp_ar_receipts r
         JOIN erp_ar_collections c ON c.id=r.collection_id
-        WHERE r.status='ACTIVE' AND c.status='POSTED'`),
+        WHERE r.status='ACTIVE' AND c.status='POSTED' AND c.txn_date BETWEEN ? AND ?`, [from, to]),
       /*
        * The register carries no due date, so a receivable ages from the day it
        * was transacted. Anything still unpaid past thirty days is overdue.
@@ -248,7 +266,7 @@ dashboardRoutes.get('/home', async (c) => {
       first(db, `SELECT COUNT(*) n FROM erp_payment_requests WHERE status='FINANCE_REVIEWED'`),
       // What the company was asked to pay in the period, and what it paid.
       first(db, `SELECT COUNT(*) n, COALESCE(SUM(net_payable),0) v FROM erp_payment_requests
-        WHERE status<>'REJECTED' AND status<>'CANCELLED'`),
+        WHERE status<>'REJECTED' AND status<>'CANCELLED' AND request_date BETWEEN ? AND ?`, [from, to]),
       /*
        * What went out is the sum of the payments, not the count of the flags.
        * A request settled 30% down counts as 30% paid, which is the only
@@ -259,17 +277,17 @@ dashboardRoutes.get('/home', async (c) => {
         FROM erp_payment_settlements s
         JOIN erp_payment_requests r ON r.request_no=s.request_no
         WHERE s.status<>'VOID' AND r.status<>'REJECTED' AND r.status<>'CANCELLED'
-`),
+          AND r.request_date BETWEEN ? AND ?`, [from, to]),
       // The service level is measured on money leaving, so it reads the same
       // settlements: a part payment is measured from when that part was paid.
       all(db, `SELECT r.request_date, s.paid_date paid_at
         FROM erp_payment_settlements s
         JOIN erp_payment_requests r ON r.request_no=s.request_no
         WHERE s.status<>'VOID' AND s.paid_date IS NOT NULL AND s.paid_date<>''
-`),
+          AND r.request_date BETWEEN ? AND ?`, [from, to]),
       first(db, `SELECT target_days FROM erp_service_levels WHERE code='RFP_PAYMENT'`).catch(() => null),
       first(db, `SELECT COUNT(*) n, COALESCE(SUM(net_payable),0) v FROM erp_payment_requests
-        WHERE status='PARTIALLY_PAID'`),
+        WHERE status='PARTIALLY_PAID' AND request_date BETWEEN ? AND ?`, [from, to]),
     ]);
 
     /*
@@ -355,9 +373,9 @@ dashboardRoutes.get('/home', async (c) => {
         LEFT JOIN v_payment_request_line v ON v.line_code=b.line_code
         LEFT JOIN erp_payment_requests r ON r.request_no=v.request_no
              AND r.status NOT IN ('REJECTED','CANCELLED')
-
+             AND r.request_date BETWEEN ? AND ?
         WHERE b.active=1
-        GROUP BY b.line_code ORDER BY b.sort_order, b.line_code`);
+        GROUP BY b.line_code ORDER BY b.sort_order, b.line_code`, [from, to]);
       sections.businessLines = (lines || []).map(l => {
         const raised = Number(l.raised || 0);
         const settled = Number(l.settled || 0);
@@ -380,8 +398,8 @@ dashboardRoutes.get('/home', async (c) => {
           COUNT(DISTINCT k.request_no) requests
         FROM v_bss_cost_kind k
         JOIN erp_payment_requests r ON r.request_no=k.request_no
-        WHERE r.status NOT IN ('REJECTED','CANCELLED')
-        GROUP BY k.cost_kind`);
+        WHERE r.status NOT IN ('REJECTED','CANCELLED') AND r.request_date BETWEEN ? AND ?
+        GROUP BY k.cost_kind`, [from, to]);
       const kind = c => (kinds || []).find(k => k.cost_kind === c) || {};
       sections.swappingNetwork = {
         build: { amount: Number(kind('BUILD').amount || 0), lines: Number(kind('BUILD').lines || 0) },
@@ -393,7 +411,8 @@ dashboardRoutes.get('/home', async (c) => {
           FROM v_bss_cost_kind k
           JOIN erp_payment_requests r ON r.request_no=k.request_no
           WHERE k.cost_kind='SITES' AND r.status NOT IN ('REJECTED','CANCELLED')
-          GROUP BY r.payee_name ORDER BY value DESC LIMIT 8`),
+            AND r.request_date BETWEEN ? AND ?
+          GROUP BY r.payee_name ORDER BY value DESC LIMIT 8`, [from, to]),
       };
     } catch (e) {
       /*
