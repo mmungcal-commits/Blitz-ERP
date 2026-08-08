@@ -440,6 +440,33 @@ check('the fallback does not loop',
 await broken.close();
 breakHome = false;
 
+/*
+ * A company name is longer than the label column it is given, and an SVG text
+ * anchored at the end of that column simply runs off the left of the card and
+ * is cut in half by its own border. Nothing throws, nothing overflows the
+ * document, and the chart is unreadable.
+ */
+const labelFit = await page.evaluate(()=>{
+  const svg = [...document.querySelectorAll('.viz svg')]
+    .find(s => s.querySelector('.viz-cat'));
+  if (!svg) return { skipped:true };
+  const box = svg.getBoundingClientRect();
+  const cats = [...svg.querySelectorAll('.viz-cat')];
+  const worst = Math.min(...cats.map(t => t.getBoundingClientRect().left - box.left));
+  // The full name has to remain reachable: on the group's tooltip, and in the
+  // table behind the Table button.
+  const tips = [...svg.querySelectorAll('.viz-bar')].map(g => g.dataset.vizTip || '');
+  return { worst, n:cats.length,
+    titled: tips.length > 0 && tips.every(t => t.length > 0),
+    clean: cats.every(t => !t.querySelector('title')) };
+});
+if (!labelFit.skipped){
+  check('a long category label stays inside its card',
+    labelFit.worst >= -0.5, `${Math.round(labelFit.worst)}px past the left edge`);
+  check('the full name is still there on hover', labelFit.titled, labelFit.n+' labels');
+  check('clipping did not double the label text', labelFit.clean);
+}
+
 // Back to the dashboard: the checks above walked into a module.
 await page.goto(base, { waitUntil:'networkidle' });
 await page.waitForSelector('.home-grid > .viz', { timeout:8000 });

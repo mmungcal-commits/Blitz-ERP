@@ -1528,6 +1528,51 @@ await t('the proof of payment came out of the sheet with the payment', async()=>
   return {note:docs.n+' advices on '+docs.rfps+' requests, every one linked and attributed'};
 });
 
+await t('which vendors host a station is chosen, not guessed', async()=>{
+  /*
+   * Reading a host out of a line description put Meralco, a construction firm
+   * and a member of staff into a chart headed "station site costs by host".
+   * A vendor either hosts a station or does not, and Finance says which.
+   */
+  const list=await call('GET','/api/finance/business-lines');
+  if(!list.json?.ok) throw new Error(list.json?.error);
+  const hosts=list.json.hosts||[];
+  if(!hosts.length) throw new Error('no candidate vendors were offered');
+  if(!hosts.some(h=>h.chosen)) throw new Error('the seeded hosts are not marked as chosen');
+
+  // The same name spelled two ways is one vendor, or its total splits in half.
+  const keys=hosts.map(h=>h.payee_key);
+  if(new Set(keys).size!==keys.length) throw new Error('a vendor is offered twice');
+  const alfa=hosts.filter(h=>/ALFAMART/.test(h.payee_key));
+  if(alfa.length!==1) throw new Error('ALFAMART appears '+alfa.length+' times');
+
+  const before=sqlite.prepare(`SELECT ROUND(COALESCE(SUM(gross_amount),0),2) v
+    FROM v_bss_cost_kind WHERE cost_kind='SITES'`).get().v;
+  if(!(before>0)) throw new Error('no site costs against the seeded hosts');
+
+  // Only Finance decides.
+  sqlite.prepare("UPDATE erp_users SET role_code='STAFF' WHERE email='mmungcal@nrdev.ph'").run();
+  const nope=await call('PUT','/api/finance/business-lines/BSS/hosts',{hosts:[]});
+  sqlite.prepare("UPDATE erp_users SET role_code='FINANCE' WHERE email='mmungcal@nrdev.ph'").run();
+  if(nope.json?.ok) throw new Error('a non-Finance user changed the host list');
+
+  // Choosing changes what the chart reads, which is the whole point.
+  const one=alfa[0].payee_key;
+  const saved=await call('PUT','/api/finance/business-lines/BSS/hosts',{hosts:[one]});
+  if(!saved.json?.ok) throw new Error(saved.json?.error);
+  const after=sqlite.prepare(`SELECT ROUND(COALESCE(SUM(gross_amount),0),2) v
+    FROM v_bss_cost_kind WHERE cost_kind='SITES'`).get().v;
+  if(!(after>0)||after>=before) throw new Error(`narrowing the list did not narrow the costs: ${before} -> ${after}`);
+  const only=sqlite.prepare(`SELECT DISTINCT payee_key FROM v_bss_cost_kind WHERE cost_kind='SITES'`).all();
+  if(only.length!==1||only[0].payee_key!==one)
+    throw new Error('a vendor nobody chose is still counted: '+only.map(o=>o.payee_key).join(', '));
+
+  // Put the seeded pair back for the tests that follow.
+  await call('PUT','/api/finance/business-lines/BSS/hosts',
+    {hosts:hosts.filter(h=>h.chosen).map(h=>h.payee_key)});
+  return {note:`${hosts.length} candidates, spellings merged, only the chosen ones count`};
+});
+
 await t('the swapping network is its own business line', async()=>{
   const lines=sqlite.prepare(`SELECT v.line_code, COUNT(*) n, ROUND(SUM(r.net_payable),2) v
     FROM erp_payment_requests r JOIN v_payment_request_line v ON v.request_no=r.request_no
@@ -1555,18 +1600,14 @@ await t('the swapping network is its own business line', async()=>{
   if(!(kb.BUILD>0)||!(kb.SITES>0)) throw new Error('build/sites split is empty: '+JSON.stringify(kb));
 
   // The site rents are small and go to the shops the stations stand in.
-  const hosts=sqlite.prepare(`SELECT r.payee_name p, ROUND(SUM(k.gross_amount),2) v
-    FROM v_bss_cost_kind k JOIN erp_payment_requests r ON r.request_no=k.request_no
-    WHERE k.cost_kind='SITES' GROUP BY r.payee_name ORDER BY v DESC LIMIT 5`).all();
-  if(!hosts.some(h=>/ALFAMART|POWER ?FILL|ENERGIZER/i.test(h.p||'')))
+  const hosts=sqlite.prepare(`SELECT k.payee_key p, ROUND(SUM(k.gross_amount),2) v
+    FROM v_bss_cost_kind k WHERE k.cost_kind='SITES' GROUP BY k.payee_key ORDER BY v DESC`).all();
+  if(!hosts.some(h=>/ALFAMART|POWER ?FILL/i.test(h.p||'')))
     throw new Error('no host merchant among the site costs: '+hosts.map(h=>h.p).join(', '));
+  // And nobody who was never chosen.
+  const stray=hosts.filter(h=>!/ALFAMART|POWER ?FILL/i.test(h.p||''));
+  if(stray.length) throw new Error('unchosen vendors in the site costs: '+stray.map(h=>h.p).join(', '));
 
-  // Moving the ceiling moves the rule, which is why it is data and not code.
-  const before=sqlite.prepare(`SELECT COUNT(*) n FROM v_payment_request_line WHERE line_code='BSS'`).get().n;
-  sqlite.prepare(`UPDATE erp_rfp_settings SET value='1' WHERE key='bss_site_cost_ceiling'`).run();
-  const after=sqlite.prepare(`SELECT COUNT(*) n FROM v_payment_request_line WHERE line_code='BSS'`).get().n;
-  sqlite.prepare(`UPDATE erp_rfp_settings SET value='6000' WHERE key='bss_site_cost_ceiling'`).run();
-  if(after>=before) throw new Error('the site cost ceiling had no effect');
   return {note:`BSS ${by.BSS.n} requests / ${Number(by.BSS.v).toLocaleString()} · `
     +`build ${kb.BUILD.toLocaleString()} vs sites ${kb.SITES.toLocaleString()} · `
     +`${elsewhere} station requests raised outside RideBox`};
