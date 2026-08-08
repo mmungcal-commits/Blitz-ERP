@@ -534,6 +534,61 @@ const phoneOverflow = await phone.evaluate(() => document.documentElement.scroll
 check('the cockpit fits a phone without sideways scroll', phoneOverflow <= 1, `${phoneOverflow}px`);
 await phone.screenshot({ path:SHOTS+'viz-cockpit-phone.png' });
 
+/* ------------------------------------------- an opening count in progress */
+/*
+ * The shape the live system was actually in. Nothing registered, 341 units
+ * scanned onto an open sheet, and the counting card read "no count in
+ * progress · 0% counted" because counted-over-expected was nought over nought.
+ * A card that reports nothing happening while the team is in the warehouse
+ * counting is worse than no card.
+ */
+const OPENING = JSON.parse(JSON.stringify(HOME));
+OPENING.sections.inventory = { available:0, quarantine:0, unvalued:0, openCounts:1, variances:341, byClass:[] };
+OPENING.sections.management = { ...OPENING.sections.management,
+  availableUnits:0, leasedUnits:0, soldUnits:0, deployedUnits:0 };
+OPENING.progress = { counted:341, expected:0, pct:null, sheets:1, openSheets:1, submittedSheets:0,
+  awaitingRegistration:341, identified:340, toIdentify:1, readyPct:(340/341)*100 };
+zeroHome = OPENING;
+const opening = await browser.newPage({ viewport:{ width:1440, height:1100 } });
+await opening.goto(base, { waitUntil:'networkidle' });
+await opening.waitForSelector('.home-shell figure.viz', { timeout:8000 });
+
+const countCard = opening.locator('figure.viz', { hasText:'Counting progress' }).first();
+const countText = (await countCard.innerText()).replace(/\n/g,' ');
+check('a count in progress is not reported as no count in progress',
+  !/no count in progress/i.test(countText), countText.slice(0,150));
+check('the card says how many units have been counted',
+  /341/.test(countText), countText.slice(0,150));
+check('it says the units are not in inventory yet',
+  /none registered until the count is posted/i.test(countText), countText.slice(0,150));
+check('it names what is left to do',
+  /still to identify/i.test(countText), countText.slice(0,150));
+
+// Readiness, not a nought-over-nought percentage dressed up as completion.
+const ring = await countCard.locator('.viz-ring-value').textContent();
+check('the ring reports readiness rather than 0%', ring.trim() !== '0%', ring.trim());
+// 340 of 341 rounds to 100. "100% ready" with a unit still unnamed is a card
+// nobody looks at twice, so the figure is held below the hundred until it is.
+check('it does not round up to complete while a unit is unnamed',
+  ring.trim() === '99%', ring.trim());
+check('the ring draws an arc, because there is real progress to draw',
+  await countCard.locator('.viz-ring-arc').count() === 1);
+
+/*
+ * And an empty register beside a count in progress explains itself rather than
+ * reading as a screen that failed to load.
+ */
+for (const title of ['Inventory by class', 'Where the fleet is']) {
+  const card = opening.locator('figure.viz', { hasText:title }).first();
+  const txt = (await card.innerText()).replace(/\n/g,' ');
+  check(`"${title}" says why it is empty`,
+    /341/.test(txt) && /awaiting posting/i.test(txt), txt.slice(0,140));
+}
+
+await opening.screenshot({ path:SHOTS+'home-opening-count.png', fullPage:true });
+await opening.close();
+zeroHome = null;
+
 await browser.close();
 server.close();
 

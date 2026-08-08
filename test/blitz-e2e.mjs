@@ -588,9 +588,15 @@ await t('a counted unit registers in the class its item master says', async()=>{
    * have registered as nought batteries.
    */
   const loc=sqlite.prepare('SELECT id,code FROM erp_locations LIMIT 1').get();
+  /*
+   * The master itself carries the loose word here, which is the live case:
+   * ESP00263 says "BATTERY" because the seed that meant to set BAT was an
+   * INSERT OR IGNORE against a row auto-created earlier from a receipt. So the
+   * master leading is not enough on its own; whatever it says is normalised.
+   */
   sqlite.exec(`INSERT OR IGNORE INTO erp_items(item_code,item_name,normalized_name,category,
     serialized,base_uom,standard_cost,active)
-    VALUES('BAT-MASTER','Ampace Pack','ampace pack','BAT',1,'EA',4200,1)`);
+    VALUES('BAT-MASTER','Ampace Pack','ampace pack','BATTERY',1,'EA',4200,1)`);
   const cc=await call('POST','/api/inventory/cycle-counts',
     {locationId:loc.id,countDate:'2026-08-07',category:'BAT'});
   const ccId=cc.json.id;
@@ -644,7 +650,158 @@ await t('a counted unit registers in the class its item master says', async()=>{
   if(Number(unknown.unit_cost)!==0) throw new Error('an unpriced unit acquired a price from nowhere');
   if(unknown.reconciliation_status!=='FOR_REVIEW')
     throw new Error('a unit registered at no value reads '+unknown.reconciliation_status);
-  return {note:'master class wins over the typed word; unpriced stock is flagged, not called clear'};
+  return {note:'master class leads and is normalised; unpriced stock is flagged, not called clear'};
+});
+
+await t('a request nobody has approved cannot be paid or proved', async()=>{
+  /*
+   * The gate asked who you are and never what the request is, so Finance could
+   * record a payment - and file a bank advice for it - against a request still
+   * sitting in DRAFT. Nobody had approved it and no bank had been told to pay
+   * it. A settlement recorded before the chain runs makes the whole chain
+   * decorative.
+   */
+  const draft=await call('POST','/api/finance/payment-requests',{
+    payeeName:'Unapproved Vendor',department:'Operations',costCenter:'Ops',
+    requestType:'Payment to Vendor',purpose:'Not approved by anybody',grossAmount:5000});
+  if(!draft.json?.ok) throw new Error(draft.json?.error);
+  const id=draft.json.id||draft.json.request?.id||draft.json.paymentRequestId;
+  const st=sqlite.prepare('SELECT status,request_no FROM erp_payment_requests WHERE id=?').get(id);
+  if(st.status!=='DRAFT') throw new Error('the new request is '+st.status+', expected DRAFT');
+
+  const paid=await call('POST',`/api/finance/payment-requests/${id}/settlements`,
+    {amount:5000,paymentReference:'BT-NOPE'});
+  if(paid.json?.ok) throw new Error('a draft request accepted a payment');
+  if(!/not been approved for payment/i.test(paid.json?.error||''))
+    throw new Error('the refusal does not say why: '+paid.json?.error);
+
+  const n=sqlite.prepare(`SELECT COUNT(*) n FROM erp_payment_settlements WHERE request_no=?`)
+    .get(st.request_no).n;
+  if(n) throw new Error('a payment was written against a draft anyway');
+
+  // And the screens are told not to offer it, so the refusal is not a surprise.
+  const view=await call('GET',`/api/finance/payment-requests/${id}/settlements`);
+  if(view.json?.canSettle) throw new Error('the screen still offers to record a payment on a draft');
+  if(!/not been approved/i.test(view.json?.settlementBlockedBecause||''))
+    throw new Error('the screen is not told why: '+view.json?.settlementBlockedBecause);
+
+  /*
+   * The same request once it has cleared the chain is payable. The gate is
+   * about the stage, not about forbidding payment.
+   */
+  sqlite.prepare(`UPDATE erp_payment_requests SET status='APPROVED' WHERE id=?`).run(id);
+  const ok2=await call('POST',`/api/finance/payment-requests/${id}/settlements`,
+    {amount:5000,paymentReference:'BT-YES'});
+  if(!ok2.json?.ok) throw new Error('an approved request refused its payment: '+ok2.json?.error);
+  return {note:'draft refused by name, approved accepted; the screen is told before the click'};
+});
+
+await t('a count in progress shows on the dashboard even with nothing expected', async()=>{
+  /*
+   * The live opening count found this too. Three hundred and forty-one units
+   * were scanned against a warehouse the register had never seen, so nothing
+   * was expected, so counted-over-expected was nought over nought - and the
+   * dashboard reported "no count in progress · 0% counted" while the team was
+   * standing in the warehouse counting. A count with nothing to count against
+   * still has a real measure: how much of what was counted has been named, and
+   * therefore how close it is to being postable.
+   */
+  // A warehouse the register has never seen, which is the whole point: earlier
+  // tests have put stock in the main one, and an opening count is defined by
+  // there being nothing to count against.
+  sqlite.exec(`INSERT OR IGNORE INTO erp_locations(code,name,location_type,active)
+    VALUES('WH-OPENING','Opening Count Warehouse','WAREHOUSE',1)`);
+  const loc=sqlite.prepare("SELECT id FROM erp_locations WHERE code='WH-OPENING'").get();
+  const cc=await call('POST','/api/inventory/cycle-counts',
+    {locationId:loc.id,countDate:'2026-08-07'});
+  if(!cc.json?.ok) throw new Error(cc.json?.error);
+  const ccId=cc.json.id;
+  const expected=sqlite.prepare('SELECT expected_units n FROM erp_cycle_counts WHERE id=?').get(ccId).n;
+  if(expected!==0) throw new Error('this test needs a count that expects nothing, got '+expected);
+
+  await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,
+    {serialNo:'PROG000000000001',itemCode:'SP-0001'});
+  await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,
+    {serialNo:'PROG000000000002',itemCode:'SP-0001'});
+  await call('POST',`/api/inventory/cycle-counts/${ccId}/scan`,{serialNo:'PROG000000000003'});
+
+  const d=await call('GET','/api/dashboard/home');
+  if(!d.json?.ok) throw new Error(d.json?.error);
+  const p=d.json.progress||{};
+  if(!(p.counted>=3))
+    throw new Error('the dashboard says '+p.counted+' units counted while 3 are on an open sheet');
+  if(!(p.sheets>=1)) throw new Error('the dashboard sees no open sheet');
+  if(!(p.awaitingRegistration>=3))
+    throw new Error('counted units are not shown as awaiting registration: '+p.awaitingRegistration);
+  // Two of three were named, so the count is two thirds of the way to postable.
+  if(p.readyPct==null) throw new Error('a count with nothing expected reports no readiness at all');
+  if(Math.abs(p.readyPct-(2/3)*100)>0.01)
+    throw new Error('readiness reads '+p.readyPct+', expected 66.67');
+  if(p.toIdentify!==1) throw new Error(p.toIdentify+' units to identify, expected 1');
+  // And percent-of-expected stays null rather than being faked as nought.
+  if(p.pct!==null) throw new Error('a count expecting nothing reported a completion of '+p.pct);
+
+  /*
+   * The registers must not have moved. Counted is not registered, and a
+   * dashboard that counted these into stock before the count was posted would
+   * be inventing inventory.
+   */
+  for(const s of ['PROG000000000001','PROG000000000002','PROG000000000003']){
+    const a=sqlite.prepare('SELECT id FROM erp_assets WHERE serial_no=?').get(s);
+    if(a) throw new Error(s+' reached inventory before the count was posted');
+  }
+  await call('DELETE',`/api/inventory/cycle-counts/${ccId}`);
+  return {note:'3 counted with nothing expected · 67% ready to post · none registered yet'};
+});
+
+await t('a loose class already in the master is repaired, not carried forward', async()=>{
+  /*
+   * 0035 seeds ESP00263 as BAT, but with INSERT OR IGNORE against a row that
+   * already existed, so the seed did nothing and the live master still reads
+   * "BATTERY". INSERT OR IGNORE creates or skips; it never corrects. 0062 is
+   * the correction, and it has to hold on a second deploy as well as a first.
+   */
+  const canon=['MC','BAT','BSS','SP','CHG','OTH'];
+  // One of each shape the source documents actually use. A swapping station is
+  // not a battery however the word reads, so the order the rules are tried in
+  // is the thing being pinned here.
+  sqlite.exec(`INSERT OR IGNORE INTO erp_items(item_code,item_name,normalized_name,category,
+      serialized,base_uom,standard_cost,active) VALUES
+    ('CAT-RAW-1','Loose battery','loose battery','Battery Pack',1,'EA',100,1),
+    ('CAT-RAW-2','Loose station','loose station','Battery Swapping Station',1,'EA',100,1),
+    ('CAT-RAW-3','Loose bike','loose bike','Motorcycle',1,'EA',100,1),
+    ('CAT-RAW-4','Loose charger','loose charger','Charger Kit',1,'EA',100,1),
+    ('CAT-RAW-5','Loose spare','loose spare','Spare Part',1,'EA',100,1),
+    ('CAT-RAW-6','Loose widget','loose widget','Widgetry',1,'EA',100,1)`);
+
+  const repair=readFileSync(join(ROOT,'migrations','0062_item_category_repair.sql'),'utf8');
+  sqlite.exec(repair);
+  sqlite.exec(repair);   // migrations re-run on every deploy; twice must equal once
+
+  const got=Object.fromEntries(sqlite.prepare(`SELECT item_code,category FROM erp_items
+    WHERE item_code LIKE 'CAT-RAW-%'`).all().map(r=>[r.item_code,r.category]));
+  const want={'CAT-RAW-1':'BAT','CAT-RAW-2':'BSS','CAT-RAW-3':'MC',
+    'CAT-RAW-4':'CHG','CAT-RAW-5':'SP','CAT-RAW-6':'OTH'};
+  for(const k of Object.keys(want)){
+    if(got[k]!==want[k]) throw new Error(`${k} repaired to ${got[k]}, expected ${want[k]}`);
+  }
+
+  /*
+   * And nothing anywhere is left outside the six. This is the assertion that
+   * would have caught the live problem: the register groups by these codes, so
+   * a row holding any other word is stock that shows up in no class at all.
+   */
+  for(const [what,sql] of [
+    ['items',`SELECT item_code k,category c FROM erp_items`],
+    ['registered units',`SELECT serial_no k,category c FROM erp_assets`],
+    ['counted units not yet posted',`SELECT line_id k,category c FROM erp_cycle_count_new_units`],
+  ]){
+    const loose=sqlite.prepare(sql).all().filter(r=>!canon.includes(r.c));
+    if(loose.length)
+      throw new Error(`${loose.length} ${what} carry a class the register cannot group by, e.g. `
+        +loose.slice(0,3).map(r=>`${r.k}=${r.c}`).join(', '));
+  }
+  return {note:`every class in one of ${canon.join('/')}; station beats battery; twice-run is stable`};
 });
 
 await t('a counted row can be identified and removed before submitting', async()=>{
@@ -1482,7 +1639,8 @@ await t('a request can be part paid, and the balance stays owed', async()=>{
   const id=mk.json.id, rfp=mk.json.requestNo;
   // Raised in March, so it is settled on the register's own terms rather than
   // held back by the evidence cutoff - that rule has its own test below.
-  sqlite.prepare("UPDATE erp_payment_requests SET net_payable=1000000,gross_amount=1000000,request_date='2026-03-02' WHERE id=?").run(id);
+  sqlite.prepare("UPDATE erp_payment_requests SET net_payable=1000000,gross_amount=1000000,request_date='2026-03-02',status='APPROVED' WHERE id=?").run(id);
+  // Released by the CEO: a draft is not payable, and that has its own test.
 
   const down=await call('POST','/api/finance/payment-requests/'+id+'/settlements',
     {amount:300000,paidDate:'2026-03-05',paymentReference:'BT-DOWN-1',notes:'30% down payment'});
@@ -1524,7 +1682,7 @@ await t('nothing raised from the cutoff is called paid without proof', async()=>
     requestType:'Payment to Vendor',grossAmount:5000,supplierInvoiceNo:'INV-LATE-1'});
   if(!mk.json?.ok) throw new Error(mk.json?.error);
   const id=mk.json.id;
-  sqlite.prepare("UPDATE erp_payment_requests SET net_payable=5000,gross_amount=5000,request_date='2026-08-03' WHERE id=?").run(id);
+  sqlite.prepare("UPDATE erp_payment_requests SET net_payable=5000,gross_amount=5000,request_date='2026-08-03',status='APPROVED' WHERE id=?").run(id);
 
   // Settled in full, but nobody has shown the bank advice.
   const s1=await call('POST','/api/finance/payment-requests/'+id+'/settlements',
@@ -1703,7 +1861,7 @@ await t('a redeploy does not settle anything twice or undo a correction', async(
     requestType:'Payment to Vendor',grossAmount:250000,supplierInvoiceNo:'INV-REDEPLOY-1'});
   if(!mk.json?.ok) throw new Error(mk.json?.error);
   const id=mk.json.id, rfp=mk.json.requestNo;
-  sqlite.prepare("UPDATE erp_payment_requests SET net_payable=250000,request_date='2026-02-02' WHERE id=?").run(id);
+  sqlite.prepare("UPDATE erp_payment_requests SET net_payable=250000,request_date='2026-02-02',status='APPROVED' WHERE id=?").run(id);
   const s1=await call('POST','/api/finance/payment-requests/'+id+'/settlements',
     {amount:250000,paidDate:'2026-02-10',paymentReference:'BT-REDEPLOY-1'});
   if(!s1.json?.ok) throw new Error(s1.json?.error);

@@ -182,6 +182,61 @@ for (const m of [{ code:'ip-inventory-analysis', label:'Inventory Analysis' },
   await page.screenshot({ path:`${SHOTS}setup-${m.code}.png`, fullPage:true });
 }
 
+/* ------------------------------------------------- getting back out again */
+/*
+ * The module map had no way back to the dashboard. The flag that opens it is
+ * only cleared from a workspace sidebar, so anyone who opened the map and did
+ * not pick a module was stuck with signing out as the only exit. Every screen
+ * you can reach has to be a screen you can leave.
+ */
+await page.goto(base, { waitUntil:'networkidle' });
+await page.waitForSelector('#homeModules', { timeout:10000 });
+await page.locator('#homeModules').click();
+await page.waitForSelector('.enterprise-launchpad', { timeout:8000 });
+
+check('the module map offers a way back to the dashboard',
+  await page.locator('#launchHome').count() === 1);
+check('the brand mark goes home too',
+  await page.locator('button.launchpad-brand').count() === 1);
+
+// The exit has to be visible on the strip, not merely present in the DOM.
+const homeBox = await page.locator('#launchHome').boundingBox();
+check('the way back is on screen without scrolling',
+  homeBox && homeBox.width > 0 && homeBox.y >= 0 && homeBox.y < 200,
+  homeBox ? `at y=${Math.round(homeBox.y)}` : 'not rendered');
+
+await page.locator('#launchHome').click();
+await page.waitForSelector('.home-hello h1', { timeout:8000 });
+check('it lands on the dashboard, not back on the map',
+  await page.locator('.enterprise-launchpad').count() === 0);
+
+// And the same via the logo, which is where people click by habit.
+await page.locator('#homeModules').click();
+await page.waitForSelector('.enterprise-launchpad', { timeout:8000 });
+await page.locator('button.launchpad-brand').click();
+await page.waitForSelector('.home-hello h1', { timeout:8000 });
+check('the brand mark lands on the dashboard as well',
+  await page.locator('.enterprise-launchpad').count() === 0);
+
+/*
+ * Customize reads the app title off the brand mark. It used to find it by
+ * position - "first div in the controls" - and the Dashboard button moved what
+ * sits first, which would have written the app title over the signed-in
+ * person's name instead.
+ */
+await page.locator('#homeModules').click();
+await page.waitForSelector('.enterprise-launchpad', { timeout:8000 });
+const named = await page.evaluate(()=>{
+  const el = document.querySelector('.launchpad-brand .brand-name');
+  const who = document.querySelector('.launchpad-controls div:last-child span');
+  return { brand: el && el.textContent.trim(), who: who && who.textContent.trim() };
+});
+check('the app title and the person are different elements',
+  named.brand && named.who && named.brand !== named.who,
+  JSON.stringify(named));
+
+await page.screenshot({ path:`${SHOTS}module-map.png`, fullPage:true });
+
 check('no script errors on any centre', errors.length === 0, errors.slice(0,3).join(' | ') || 'clean');
 
 await browser.close();
