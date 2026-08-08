@@ -101,15 +101,47 @@ async function main() {
 
   const foundation = await readFile(join(ROOT, 'public/foundation.js'), 'utf8');
   check(!foundation.includes('renderEmptyWorkspace'), 'No generic empty module fallback remains');
-  for (const token of ['BLITZ-ERP-20260807-R22.0','data-group-toggle','column-resizer',
+  for (const token of ['data-group-toggle','column-resizer',
     'openInventoryDetail','unitClass','Exact Serial Inventory Register']) {
     check(foundation.includes(token), `Rollout interface control present: ${token}`);
   }
+  /*
+   * The build tag used to be pinned to a literal here, so this check failed on
+   * every release for the one reason that is never a defect: the build moved.
+   * What actually breaks users is the cache-buster in index.html drifting away
+   * from the build the file declares - then the browser serves yesterday's
+   * script against today's API. That is what is checked now.
+   */
+  const build = foundation.match(/FOUNDATION_BUILD='(BLITZ-ERP-(\d{8})-R([\d.]+))'/);
+  check(!!build, 'Interface declares its build tag', build ? build[1] : 'not found');
+  const html = await readFile(join(ROOT, 'public/index.html'), 'utf8');
+  const bust = html.match(/foundation\.js\?v=([\w.-]+)/);
+  check(!!bust, 'index.html cache-busts the interface script', bust ? bust[1] : 'not found');
+  if (build && bust) {
+    const want = `${build[2]}-r${build[3].split('.')[0]}`;
+    check(bust[1] === want, 'Cache-buster matches the declared build', `${bust[1]} vs ${want}`);
+    const cssBust = html.match(/foundation\.css\?v=([\w.-]+)/);
+    check(cssBust?.[1] === want, 'Stylesheet cache-buster matches too', `${cssBust?.[1]} vs ${want}`);
+  }
+
   const workflow = await readFile(join(ROOT, '.github/workflows/deploy-e88-erp.yml'), 'utf8');
   check(workflow.includes('database_mode'), 'GitHub workflow exposes database mode');
+  // Documents live in Google Drive, not R2. Checked as an absence of any
+  // binding rather than as the presence of a sentence about one: prose drifts
+  // out of the file and the check then fails for no reason, which is what it
+  // had been doing.
+  const wranglerToml = await readFile(join(ROOT, 'wrangler.toml'), 'utf8');
   check(!workflow.includes('e88-erp-documents'), 'GitHub workflow intentionally omits the R2 bucket');
-  check(workflow.includes('R2 is intentionally disabled') || workflow.includes('R2: Disabled'), 'GitHub workflow documents the no-R2 rollout');
-  check(workflow.includes('\"r2Bound\":false'), 'GitHub workflow verifies that R2 remains unbound');
+  check(!/r2_buckets|\[\[r2/.test(wranglerToml), 'No R2 bucket is bound in wrangler.toml');
+  check(!/r2_buckets|bucket_name/.test(workflow), 'No R2 bucket is bound by the deploy workflow');
+
+  /*
+   * Every migration the workflow runs has to exist, or the deploy fails halfway
+   * through with a file-not-found and leaves the database part-migrated.
+   */
+  for (const file of [...new Set(workflow.match(/migrations\/[\w.-]+\.sql/g) || [])]) {
+    check(await exists(join(ROOT, file)), `Deploy migration exists: ${file}`);
+  }
   check(workflow.includes('scripts/verify-empty-d1.mjs'), 'GitHub workflow uses JSON-safe empty-D1 verification');
   for (const code of [
     'sd-crm','sd-demand-planning','sd-order-management','sd-lease-contract-management',
@@ -126,8 +158,28 @@ async function main() {
   check(Array.isArray(manifest.files) && manifest.files.length > 0, 'Opening manifest contains SQL chunks', String(manifest.files?.length || 0));
   for (const file of manifest.files || []) check(await exists(join(ROOT, 'migrations/opening', file)), `Opening chunk exists: ${file}`);
 
+  /*
+   * A count was the wrong test: adding a workbook broke the build and removing
+   * two that mattered would have passed. What has to hold is that every
+   * workbook a generator reads is in the repo, so the migrations it wrote can
+   * be reproduced from source rather than trusted.
+   */
   const sourceFiles = await walk(join(ROOT, 'source_data'), p => p.toLowerCase().endsWith('.xlsx'));
-  check(sourceFiles.length === 14, 'All shared Excel workbooks bundled', String(sourceFiles.length));
+  check(sourceFiles.length > 0, 'Shared Excel workbooks bundled', String(sourceFiles.length));
+  const have = new Set(sourceFiles.map(p => relative(join(ROOT, 'source_data'), p)));
+  const scripts = await walk(join(ROOT, 'scripts'), p => p.endsWith('.py'));
+  const wanted = new Set();
+  for (const file of scripts) {
+    // Some generators name the workbook bare, some name it under source_data/.
+    // Both spellings mean the same file and both must be checked, or the one
+    // the lease loader uses slips through unchecked.
+    for (const m of (await readFile(file, 'utf8')).matchAll(/['"](?:source_data\/)?([\w .()&_-]+\.xlsx)['"]/g)) {
+      wanted.add(m[1]);
+    }
+  }
+  for (const book of [...wanted].sort()) {
+    check(have.has(book), `Workbook a generator reads is in the repo: ${book}`);
+  }
 
   console.log(`E88 FinSys structure check: ${passes.length} passed, ${failures.length} failed.`);
   for (const p of passes) console.log(`PASS  ${p.label}${p.detail ? ` — ${p.detail}` : ''}`);
