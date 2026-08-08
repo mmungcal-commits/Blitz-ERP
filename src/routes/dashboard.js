@@ -137,8 +137,31 @@ dashboardRoutes.get('/home', async (c) => {
       first(db, `SELECT COUNT(*) n FROM erp_assets WHERE active=1 AND COALESCE(unit_cost,0)=0`),
       first(db, `SELECT COUNT(*) n FROM erp_cycle_counts WHERE status='OPEN'`),
       first(db, `SELECT COALESCE(SUM(variance_units),0) n FROM erp_cycle_counts WHERE status<>'CANCELLED'`),
-      all(db,   `SELECT kpi_category label, COUNT(*) value FROM vw_erp_serialized_assets
-                 GROUP BY kpi_category ORDER BY value DESC`),
+      /*
+       * By model, not by class code.
+       *
+       * "MC 210" tells nobody which motorcycles are on the floor. The models
+       * are in the item name - D400 4000W Black, R280 Sport 2500W Red - so the
+       * colour and the wattage are folded away and what is left is the thing
+       * people actually ask for by name. Sport is tested before plain R280,
+       * because "R280 Sport" contains "R280" and testing the other way round
+       * files every Sport as an R280.
+       */
+      all(db,   `SELECT CASE
+                   WHEN UPPER(item_name) LIKE '%R280 SPORT%' THEN 'R280 Sport'
+                   WHEN UPPER(item_name) LIKE '%R280%'       THEN 'R280'
+                   WHEN UPPER(item_name) LIKE '%D400%'       THEN 'D400'
+                   WHEN kpi_category='BAT'                   THEN 'Batteries'
+                   WHEN kpi_category='BSS'                   THEN 'Lockers'
+                   WHEN kpi_category='CHG'                   THEN 'Chargers'
+                   WHEN kpi_category='SP'                    THEN 'Spare parts'
+                   ELSE COALESCE(NULLIF(kpi_category,''),'Other') END label,
+                 COUNT(*) value,
+                 SUM(CASE WHEN current_status IN ('AVAILABLE','IN_STOCK') THEN 1 ELSE 0 END) available,
+                 SUM(CASE WHEN current_status IN ('LEASED','ON_LEASE') THEN 1 ELSE 0 END) leased,
+                 SUM(CASE WHEN current_status='SOLD' THEN 1 ELSE 0 END) sold
+                 FROM vw_erp_serialized_assets
+                 GROUP BY label ORDER BY value DESC`),
     ]);
     sections.inventory = { available:num(avail), quarantine:num(quarantine), unvalued:num(unvalued),
       openCounts:num(openCounts), variances:num(variances), byClass:classes||[] };
