@@ -1700,6 +1700,101 @@ await t('closing a payment is a Finance act, and settles only the balance', asyn
   return {note:'Finance only; the part already paid is not recorded again'};
 });
 
+await t('the encoder is not the requestor, so the checker may still check', async()=>{
+  /*
+   * Rucel encodes every request in the company and checks every one. If the
+   * record said she was the requestor, separation of duties - which is right -
+   * would refuse her at the Finance check on all of them.
+   */
+  sqlite.prepare(`INSERT OR IGNORE INTO erp_users(email,display_name,role_code,department,active)
+    VALUES('rhonrado@nrdev.ph','Rucel Mae Honrado','FINANCE_REVIEWER','Finance and Accounting',1)`).run();
+  sqlite.prepare(`INSERT OR IGNORE INTO erp_users(email,display_name,role_code,department,active)
+    VALUES('ops.person@nrdev.ph','Ops Person','STAFF','Operations',1)`).run();
+
+  const mk=await call('POST','/api/finance/payment-requests',{
+    payeeName:'Encoded Vendor',department:'Operations',purpose:'Typed in by Finance',
+    requestType:'Payment to Vendor',grossAmount:4000,supplierInvoiceNo:'INV-ENCODE-1',
+    requestorEmail:'ops.person@nrdev.ph',requestorName:'Ops Person'});
+  if(!mk.json?.ok) throw new Error(mk.json?.error);
+  const rfp=mk.json.requestNo;
+
+  // The request belongs to the person who asked for it.
+  const row=sqlite.prepare('SELECT requestor_email FROM erp_payment_requests WHERE request_no=?').get(rfp);
+  if(row.requestor_email!=='ops.person@nrdev.ph')
+    throw new Error('the request was filed under the encoder: '+row.requestor_email);
+
+  // And the record says who typed it in.
+  const enc=sqlite.prepare('SELECT * FROM erp_rfp_encoders WHERE request_no=?').get(rfp);
+  if(!enc) throw new Error('the encoder was not recorded');
+  if(enc.encoded_by!=='mmungcal@nrdev.ph') throw new Error('wrong encoder: '+enc.encoded_by);
+  if(enc.encoded_for!=='ops.person@nrdev.ph') throw new Error('wrong requestor: '+enc.encoded_for);
+
+  // Raising one for yourself still files it under you, encoder or not.
+  const own=await call('POST','/api/finance/payment-requests',{
+    payeeName:'Own Vendor',department:'Finance and Accounting',purpose:'My own claim',
+    requestType:'Reimbursement',grossAmount:500,supplierInvoiceNo:'INV-OWN-1'});
+  if(!own.json?.ok) throw new Error(own.json?.error);
+  const mine=sqlite.prepare('SELECT requestor_email FROM erp_payment_requests WHERE request_no=?')
+    .get(own.json.requestNo);
+  if(mine.requestor_email!=='mmungcal@nrdev.ph')
+    throw new Error('an own request was filed under somebody else: '+mine.requestor_email);
+  return {note:rfp+' asked by Ops Person, typed in by '+enc.encoded_by};
+});
+
+await t('a cost filed under the wrong department can be corrected', async()=>{
+  /*
+   * The Alfamart station rents came into the register under Admin. That is a
+   * filing error, not a payment error, and the checker puts filing straight -
+   * at any status, because a request paid six months ago can still be filed
+   * wrong and the business line would be wrong forever.
+   */
+  const mk=await call('POST','/api/finance/payment-requests',{
+    payeeName:'HOST SHOP TRADING, INC.',department:'Admin',purpose:'Station site rent',
+    requestType:'Payment to Vendor',grossAmount:3500,supplierInvoiceNo:'INV-HOST-1'});
+  if(!mk.json?.ok) throw new Error(mk.json?.error);
+  const id=mk.json.id, rfp=mk.json.requestNo;
+  // Paid and closed: correcting the filing must still work.
+  sqlite.prepare("UPDATE erp_payment_requests SET status='PAID' WHERE id=?").run(id);
+
+  const bare=await call('PATCH','/api/finance/payment-requests/'+id+'/classification',{});
+  if(bare.json?.ok) throw new Error('an empty correction was accepted');
+
+  const moved=await call('PATCH','/api/finance/payment-requests/'+id+'/classification',
+    {department:'RideBox',costCenter:'Network Rollout',reason:'Station site rent'});
+  if(!moved.json?.ok) throw new Error(moved.json?.error);
+  const after=sqlite.prepare('SELECT department,cost_center,status,net_payable FROM erp_payment_requests WHERE id=?').get(id);
+  if(after.department!=='RideBox') throw new Error('department is still '+after.department);
+  if(Number(after.net_payable)!==3500) throw new Error('correcting the filing moved the money');
+  if(after.status!=='PAID') throw new Error('correcting the filing changed the status');
+
+  // The trail says who moved it and from where.
+  const trail=sqlite.prepare(`SELECT actor,reason FROM erp_rfp_approvals
+    WHERE rfp_ref=? AND stage='RECLASSIFY'`).get(rfp);
+  if(!trail) throw new Error('the correction left no trail');
+  if(!/Admin -> RideBox/.test(trail.reason||'')) throw new Error('the trail does not say what changed: '+trail.reason);
+
+  // Every request for one payee at once, because nine of ten corrected is worse
+  // than none.
+  const two=await call('POST','/api/finance/payment-requests',{
+    payeeName:'HOST SHOP TRADING INC',department:'Admin',purpose:'Station site rent, second month',
+    requestType:'Payment to Vendor',grossAmount:3500,supplierInvoiceNo:'INV-HOST-2'});
+  if(!two.json?.ok) throw new Error(two.json?.error);
+  const bulk=await call('POST','/api/finance/payees/reclassify',
+    {payee:'HOST SHOP TRADING, INC.',department:'RideBox',reason:'All station site rents'});
+  if(!bulk.json?.ok) throw new Error(bulk.json?.error);
+  // Two spellings, one payee: the second must have moved with the first.
+  const stillAdmin=sqlite.prepare(`SELECT COUNT(*) n FROM erp_payment_requests
+    WHERE payee_name LIKE 'HOST SHOP%' AND department<>'RideBox'`).get().n;
+  if(stillAdmin) throw new Error(stillAdmin+' request(s) were left behind under Admin');
+
+  // Not everyone may reclassify.
+  sqlite.prepare("UPDATE erp_users SET role_code='STAFF' WHERE email='mmungcal@nrdev.ph'").run();
+  const nope=await call('PATCH','/api/finance/payment-requests/'+id+'/classification',{department:'Admin'});
+  sqlite.prepare("UPDATE erp_users SET role_code='FINANCE' WHERE email='mmungcal@nrdev.ph'").run();
+  if(nope.json?.ok) throw new Error('a non-Finance user refiled a cost');
+  return {note:'moved at PAID, both spellings together, figures untouched, trail kept'};
+});
+
 console.log('\n=== Blitz - ERP end-to-end ===');
 for (const [s, n, note] of results) console.log(`${s}  ${n}${note ? '  ·  ' + note : ''}`);
 const failed = results.filter(r => r[0] === 'FAIL').length;
