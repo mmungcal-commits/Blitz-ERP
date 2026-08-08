@@ -805,8 +805,14 @@ financeRoutes.get('/payment-requests/:id', requirePermission('FINANCE','VIEW'), 
       attachment_count,dispatched_by,dispatched_at,status,void_reason
     FROM erp_rfp_dispatches WHERE rfp_ref=? ORDER BY id DESC`,[row.request_no]).catch(()=>[]);
   const sentDispatch=dispatches.find(d=>String(d.status)==='SENT')||null;
+  const docLink=await first(c.env.DB,`SELECT token,view_count,last_seen_at FROM erp_rfp_doc_tokens
+     WHERE rfp_ref=? AND revoked=0`,[row.request_no]).catch(()=>null);
   workflow.dispatch={required:await rfpFlag(c.env.DB,'rfp_require_dispatch','1'),
     sent:sentDispatch,history:dispatches,
+    /* Did they ever open it. The first question Finance ask when a payment goes quiet. */
+    documentUrl:docLink?`/rfp.html?t=${docLink.token}`:null,
+    documentViews:docLink?Number(docLink.view_count||0):0,
+    documentLastSeen:docLink?docLink.last_seen_at:null,
     due:String(row.status||'').toUpperCase()==='APPROVED'&&!sentDispatch,
     canDispatch:canSettle(c.get('erpUser'))&&String(row.status||'').toUpperCase()==='APPROVED',
     defaultTo:await rfpSetting(c.env.DB,'mnc_dispatch_to',''),
@@ -1684,13 +1690,35 @@ financeRoutes.post('/payment-requests/:id/action', requirePermission('FINANCE','
         throw new Error('This request has no documents attached, so there is nothing to dispatch. '
           +'Attach the signed RFP and its supporting papers first.');
       const note=normalizeText(b.message);
+      /*
+       * The signed form itself, which is the whole reason MNC are being written
+       * to. Attachments carry the invoices and the quotations; none of them is
+       * the request for payment with the four signatures on it, and that page
+       * lives only inside Blitz. So the email carries a link to it.
+       *
+       * One token per request, reused on a re-dispatch, so re-sending does not
+       * break the link already sitting in somebody's inbox.
+       */
+      let link=await first(c.env.DB,`SELECT * FROM erp_rfp_doc_tokens WHERE rfp_ref=? AND revoked=0`,
+        [request.request_no]).catch(()=>null);
+      if(!link){
+        const token=(crypto.randomUUID()+crypto.randomUUID()).replace(/-/g,'');
+        await run(c.env.DB,`INSERT INTO erp_rfp_doc_tokens(rfp_ref,token,created_by)
+          VALUES(?,?,?)`,[request.request_no,token,user]);
+        link={token};
+      }
+      const docUrl=`${new URL(c.req.url).origin}/rfp.html?t=${link.token}`;
       const subject=`[E88] Dispatch to MNC: ${request.request_no} (${request.payee_name||'payee'}) `
         +`- fully approved`;
       const mail=await notifyRfp(c,request,{to:toList,cc:ccList,
         title:'Fully approved request for payment',
         subject,
-        intro:`This request has cleared the E88 approval chain and is released for payment. `
-          +`The signed request for payment and its supporting documents are linked below.`
+        intro:`This request has cleared the E88 approval chain and is released for payment.`
+          +`<br><br><a href="${docUrl}" style="display:inline-block;background:#0a2239;color:#ffffff;`
+          +`text-decoration:none;padding:11px 20px;border-radius:6px;font-weight:bold">`
+          +`Open the signed Request for Payment</a>`
+          +`<br><span style="font-size:12px;color:#7a8194">Opens the signed form itself. `
+          +`The supporting documents are linked below.</span>`
           +(note?`<br><br>${note.replace(/[<>]/g,'')}`:''),
         extraFacts:[['Approved by',request.final_approved_by||''],
           ['Approved on',String(request.final_approved_at||'').slice(0,10)]],
