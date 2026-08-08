@@ -173,6 +173,20 @@ receivableRoutes.delete('/collections/:id', requirePermission('RECEIVABLES','EDI
   const row = await first(c.env.DB, `SELECT * FROM erp_ar_collections WHERE id=?`, [id]);
   if (!row) return fail(c, 'Collection not found', 404);
   if (row.status !== 'DRAFT') return fail(c, 'Only a draft entry can be removed. Void a posted entry instead.', 409);
+  /*
+   * An imported row needs a tombstone or the next deploy loads it straight back
+   * in: the seed guard in 0060 asks "is this source_key present?" and a deleted
+   * row answers no. See migrations/0065.
+   */
+  if (row.source_key) {
+    await run(c.env.DB,
+      `INSERT OR IGNORE INTO erp_import_tombstones
+         (table_name,source_system,source_key,record_no,reason,deleted_by)
+       VALUES ('erp_ar_collections',?,?,?,?,?)`,
+      [row.source_system || null, row.source_key, row.entry_no,
+       'Deleted from the receivables register.', c.get('erpUser').email]);
+  }
+  await run(c.env.DB, `DELETE FROM erp_ar_receipts WHERE collection_id=?`, [id]);
   await run(c.env.DB, `DELETE FROM erp_ar_collections WHERE id=?`, [id]);
   await audit(c, { action:'DELETE', module:'FINANCE', recordType:'AR_COLLECTION',
     recordId:id, recordNo:row.entry_no, before:row });
