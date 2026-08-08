@@ -42,6 +42,18 @@ ON CONFLICT(role_code,module) DO UPDATE SET
 -- She was FINANCE, which carries can_approve=1, so until now the system would
 -- have let her sign the Finance approval that belongs to the head of Finance.
 ----------------------------------------------------------------------
+/*
+ * She has to exist for the UPDATE below to mean anything.
+ *
+ * This migration set out to make Rucel the checker and then only ever ran an
+ * UPDATE, which quietly matched nothing if her account had not been created.
+ * The result was a chain with a Finance Check stage and nobody able to perform
+ * it: every request stopped at step 3 and the head of Finance could not reach
+ * her own approval, because a stage nobody can sign is a stage nothing passes.
+ */
+INSERT OR IGNORE INTO erp_users(email,display_name,role_code,department,active)
+VALUES('rhonrado@nrdev.ph','Rucel Mae Honrado','FINANCE_REVIEWER','Finance and Accounting',1);
+
 UPDATE erp_users SET role_code='FINANCE_REVIEWER'
  WHERE email='rhonrado@nrdev.ph';
 
