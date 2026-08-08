@@ -43,6 +43,14 @@ UPDATE erp_ar_collections SET status='POSTED',
  WHERE source_system='SALES_MONITORING_2026' AND status='DRAFT'
    AND stream IN ('AFTERSALES','WAREHOUSE_SERVICE','MC_SOLD');
 
+/*
+ * The guard below ignores status on purpose. It used to read
+ * "r.status<>'VOID'", so voiding an imported receipt satisfied it and the next
+ * deploy tried to write a fresh one carrying the same OR number - which
+ * receipt_no is unique on, so the statement failed and took the rest of the
+ * migration with it. The import writes a receipt once, ever; a void is a
+ * decision somebody made and it stands.
+ */
 INSERT INTO erp_ar_receipts(receipt_no,collection_id,entry_no,receipt_date,amount,
   payment_method,bank_wallet,bank_ref,or_no,settlement_date,cleared_status,remarks,
   status,received_by)
@@ -55,5 +63,5 @@ SELECT 'OR-SM-'||printf('%05d',c.id), c.id, c.entry_no,
   FROM erp_ar_collections c
  WHERE c.status='POSTED' AND COALESCE(c.settlement_date,'')<>'' AND c.gross_amount>0
    AND NOT EXISTS (SELECT 1 FROM erp_ar_receipts r
-                    WHERE r.collection_id=c.id AND r.status<>'VOID');
+                    WHERE r.collection_id=c.id);
 
