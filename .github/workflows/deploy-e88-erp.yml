@@ -140,6 +140,9 @@ jobs:
           npx wrangler d1 execute DB --remote --file=migrations/0056_proof_of_payment_02.sql
           npx wrangler d1 execute DB --remote --file=migrations/0057_business_lines.sql
           npx wrangler d1 execute DB --remote --file=migrations/0058_station_host_vendors.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0059_rfp_encoder.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0060_sales_collections_01.sql
+          npx wrangler d1 execute DB --remote --file=migrations/0060_sales_collections_02.sql
 
       # ---------- Empty-database bootstrap (unchanged) ----------
       - name: Confirm D1 is empty before bootstrap
