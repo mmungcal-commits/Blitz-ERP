@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r60';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R62.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R63.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
