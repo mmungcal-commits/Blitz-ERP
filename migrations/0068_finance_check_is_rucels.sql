@@ -1,0 +1,34 @@
+-- 0068 · The Finance Check belongs to the checker
+--
+-- Alexis found she could approve as head of Finance without Rucel having
+-- reviewed anything, and she was right. Two things allowed it.
+--
+-- The role gate was off (rfp_role_gate='0'), so any Finance user could sign any
+-- stage. And even with it on, FINANCE was listed as an acceptable role for the
+-- FINANCE_REVIEW stage, so the head of Finance satisfied the check she was
+-- meant to be relying on. The split between checking a request and releasing
+-- the money existed on the screen and not in the rules.
+--
+-- The fix is deliberately narrow. Switching on the global role gate would have
+-- closed this hole and several doors with it: it enforces every stage, and a
+-- department head who is neither appointed in erp_department_heads nor holding
+-- one of the alias roles would have been locked out of requests already in
+-- flight. Four end-to-end tests failed on exactly that, which is what a live
+-- register of 356 requests would have done in front of people.
+--
+-- So the rule is enforced where the hole is, in the FINANCE_REVIEW branch of
+-- src/routes/finance.js: the check requires the Finance Reviewer role. Nothing
+-- else about the chain changes.
+--
+-- The Admin override stays, deliberately. A payment should not sit unpaid
+-- because one person is on leave, and every override is written to
+-- erp_rfp_approvals with the actor's name against it, so using it is visible
+-- rather than silent.
+--
+-- The setting below records the intent and gives you the switch. It is read by
+-- the FINANCE_REVIEW branch alone, so turning it off restores the old
+-- behaviour without touching any other stage:
+--   UPDATE erp_rfp_settings SET value='0' WHERE key='rfp_review_role_only';
+
+INSERT OR IGNORE INTO erp_rfp_settings(key,value) VALUES ('rfp_review_role_only','1');
+UPDATE erp_rfp_settings SET value='1' WHERE key='rfp_review_role_only';
