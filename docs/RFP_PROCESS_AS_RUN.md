@@ -93,8 +93,8 @@ the requestor:
 | | Live Apps Script | Blitz ERP (R63) | Decision needed |
 |---|---|---|---|
 | Approval gates | 4: Dept Head, Finance, MANCOM, CEO | 5: Department, Finance Check, Finance, MANCOM, Final | Yes. Blitz splits Finance into a checker and a head so Rucel can check without releasing. The live script has one Finance gate. |
-| MANCOM threshold | 500,000 | 100,000 | Yes, if the tier is turned on. |
-| MANCOM tier | always on | switched **off** (`rfp_mancom_enabled='0'`) | Yes. It was disabled because MANCOM discuss high-value spend before it reaches the system. |
+| MANCOM threshold | 500,000 | none. Blitz runs no amount threshold at all | No. Decided: this ERP does not route on amount. |
+| MANCOM tier | always on | switched **off** (`rfp_mancom_enabled='0'`, forced off on every deploy) | No. High-value spend is agreed in the MANCOM meeting before it reaches the system. |
 | MNC Dispatch | a stage, with its own email to Monde Nissin | not modelled | Yes. This is the largest gap. |
 | Proof of payment | a stage, before Done | an upload against a paid request, gated on approval | Close enough, but the stage name and the sequence differ. |
 | E-signature | mandatory, drawn or typed | mandatory, drawn or typed | Aligned. |
@@ -102,18 +102,41 @@ the requestor:
 | Return with reason | mandatory remarks, back to requestor | mandatory reason, chain restarts at Department | Aligned. |
 | Numbering | `RFP-OPS2026-0069` | `RFP-OPS2026-0069` | Aligned. |
 
-## 7. What I would change, and what I would leave
+## 7. Does Blitz achieve the same objectives?
+
+Objective by objective, rather than field by field.
+
+| What the old system was for | Met in Blitz? |
+|---|---|
+| A request cannot be paid until the department head, Finance and the CEO have each signed | Yes, and Blitz adds a Finance check before the head of Finance signs |
+| Every approval carries a real signature, drawn or typed | Yes |
+| The person who asked for the money cannot approve it, and nobody signs twice | Yes |
+| A request can be sent back, and the reason is recorded | Yes, and the chain restarts rather than resuming |
+| Each stage tells the next one by email, with the documents attached | Yes. On CEO approval the mail already goes to Finance, titled "ready for payment" |
+| The reference number identifies the department and the year | Yes, identical format |
+| Nothing is called paid without proof | Yes, and Blitz refuses proof against a request that was never approved, which the old system did not check |
+| Large spend gets an extra pair of eyes | **Not in the system.** This one moved. In the old system an amount above 500,000 forced a MANCOM stage; in Blitz there is no amount trigger, and MANCOM agree high-value spend in their meeting before the request is raised |
+| The fully signed RFP is dispatched to Monde Nissin, and that dispatch is a tracked step | **No.** Finance is told to do it, but the ERP has no stage for it and cannot show which requests are sitting undispatched |
+
+Two gaps, and they are different in kind. The first is a control that deliberately
+lives outside the software now. The second is a step the software simply does not
+have yet.
+
+## 8. What I would change, and what I would leave
 
 **Change:** add `MNC_DISPATCH` between final approval and payment preparation,
 with the same email Finance sends today, so the ERP stops pretending a
-CEO-approved request is ready to pay. Set `mancom_min` to 500,000 so the number
-is right whenever the tier is switched back on.
+CEO-approved request is ready to pay. This is the only real gap.
 
 **Leave:** the Finance Check gate. Splitting the checker from the head is a
 control the Apps Script does not have, and losing it to match a script would be
 a step backwards. If you want them merged, that should be a decision about who
 releases money, not about matching a file.
 
-**Ask:** whether MANCOM should be switched on in Blitz at all. Today it is off
-by design, and if MANCOM keep meeting before the request is raised, off is
-correct and the threshold is academic.
+**Settled:** no amount threshold in this ERP. Every request walks the same
+chain whatever it is worth, and MANCOM stays out of the system because they
+agree high-value spend in their meeting before it is raised here. The
+`mancom_min` row still sits in `erp_rfp_settings`, but nothing reads it while
+`rfp_mancom_enabled` is `'0'`, and 0041 forces that to `'0'` on every deploy,
+so the tier cannot drift back on by accident. The 500,000 in the Apps Script is
+recorded above as history, not as a target.
