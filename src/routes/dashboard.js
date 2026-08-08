@@ -171,10 +171,10 @@ dashboardRoutes.get('/home', async (c) => {
           COUNT(CASE WHEN current_status IN ('DEMO','PILOT_TEST','ASSIGNED','EMPLOYEE_ASSIGNED','INTERNAL_ASSIGNED') THEN 1 END) deployed
         FROM erp_assets WHERE active=1`),
       first(db, `SELECT COALESCE(SUM(gross_amount),0) v, COUNT(*) n FROM erp_ar_collections
-        WHERE status='POSTED' AND txn_date BETWEEN ? AND ?`, [from, to]),
+        WHERE status='POSTED'`),
       first(db, `SELECT COALESCE(SUM(r.amount),0) v FROM erp_ar_receipts r
         JOIN erp_ar_collections c ON c.id=r.collection_id
-        WHERE r.status='ACTIVE' AND c.status='POSTED' AND c.txn_date BETWEEN ? AND ?`, [from, to]),
+        WHERE r.status='ACTIVE' AND c.status='POSTED'`),
       /*
        * The register carries no due date, so a receivable ages from the day it
        * was transacted. Anything still unpaid past thirty days is overdue.
@@ -248,7 +248,7 @@ dashboardRoutes.get('/home', async (c) => {
       first(db, `SELECT COUNT(*) n FROM erp_payment_requests WHERE status='FINANCE_REVIEWED'`),
       // What the company was asked to pay in the period, and what it paid.
       first(db, `SELECT COUNT(*) n, COALESCE(SUM(net_payable),0) v FROM erp_payment_requests
-        WHERE status<>'REJECTED' AND status<>'CANCELLED' AND request_date BETWEEN ? AND ?`, [from, to]),
+        WHERE status<>'REJECTED' AND status<>'CANCELLED'`),
       /*
        * What went out is the sum of the payments, not the count of the flags.
        * A request settled 30% down counts as 30% paid, which is the only
@@ -259,17 +259,17 @@ dashboardRoutes.get('/home', async (c) => {
         FROM erp_payment_settlements s
         JOIN erp_payment_requests r ON r.request_no=s.request_no
         WHERE s.status<>'VOID' AND r.status<>'REJECTED' AND r.status<>'CANCELLED'
-          AND r.request_date BETWEEN ? AND ?`, [from, to]),
+`),
       // The service level is measured on money leaving, so it reads the same
       // settlements: a part payment is measured from when that part was paid.
       all(db, `SELECT r.request_date, s.paid_date paid_at
         FROM erp_payment_settlements s
         JOIN erp_payment_requests r ON r.request_no=s.request_no
         WHERE s.status<>'VOID' AND s.paid_date IS NOT NULL AND s.paid_date<>''
-          AND r.request_date BETWEEN ? AND ?`, [from, to]),
+`),
       first(db, `SELECT target_days FROM erp_service_levels WHERE code='RFP_PAYMENT'`).catch(() => null),
       first(db, `SELECT COUNT(*) n, COALESCE(SUM(net_payable),0) v FROM erp_payment_requests
-        WHERE status='PARTIALLY_PAID' AND request_date BETWEEN ? AND ?`, [from, to]),
+        WHERE status='PARTIALLY_PAID'`),
     ]);
 
     /*
@@ -355,9 +355,9 @@ dashboardRoutes.get('/home', async (c) => {
         LEFT JOIN v_payment_request_line v ON v.line_code=b.line_code
         LEFT JOIN erp_payment_requests r ON r.request_no=v.request_no
              AND r.status NOT IN ('REJECTED','CANCELLED')
-             AND r.request_date BETWEEN ? AND ?
+
         WHERE b.active=1
-        GROUP BY b.line_code ORDER BY b.sort_order, b.line_code`, [from, to]);
+        GROUP BY b.line_code ORDER BY b.sort_order, b.line_code`);
       sections.businessLines = (lines || []).map(l => {
         const raised = Number(l.raised || 0);
         const settled = Number(l.settled || 0);
@@ -380,8 +380,8 @@ dashboardRoutes.get('/home', async (c) => {
           COUNT(DISTINCT k.request_no) requests
         FROM v_bss_cost_kind k
         JOIN erp_payment_requests r ON r.request_no=k.request_no
-        WHERE r.status NOT IN ('REJECTED','CANCELLED') AND r.request_date BETWEEN ? AND ?
-        GROUP BY k.cost_kind`, [from, to]);
+        WHERE r.status NOT IN ('REJECTED','CANCELLED')
+        GROUP BY k.cost_kind`);
       const kind = c => (kinds || []).find(k => k.cost_kind === c) || {};
       sections.swappingNetwork = {
         build: { amount: Number(kind('BUILD').amount || 0), lines: Number(kind('BUILD').lines || 0) },
@@ -393,8 +393,7 @@ dashboardRoutes.get('/home', async (c) => {
           FROM v_bss_cost_kind k
           JOIN erp_payment_requests r ON r.request_no=k.request_no
           WHERE k.cost_kind='SITES' AND r.status NOT IN ('REJECTED','CANCELLED')
-            AND r.request_date BETWEEN ? AND ?
-          GROUP BY r.payee_name ORDER BY value DESC LIMIT 8`, [from, to]),
+          GROUP BY r.payee_name ORDER BY value DESC LIMIT 8`),
       };
     } catch (e) {
       /*
