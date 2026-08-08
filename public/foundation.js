@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R56.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R57.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -3304,9 +3304,36 @@ async function renderAgingTax(){
     const [ar,ap,tax]=await Promise.all([api('/finance/aging/AR'),api('/finance/aging/AP'),api(`/finance/reports/tax-summary?${financeQuery()}`)]);
     const aging=(data)=>data.rows.map(row=>`<tr><td><b>${esc(row.document_no)}</b></td><td>${esc(row.partner_name)}</td>
       <td>${date(row.document_date)}</td><td>${date(row.due_date)}</td><td>${esc(row.aging_bucket)}</td><td class="num">${money(row.open_balance)}</td></tr>`);
-    const body=`${financeFilters()}<div class="workspace-kpis">${kpi('Total AP',money(ap.totals.total))}${kpi('AP Over 90',money(ap.totals.OVER_90))}</div>
-      <section class="workspace-card"><header><h2>Accounts Payable Aging</h2></header>
-        ${financeTable(['Document','Supplier','Date','Due','Bucket','Open Balance'],aging(ap))}</section>
+    /*
+     * Two figures and a table of everything was not a report. The buckets are
+     * the whole point of an ageing - what is current against what has been
+     * owed for three months is the question somebody opens this to answer - and
+     * they were computed by the API and then thrown away by the screen.
+     */
+    const B=['CURRENT','1-30','31-60','61-90','OVER_90'];
+    const label=b=>b==='CURRENT'?'Current':b==='OVER_90'?'Over 90 days':b+' days';
+    const buckets=B.map(b=>({label:label(b),value:Number(ap.totals[b]||0)}));
+    const overdue=B.slice(1).reduce((t,b)=>t+Number(ap.totals[b]||0),0);
+    const byVendor={};(ap.rows||[]).forEach(r=>{const k=r.partner_name||'Unnamed';
+      byVendor[k]=(byVendor[k]||0)+Number(r.open_balance||0);});
+    const body=`${financeFilters()}
+      ${vizTiles([
+        {label:'Owed',value:Number(ap.totals.total||0),sub:(ap.rows||[]).length+' open requests'},
+        {label:'Current',value:Number(ap.totals.CURRENT||0),tone:'good',sub:'not yet due'},
+        {label:'Overdue',value:overdue,tone:overdue>0?'warning':'good',sub:'past due'},
+        {label:'Over 90 days',value:Number(ap.totals.OVER_90||0),
+         tone:Number(ap.totals.OVER_90)>0?'critical':'good',sub:'long overdue'},
+      ])}
+      <div class="viz-grid">
+        ${vizColumns(buckets,{title:'Payables by age',money:true,keyLabel:'Bucket',valueLabel:'Owed'})}
+        ${vizBars(Object.keys(byVendor).map(l=>({label:l,value:byVendor[l]})).sort((x,y)=>y.value-x.value),
+          {title:'Owed by vendor',money:true,color:VIZ.status.serious,keyLabel:'Vendor',
+           valueLabel:'Owed',limit:8,labelWidth:150})}
+      </div>
+      <section class="workspace-card"><header><div><h2>Accounts Payable Aging</h2>
+        <span>${(ap.rows||[]).length} open · ${money(ap.totals.total)} owed · ${money(overdue)} of it overdue</span></div></header>
+        ${financeTable(['Document','Supplier','Date','Due','Bucket','Open Balance'],aging(ap),
+          'Nothing is outstanding.')}</section>
       <section class="workspace-card"><header><h2>VAT and Withholding Tax Control Accounts</h2></header>
         ${financeTable(['Account','Name','Debit','Credit','Net'],tax.rows.map(row=>`<tr><td><b>${esc(row.account_code)}</b></td>
           <td>${esc(row.account_name)}</td><td class="num">${money(row.debit)}</td><td class="num">${money(row.credit)}</td>
