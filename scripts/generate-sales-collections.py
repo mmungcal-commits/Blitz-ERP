@@ -207,7 +207,7 @@ def main():
     w("  FROM erp_ar_collections c")
     w(" WHERE c.status='POSTED' AND COALESCE(c.settlement_date,'')<>'' AND c.gross_amount>0")
     w("   AND NOT EXISTS (SELECT 1 FROM erp_ar_receipts r")
-    w("                    WHERE r.collection_id=c.id AND r.status<>'VOID');")
+    w("                    WHERE r.collection_id=c.id);")
     receipts = sum(1 for r in rows if r['post'] and r['settled'] and r['gross'] > 0)
 
     by = defaultdict(lambda: [0, 0.0, 0, 0.0])
