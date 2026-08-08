@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r60';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R63.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R64.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -2099,13 +2099,29 @@ async function openRfpPayments(id,opts){
             +`<button class="table-action danger" data-pay-void="${x.id}">Void</button>`:'')}</td></tr>`;
     });
     const owed=Number(st.balance||0);
+    /*
+     * Where this request stands with Monde Nissin. Finance record the payment on
+     * this card, so the card is where it has to say whether the request has
+     * actually been sent, and refuse to look like the only thing missing is a
+     * bank reference when the RFP is still sitting here.
+     */
+    const dsp=(d.workflow&&d.workflow.dispatch)||{};
+    const dispatchNote=dsp.sent
+      ? `<p class="mnc-sent">Dispatched to ${esc(dsp.sent.dispatched_to||'MNC')} on ${date(dsp.sent.dispatched_at)}
+          by ${esc(actorName(dsp.sent.dispatched_by))}${Number(dsp.sent.attachment_count||0)
+            ?' with '+dsp.sent.attachment_count+' document'+(Number(dsp.sent.attachment_count)===1?'':'s'):''}.</p>`
+      : (dsp.due
+        ? `<p class="form-warning">This request is fully approved but has not been dispatched to Monde Nissin.
+            ${dsp.required?'The payment cannot be recorded until it is sent.':'Send it before recording the payment.'}
+            Close this card and use <b>Dispatch to MNC</b> on the worklist.</p>`
+        : '');
     const note=st.proofRequired
       ? `<p class="pay-note">Raised on or after ${esc(st.evidenceFrom||'')}, so this request stays open until the proof of payment is on the record, whatever the payments add up to.</p>`
       : (st.withoutProof>0
         ? `<p class="pay-note">${st.withoutProof} payment${st.withoutProof===1?'':'s'} here came from the 2026 procurement register with a reference but no document. Upload the bank advice to close that gap.</p>`
         : '');
     modal(`Payments · ${esc(r.request_no||'')}`,
-      `<div class="pay-card">
+      `<div class="pay-card">${dispatchNote}
         <div class="pay-figures">
           <div><span>Net payable</span><b>${money(r.net_payable)}</b></div>
           <div><span>Paid</span><b>${money(st.settled)}</b></div>
@@ -2204,6 +2220,7 @@ async function renderPaymentRequests(){
     const [data,master]=await Promise.all([api('/finance/payment-requests'),api('/finance/master-data')]);
     window.__rfpMancomMin=(data.mancomEnabled&&data.mancomMin)?Number(data.mancomMin):null;
     window.__rfpFinanceReview=data.financeReview!==false;
+    window.__rfpDispatch=data.dispatch||null;
     const rows=data.rows.map(row=>{
       // MANCOM sits between Finance and the CEO, but only at or above the threshold.
       const needsMancom=Number(row.net_payable||0)>=rfpMancomMin();
@@ -2213,7 +2230,8 @@ async function renderPaymentRequests(){
           row.status==='FINANCE_REVIEWED'?'FINANCE_VALIDATE':
             row.status==='FINANCE_VALIDATED'?(needsMancom?'MANCOM_APPROVE':'FINAL_APPROVE'):
               row.status==='MANCOM_APPROVED'?'FINAL_APPROVE':
-                row.status==='APPROVED'?'MARK_PAID':row.status==='PAYMENT_PREPARED'?'CONFIRM_PAID':'';
+                row.status==='APPROVED'?(row.dispatched_at?'MARK_PAID':'DISPATCH_MNC')
+                  :row.status==='PAYMENT_PREPARED'?'CONFIRM_PAID':'';
       // PAID_UNPROVEN has one thing outstanding and it is not an approval: the
       // bank advice. The payments card is where that happens.
       const proofWanted=row.status==='PAID_UNPROVEN';
@@ -2255,12 +2273,17 @@ async function renderPaymentRequests(){
     const totalOwed=Math.round(open.reduce((t,x)=>
       t+Math.max(0,Number(x.net_payable||0)-Number(x.settled_amount||0)),0)*100)/100;
     const proofGap=open.reduce((t,x)=>t+Number(x.settlements_without_proof||0),0);
+    /*
+     * Fully signed and still on somebody's desk. The old system makes this a
+     * stage of its own; without a count here nobody could see the pile.
+     */
+    const awaitingDispatch=(data.dispatch&&Number(data.dispatch.awaiting))||0;
     const body=`<div class="workspace-commandbar"><button class="command primary" id="newRfp">New Request for Payment</button>
       <button class="command" id="openLiquidations">Cash Advance Liquidation</button>
       <span class="command-spacer"></span><span class="workspace-mode">CONTROLLED PAYMENT WORKFLOW</span></div>
-      ${workflowStrip(['Requestor','Dept Head'].concat(rfpFinanceReviewOn()?['Finance Check']:[]).concat(['Head of Finance']).concat(rfpMancomOn()?['MANCOM (≥ '+money(rfpMancomMin())+')']:[]).concat(['CEO Approval','Instruct Bank (MNC)','Proof & Close']),2)}
+      ${workflowStrip(['Requestor','Dept Head'].concat(rfpFinanceReviewOn()?['Finance Check']:[]).concat(['Head of Finance']).concat(rfpMancomOn()?['MANCOM (≥ '+money(rfpMancomMin())+')']:[]).concat(['CEO Approval','Dispatch to MNC','Instruct Bank','Proof & Close']),2)}
       <section class="workspace-card"><header><h2>Request for Payment Worklist</h2>
-        <span>${data.rows.length} requests \u00b7 ${money(totalSettled)} paid \u00b7 ${money(totalOwed)} owed${proofGap?' \u00b7 '+proofGap+' without proof':''}</span></header>
+        <span>${data.rows.length} requests \u00b7 ${money(totalSettled)} paid \u00b7 ${money(totalOwed)} owed${proofGap?' \u00b7 '+proofGap+' without proof':''}${awaitingDispatch?' \u00b7 '+awaitingDispatch+' awaiting dispatch to MNC':''}</span></header>
         ${financeTable(['RFP','Date','Payee','Department','Account Title','PO','Net Payable','Paid','Status','Action'],rows)}</section>`;
     content.innerHTML=workbenchShell(body,'approvals');bindWorkbench();
     window.__rfpRows={};data.rows.forEach(function(x){window.__rfpRows[x.id]=x;});
@@ -2340,6 +2363,43 @@ function runRfpAction(action,id,master){
       submitRfpAction(id,{action:action,accountCode:f.accountCode||'6990',signature:signed.signature,signatureType:signed.signatureType});};
     return;
   }
+  if(action==='DISPATCH_MNC'){
+    /*
+     * The stage the old system calls MNC Dispatch. The CEO has already signed,
+     * so nothing is signed again here: Finance is composing an email, and the
+     * signed RFP and its attachments go with it.
+     *
+     * The address is remembered between dispatches, so this asks once and then
+     * pre-fills, the way setMncEmail() behaves on the old system.
+     */
+    const d=window.__rfpDispatch||{};
+    const row=(window.__rfpRows||{})[id]||{};
+    const files=Number(row.attachment_count||0);
+    modal('Dispatch to Monde Nissin',`<form id="rfpDispatchForm" class="operational-form grid">
+      <p class="wide muted">The CEO has released ${esc(row.request_no||'this request')}. Send the signed request
+        for payment and its supporting documents to Monde Nissin. The payment cannot be recorded until this is done.</p>
+      <label class="wide"><span>Send to</span>
+        <input name="dispatchTo" required placeholder="ap@mondenissin.com" value="${esc(d.defaultTo||'')}"></label>
+      <label class="wide"><span>Copy to (optional)</span>
+        <input name="dispatchCc" placeholder="finance@nrdev.ph" value="${esc(d.defaultCc||'')}"></label>
+      <label class="wide"><span>Covering note (optional)</span>
+        <textarea name="message" placeholder="Anything MNC need to know about this one"></textarea></label>
+      <p class="wide ${files?'muted':'form-warning'}">${files
+        ?files+' document'+(files===1?'':'s')+' will be linked in the email.'
+        :'This request has no documents attached. Attach the signed RFP before dispatching, or tick below to send anyway.'}</p>
+      ${files?'':`<label class="wide checkline"><input type="checkbox" name="force"> <span>Send without documents</span></label>`}
+      <div class="modal-actions wide"><button type="submit" class="command primary">Send to MNC</button>
+        <button type="button" class="command" id="rfpDispatchCancel">Cancel</button></div></form>`,'');
+    const mbD=$('#modalBody');
+    mbD.querySelector('#rfpDispatchCancel').onclick=()=>closeModal();
+    mbD.querySelector('#rfpDispatchForm').onsubmit=event=>{event.preventDefault();
+      const f=formDataObject(event.currentTarget);
+      if(!String(f.dispatchTo||'').trim())return toast('Enter the Monde Nissin address.','error');
+      closeModal();
+      submitRfpAction(id,{action:'DISPATCH_MNC',dispatchTo:f.dispatchTo,dispatchCc:f.dispatchCc,
+        message:f.message,force:!!f.force});};
+    return;
+  }
   if(action==='MARK_PAID'){
     const banks=(master&&master.bankAccounts)||[];if(!banks.length)return toast('Create a bank account first.','error');
     modal('Prepare Payment - Instruct Bank (MNC)',`<form id="rfpPayForm" class="operational-form grid">
@@ -2369,7 +2429,7 @@ function runRfpAction(action,id,master){
   }
   submitRfpAction(id,{action:action});
 }
-function rfpActionLabel(a){return ({SUBMIT:'Submit',DEPARTMENT_APPROVE:'Dept Head Approve',FINANCE_REVIEW:'Finance Check',FINANCE_VALIDATE:'Head of Finance Approve',MANCOM_APPROVE:'MANCOM Approve',FINAL_APPROVE:'CEO Approve',MARK_PAID:'Prepare Payment',CONFIRM_PAID:'Confirm & Attach Proof'})[a]||String(a).replaceAll('_',' ');}
+function rfpActionLabel(a){return ({SUBMIT:'Submit',DEPARTMENT_APPROVE:'Dept Head Approve',FINANCE_REVIEW:'Finance Check',FINANCE_VALIDATE:'Head of Finance Approve',MANCOM_APPROVE:'MANCOM Approve',FINAL_APPROVE:'CEO Approve',DISPATCH_MNC:'Dispatch to MNC',MARK_PAID:'Prepare Payment',CONFIRM_PAID:'Confirm & Attach Proof'})[a]||String(a).replaceAll('_',' ');}
 // The MANCOM tier is switched off for E88: high-value spend is agreed in the
 // MANCOM meeting before it is recorded here. The server tells us
 // (mancomEnabled/mancomMin); Infinity means the stage never applies.
@@ -8799,6 +8859,14 @@ init();
   .pay-note{margin:0 0 11px;padding:8px 11px;border-left:3px solid #e5b96a;background:#fdf7ec;
     color:#6b4d13;font-size:12px;border-radius:0 6px 6px 0}
   .pay-noproof{color:#b0442c;font-size:11px}
+  /* The dispatch modal: a warning when there is nothing to send, and a tick to
+     override it, because a covering email with no RFP attached is not a dispatch. */
+  .form-warning{margin:0;padding:8px 11px;border-left:3px solid #b0442c;background:#fdeeea;
+    color:#8a3421;font-size:12px;border-radius:0 6px 6px 0}
+  .checkline{display:flex;align-items:center;gap:8px;font-size:12.5px}
+  .checkline input{width:auto;margin:0}
+  .mnc-sent{margin:0 0 11px;padding:8px 11px;border-left:3px solid #2f7d4f;background:#eef8f1;
+    color:#245c3b;font-size:12px;border-radius:0 6px 6px 0}
   /* Now a button where a payment is missing its advice, so the browser's own
      button chrome has to go or the cell fills with a grey box. */
   .pay-noproof.is-action{display:block;background:none;border:0;padding:0;margin:0;font:inherit;
