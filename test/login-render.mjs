@@ -139,6 +139,45 @@ check('the logo is the mark on the card, and it is large',
   (await page.locator('.blitz-mark').boundingBox()).height >= 70,
   `${Math.round((await page.locator('.blitz-mark').boundingBox()).height)}px tall`);
 
+/*
+ * A logo has to be legible against what is behind it. The loading screen and
+ * the sidebar are both a dark navy gradient, and both were carrying the navy
+ * cut of the mark: the wordmark vanished and left three coloured slashes. The
+ * login card is white, so it keeps the navy one. Which cut goes where is not
+ * something reading the markup tells you, so it is asserted against the
+ * measured background rather than by eye.
+ */
+const marks = await page.evaluate(() => {
+  const lum = (r,g,b) => (0.299*r + 0.587*g + 0.114*b) / 255;
+  const luminance = el => {
+    // The first ancestor that actually paints something is what the mark sits
+    // on. Solid colour first, then a gradient - checking them in one condition
+    // is how this read the shell's gradient through an opaque white card.
+    for (let n = el; n && n !== document.documentElement; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      const c = cs.backgroundColor.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?/);
+      if (c && (c[4] === undefined || Number(c[4]) > 0.5)) return lum(+c[1], +c[2], +c[3]);
+      const gsrc = cs.backgroundImage;
+      if (gsrc && gsrc !== 'none') {
+        const g = gsrc.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        if (g) return lum(+g[1], +g[2], +g[3]);
+      }
+    }
+    return 1;
+  };
+  return [...document.querySelectorAll('#loading img, .auth-brand img, .sidebar .brand img')].map(img => ({
+    where: img.closest('#loading') ? 'loading' : img.closest('.auth-brand') ? 'login card' : 'sidebar',
+    src: (img.getAttribute('src')||'').split('?')[0],
+    dark: luminance(img) < 0.5,
+  }));
+});
+for (const m of marks) {
+  const want = m.dark ? '/logo-white.png' : '/logo-navy.png';
+  check(`the ${m.where} logo is legible against its background`,
+    m.src === want, `${m.src} on a ${m.dark?'dark':'light'} background`);
+}
+check('every placement of the mark was checked', marks.length >= 2, `${marks.length} placements`);
+
 check('no script errors', errors.length === 0, errors.slice(0,2).join(' | ') || 'clean');
 
 await browser.close();
