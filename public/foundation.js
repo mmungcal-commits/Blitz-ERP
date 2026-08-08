@@ -1,6 +1,6 @@
 import { VIZ, VIZ_CSS, vizTiles, vizDonut, vizBars, vizColumns, vizLine, vizMeter, vizRing, bindViz, compact }
   from './viz.js?v=20260808-r37';
-const FOUNDATION_BUILD='BLITZ-ERP-20260808-R45.0';
+const FOUNDATION_BUILD='BLITZ-ERP-20260808-R46.0';
 const BRAND_NAME='Blitz - ERP';
 const state={
   session:null,
@@ -1688,15 +1688,20 @@ async function renderBusinessLines(){
     const lineCards=(d.lines||[]).map(l=>`<div class="bl-card">
       <b>${esc(l.name)}</b><span>${esc(l.description||'')}</span>
       <small>${(d.rules||[]).filter(r=>r.line_code===l.line_code).length} rule(s)</small></div>`).join('');
-    const row=h=>`<tr>
+    const isRide=h=>String(h.department||'').toUpperCase()==='RIDEBOX';
+    const row=h=>`<tr class="${isRide(h)?'bl-ride':''}">
       <td><label class="bl-pick"><input type="checkbox" data-host="${esc(h.payee_key)}" ${h.chosen?'checked':''}>
         <span>${esc(h.payee_name)}</span></label></td>
-      <td>${esc(h.department||'-')}</td>
+      <td>${esc(h.department||'-')}
+        ${(!isRide(h)&&d.canEdit)?`<button class="table-action" data-move="${esc(h.payee_key)}"
+          data-move-name="${esc(h.payee_name)}" data-move-n="${h.requests}">Move to RideBox</button>`:''}</td>
       <td class="num">${h.requests}</td>
       <td class="num">${money(h.amount)}</td>
       <td class="num">${money(h.average)}</td></tr>`;
     const body=`<div class="workspace-commandbar">
       <button class="command primary" id="saveHosts" ${d.canEdit?'':'disabled'}>Save host vendors</button>
+      <button class="command" id="pickRideBox" ${d.canEdit?'':'disabled'}>Tick RideBox only</button>
+      <label class="bl-filter"><input type="checkbox" id="rideOnly"> Show RideBox only</label>
       <span class="command-spacer"></span>
       <span class="workspace-mode" id="hostCount">${chosen} of ${hosts.length} chosen</span></div>
       <section class="workspace-card"><header><h2>Business lines</h2>
@@ -1716,6 +1721,35 @@ async function renderBusinessLines(){
       $('#hostCount').textContent=n+' of '+hosts.length+' chosen';
     };
     $$('[data-host]').forEach(x=>{x.onchange=count;if(!d.canEdit)x.disabled=true;});
+    /*
+     * The department is the answer, so ticking by department is one button
+     * rather than twenty-seven decisions. Anything filed under the wrong
+     * department is corrected first, from the row itself.
+     */
+    if($('#pickRideBox'))$('#pickRideBox').onclick=()=>{
+      const keys=new Set(hosts.filter(h=>String(h.department||'').toUpperCase()==='RIDEBOX')
+        .map(h=>h.payee_key));
+      $$('[data-host]').forEach(x=>{x.checked=keys.has(x.dataset.host);});
+      count();toast('RideBox vendors ticked. Save to apply.');
+    };
+    if($('#rideOnly'))$('#rideOnly').onchange=e=>{
+      const on=e.currentTarget.checked;
+      $$('.workspace-card table tbody tr').forEach(tr=>{
+        tr.style.display=(!on||tr.classList.contains('bl-ride'))?'':'none';});
+    };
+    $$('[data-move]').forEach(b2=>b2.onclick=async()=>{
+      const n=b2.dataset.moveN, name=b2.dataset.moveName;
+      const reason=prompt(`Move all ${n} request(s) for ${name} to the RideBox department?\n\n`
+        +'Say why, for the record:');
+      if(reason===null)return;
+      if(!reason.trim())return toast('A reason is needed: this changes how the spend reads.','error');
+      try{
+        const r=await api('/finance/payees/reclassify',{method:'POST',
+          body:JSON.stringify({payee:b2.dataset.move,department:'RideBox',reason:reason.trim()})});
+        toast(`${(r.changed||[]).length} request(s) moved to RideBox`);
+        state.apiCache.clear();await renderBusinessLines();
+      }catch(error){toast(error.message,'error');}
+    });
     if($('#saveHosts'))$('#saveHosts').onclick=async()=>{
       const picked=$$('[data-host]').filter(x=>x.checked).map(x=>x.dataset.host);
       try{
@@ -2264,8 +2298,11 @@ function openRfpForm(purchaseOrders,master){
       ${purchaseOrders.map(x=>`<option value="${x.id}">${esc(x.purchase_order_no)} · ${esc(x.vendor_name)} · ${money(x.total_amount)}</option>`).join('')}</select></label>
     <label class="wide"><span>Payee</span><select name="payeePartnerId"><option value="">Use PO vendor</option>
       ${master.partners.filter(x=>x.partner_type==='VENDOR').map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label>
-    <label><span>Requestor name</span><input name="requestorName" value="${esc((state.session&&state.session.user&&(state.session.user.displayName||state.session.user.email))||'')}"></label>
-    <label><span>Requestor email</span><input name="requestorEmail" type="email" value="${esc((state.session&&state.session.user&&state.session.user.email)||'')}"></label>
+    <label><span>Requested by</span><input name="requestorName" value="${esc((state.session&&state.session.user&&(state.session.user.displayName||state.session.user.email))||'')}"></label>
+    <label><span>Requested by (email)</span><input name="requestorEmail" type="email" value="${esc((state.session&&state.session.user&&state.session.user.email)||'')}"></label>
+    <p class="rfp-encode-note wide">Finance encodes requests on behalf of the person who asked for them.
+      Put their name and address here: the record then shows who asked and who typed it in, and the
+      encoder is still free to check the request afterwards.</p>
     <label><span>Department</span><input name="department" required></label><label><span>Contact number</span><input name="contactNo"></label>
     <label><span>Cost Center</span><input name="costCenter"></label>
     <label><span>Request type</span><select name="requestType"><option>Payment to Vendor</option><option>Cash Advance</option><option>Reimbursement</option><option>Per Diem Request</option></select></label>
@@ -8196,6 +8233,11 @@ init();
     border-bottom:1px solid #e2e9f0}
   .bl-pick{display:flex;align-items:center;gap:7px;cursor:pointer}
   .bl-pick input{width:15px;height:15px;flex:none}
+
+  .bl-filter{display:flex;align-items:center;gap:6px;color:#dbe7f2;font-size:11.5px;cursor:pointer}
+  .bl-filter input{width:14px;height:14px}
+  tr.bl-ride td:first-child{box-shadow:inset 3px 0 0 #12305f}
+  .rfp-encode-note{grid-column:1/-1;margin:0;font-size:11.5px;color:#657586;line-height:1.5}
 
   /* A dashboard the person arranges. */
   .home-grid-head{display:flex;align-items:center;justify-content:space-between;gap:10px;
